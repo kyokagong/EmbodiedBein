@@ -87,7 +87,6 @@ services:
       - /run/eb:/run/eb
       - /data/kk:/data/kk:ro
       - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
-      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
     healthcheck:
       test: ["CMD", "ebctl", "health"]
       interval: 10s
