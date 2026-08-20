@@ -10,6 +10,7 @@
       <router-link to="/train/submit">提交任务</router-link>
       <router-link to="/train/queue">队列</router-link>
       <router-link to="/eval/suites">评估</router-link>
+      <router-link to="/eval/leaderboard">排行榜</router-link>
       <router-link to="/deploy/bundles">部署</router-link>
       <router-link to="/agent">Agent</router-link>
       <router-link to="/showcase/bhl-progress-demo">Showcase</router-link>

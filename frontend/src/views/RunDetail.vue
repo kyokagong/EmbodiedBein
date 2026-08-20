@@ -1,43 +1,40 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
+import Chart from "../components/Chart.vue";
+import LogPane from "../components/LogPane.vue";
+
 const route = useRoute();
 const data = ref<any>(null);
-const metrics = ref<any>(null);
+const metrics = ref<any>({ series: {} });
+const logs = ref<string[]>([]);
+let ws: WebSocket | null = null;
+
 onMounted(async () => {
-  data.value = await api(`/runs/${route.params.id}`);
-  metrics.value = await api(`/runs/${route.params.id}/metrics`);
+  const id = route.params.id;
+  data.value = await api(`/runs/${id}`);
+  metrics.value = await api(`/runs/${id}/metrics`);
+  logs.value = (await api(`/runs/${id}/logs?tail=200`)).lines || [];
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/runs/${id}`);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "metrics" && msg.payload?.series) metrics.value = msg.payload;
+    if (msg.type === "log") logs.value = msg.payload.lines || logs.value;
+  };
 });
-function spark(pts: { step: number; value: number }[]) {
-  if (!pts?.length) return "";
-  const w = 320, h = 64;
-  const xs = pts.map((p) => p.step);
-  const ys = pts.map((p) => p.value);
-  const minX = Math.min(...xs), maxX = Math.max(...xs) || 1;
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const spanX = maxX - minX || 1;
-  const spanY = maxY - minY || 1;
-  return pts
-    .map((p, i) => {
-      const x = ((p.step - minX) / spanX) * w;
-      const y = h - ((p.value - minY) / spanY) * h;
-      return `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
+onUnmounted(() => ws?.close());
 </script>
 <template>
   <div>
     <h2>Run {{ data?.id }}</h2>
-    <p class="muted">{{ data?.status }} · {{ data?.abort_reason || "ok" }} · provenance {{ data?.provenance }}</p>
-    <div class="card" v-for="(pts, tag) in metrics?.series || {}" :key="tag">
-      <div class="l">{{ tag }}</div>
-      <svg width="320" height="64" v-if="pts?.length">
-        <path :d="spark(pts)" fill="none" stroke="#53d4ff" stroke-width="1.5" />
-      </svg>
-      <div class="muted" v-else>无序列</div>
+    <p class="muted">{{ data?.status }} · {{ data?.abort_reason || "ok" }}</p>
+    <div v-for="(pts, tag) in metrics?.series || {}" :key="String(tag)">
+      <Chart :title="String(tag)" :points="pts" />
     </div>
-    <pre>{{ JSON.stringify(data?.metrics_summary && { ...data.metrics_summary, series: undefined }, null, 2) }}</pre>
+    <p class="muted" v-if="!Object.keys(metrics?.series || {}).length">尚无 TSDB 点</p>
+    <h3>console.log</h3>
+    <LogPane :lines="logs" />
   </div>
 </template>

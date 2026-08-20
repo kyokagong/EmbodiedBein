@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from eb.ids import sha256_bytes
 from eb.store.db import get_session
-from eb.store.models import ApiKey, User
+from eb.store.models import ApiKey
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 

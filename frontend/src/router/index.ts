@@ -1,14 +1,8 @@
 import { createRouter, createWebHistory } from "vue-router";
 import Shell from "../views/Shell.vue";
-import Page from "../views/Page.vue";
+import { api } from "../api/client";
 
-const p = (path: string, title: string, resource?: string) => ({
-  path,
-  component: Page,
-  props: { title, resource: resource || path },
-});
-
-export default createRouter({
+const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/login", component: () => import("../views/Login.vue") },
@@ -18,36 +12,48 @@ export default createRouter({
       component: Shell,
       children: [
         { path: "", component: () => import("../views/Home.vue") },
-        p("/data", "数据集", "datasets"),
-        { path: "/data/convert", component: Page, props: { title: "转换任务向导", resource: "jobs" } },
+        { path: "/data", component: () => import("../views/DatasetList.vue") },
+        { path: "/data/convert", component: () => import("../views/DataConvert.vue") },
         { path: "/data/:id/funnel", component: () => import("../views/Funnel.vue") },
-        { path: "/data/:id/episodes/:ep", component: Page, props: { title: "Episode 预览", resource: "datasets" } },
-        { path: "/data/:id/slices", component: Page, props: { title: "切片管理", resource: "datasets" } },
+        { path: "/data/:id/episodes/:ep", component: () => import("../views/EpisodePreview.vue") },
+        { path: "/data/:id/slices", component: () => import("../views/DatasetSlices.vue") },
         { path: "/data/:id", component: () => import("../views/DatasetDetail.vue") },
-        p("/models", "模型", "models"),
-        { path: "/models/:id/lineage", component: Page, props: { title: "血缘", resource: "models" } },
+        { path: "/models", component: () => import("../views/ModelList.vue") },
+        { path: "/models/:id/lineage", component: () => import("../views/Lineage.vue") },
         { path: "/models/:id", component: () => import("../views/ModelDetail.vue") },
-        p("/contracts", "本体契约", "contracts"),
+        { path: "/contracts", component: () => import("../views/ContractList.vue") },
         { path: "/contracts/:id", component: () => import("../views/ContractDetail.vue") },
-        p("/assets", "机器人资产", "assets"),
-        { path: "/assets/:id/viewer", component: Page, props: { title: "3D 查看器", resource: "system" } },
-        { path: "/train/experiments", component: Page, props: { title: "实验", resource: "experiments" } },
+        { path: "/assets", component: () => import("../views/AssetList.vue") },
+        { path: "/assets/:id/viewer", component: () => import("../views/AssetViewer.vue") },
+        { path: "/train/experiments", component: () => import("../views/Experiments.vue") },
         { path: "/train/submit", component: () => import("../views/Submit.vue") },
         { path: "/train/queue", component: () => import("../views/Queue.vue") },
-        { path: "/train/pipelines", component: Page, props: { title: "流水线", resource: "pipelines" } },
-        { path: "/train/runs/compare", component: Page, props: { title: "Run 对比", resource: "jobs" } },
+        { path: "/train/pipelines", component: () => import("../views/Pipelines.vue") },
+        { path: "/train/runs/compare", component: () => import("../views/RunCompare.vue") },
         { path: "/train/runs/:id", component: () => import("../views/RunDetail.vue") },
-        { path: "/eval/suites", component: Page, props: { title: "评估套件", resource: "evals/suites" } },
-        { path: "/eval/reports/:id", component: Page, props: { title: "评估报告", resource: "evals/reports" } },
-        { path: "/eval/compare", component: Page, props: { title: "评估对比", resource: "evals/reports" } },
-        { path: "/eval/failures", component: Page, props: { title: "失败库", resource: "evals/reports" } },
-        { path: "/eval/leaderboard", component: Page, props: { title: "排行榜", resource: "evals/leaderboard" } },
-        { path: "/deploy/bundles", component: Page, props: { title: "策略包", resource: "bundles" } },
-        { path: "/deploy/robots/:id", component: Page, props: { title: "机器人", resource: "robots" } },
+        { path: "/eval/suites", component: () => import("../views/EvalSuites.vue") },
+        { path: "/eval/reports/:id", component: () => import("../views/EvalReport.vue") },
+        { path: "/eval/compare", component: () => import("../views/EvalCompare.vue") },
+        { path: "/eval/failures", component: () => import("../views/EvalFailures.vue") },
+        { path: "/eval/leaderboard", component: () => import("../views/Leaderboard.vue") },
+        { path: "/deploy/bundles", component: () => import("../views/Bundles.vue") },
+        { path: "/deploy/robots/:id", component: () => import("../views/RobotDetail.vue") },
         { path: "/agent", component: () => import("../views/Agent.vue") },
-        { path: "/agent/audit", component: Page, props: { title: "Agent 审计", resource: "agent/audit" } },
-        { path: "/settings/:rest?", component: Page, props: { title: "设置", resource: "system/version" } },
+        { path: "/agent/audit", component: () => import("../views/AgentAudit.vue") },
+        { path: "/settings/:rest?", component: () => import("../views/Settings.vue") },
       ],
     },
   ],
 });
+
+router.beforeEach(async (to) => {
+  if (to.path === "/login" || to.meta.public) return true;
+  try {
+    await api("/auth/me");
+    return true;
+  } catch {
+    return "/login";
+  }
+});
+
+export default router;

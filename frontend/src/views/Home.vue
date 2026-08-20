@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { api } from "../api/client";
+import EbKpi from "../components/EbKpi.vue";
+import EbTable from "../components/EbTable.vue";
+
 const me = ref<any>(null);
 const contracts = ref<any[]>([]);
 const jobs = ref<any[]>([]);
@@ -18,22 +21,15 @@ onMounted(async () => {
   <div>
     <h2>总览</h2>
     <div class="kpis">
-      <div class="card"><div class="l">身份</div><div class="v">{{ me?.principal || "…" }}</div></div>
-      <div class="card"><div class="l">契约</div><div class="v">{{ contracts.length }}</div></div>
-      <div class="card"><div class="l">模型</div><div class="v">{{ models.length }}</div></div>
-      <div class="card"><div class="l">任务</div><div class="v">{{ jobs.length }}</div></div>
+      <EbKpi label="身份" :value="me?.principal || '…'" />
+      <EbKpi label="契约" :value="contracts.length" />
+      <EbKpi label="模型" :value="models.length" />
+      <EbKpi label="队列" :value="jobs.filter(j => j.status==='queued' || j.status==='running').length" />
     </div>
     <p class="muted">GPU {{ gpus?.gpus?.length ?? "—" }} · {{ gpus?.hostname || "ebd doctor" }}</p>
-    <div class="card">
-      <div class="l">最近任务</div>
-      <table>
-        <thead><tr><th>id</th><th>kind</th><th>status</th><th>contract</th></tr></thead>
-        <tbody>
-          <tr v-for="j in jobs.slice(0, 8)" :key="j.id">
-            <td>{{ j.id }}</td><td>{{ j.kind }}</td><td><span class="badge">{{ j.status }}</span></td><td>{{ j.contract_id }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <EbTable
+      :columns="[{key:'id',label:'id'},{key:'kind',label:'kind'},{key:'status',label:'status'},{key:'contract_id',label:'contract'}]"
+      :rows="jobs.slice(0, 12)"
+    />
   </div>
 </template>
