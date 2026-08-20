@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from eb.settings import get_settings
 from eb.store.ebd import EbdClient
 from eb.store.models import EmbodimentContractRow, Job, Run
 from eb.worktree import overlay_mounts, prepare_run_dirs, prepare_worktree
+
+log = logging.getLogger(__name__)
 
 
 def apply_ebd_result(job, run, result: dict) -> None:
@@ -109,6 +112,7 @@ class Orchestrator:
                 writable = rendered.writable_paths or ["logs", "outputs", "configs"]
                 mounts = overlay_mounts(wt, run_root, writable)
             except Exception:
+                log.exception("prepare_worktree failed for %s", run.id)
                 mounts = list(rendered.mounts)
         try:
             result = await self.ebd.submit_run(

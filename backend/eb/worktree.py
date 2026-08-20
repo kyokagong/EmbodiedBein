@@ -52,7 +52,7 @@ def prepare_worktree(repo: Path, commit: str | None, run_id: str) -> Path:
     root.parent.mkdir(parents=True, exist_ok=True)
     if root.exists():
         return root
-    _git(["clone", "--local", str(repo), str(root)])
+    _git(["clone", "--no-hardlinks", str(repo), str(root)])
     target = commit or "HEAD"
     _git(["checkout", "--detach", target], cwd=root)
     try:
