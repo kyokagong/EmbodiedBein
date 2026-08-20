@@ -9,6 +9,18 @@ def test_sim2sim_fits_no_gpu():
     assert est.per_gpu_peak_gb == 0
 
 
+def test_export_policy_fits_on_4090():
+    spec = JobSpec(
+        kind=JobKind.EXPORT_POLICY,
+        contract_id="ec_bhl_biped_12dof_v1",
+        resources={"gpus": 1},
+        params={"num_envs": 16},
+    )
+    est = estimate_job(spec)
+    assert est.verdict == "fits"
+    assert est.per_gpu_peak_gb < 24
+
+
 def test_openvla_full_ft_no_fit_on_24gb():
     spec = JobSpec(
         kind=JobKind.TRAIN_SFT,

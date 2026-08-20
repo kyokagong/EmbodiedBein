@@ -43,7 +43,7 @@ def estimate_job(spec: JobSpec, host_vram_gb: float = 24.0, free_now: list[float
             basis={"formula": "no_gpu", "inputs": {}},
             verify="eb job submit --dry-run --probe-memory",
         )
-    if kind in {JobKind.TRAIN_RL, JobKind.DATA_COLLECT, JobKind.EVAL_SIM}:
+    if kind in {JobKind.TRAIN_RL, JobKind.DATA_COLLECT, JobKind.EVAL_SIM, JobKind.EXPORT_POLICY}:
         n_envs = float(params.get("num_envs", 4096))
         c_env = 0.0032 if "biped" in spec.contract_id else 0.0038
         peak = 5.0 + n_envs * c_env
