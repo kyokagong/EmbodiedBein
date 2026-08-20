@@ -122,34 +122,6 @@ async def seed_if_empty(session: AsyncSession) -> None:
         )
         await session.flush()
         session.add(
-            Pipeline(
-                id="pipe_ego_scan_slice",
-                name="scan then slice ego",
-                spec={
-                    "status": "idle",
-                    "cursor": 0,
-                    "job_ids": [],
-                    "steps": [
-                        {
-                            "kind": "data.scan",
-                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
-                            "params": {"path": "/data/kk/berkeley_ego_data"},
-                            "resources": {"gpus": 0},
-                        },
-                        {
-                            "kind": "data.slice",
-                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
-                            "params": {
-                                "dataset_id": "ds_berkeley_ego",
-                                "query": {"limit": 1},
-                            },
-                            "resources": {"gpus": 0},
-                        },
-                    ],
-                },
-            )
-        )
-        session.add(
             Robot(
                 id="robot_bhl_01",
                 name="BHL-01",
@@ -181,6 +153,35 @@ async def seed_if_empty(session: AsyncSession) -> None:
                         {"t": "Now", "d": "compose 单机可部署"},
                     ],
                     "caveat": "部分指标仅仿真，尚未上机",
+                },
+            )
+        )
+    if not await session.get(Pipeline, "pipe_ego_scan_slice"):
+        session.add(
+            Pipeline(
+                id="pipe_ego_scan_slice",
+                name="scan then slice ego",
+                spec={
+                    "status": "idle",
+                    "cursor": 0,
+                    "job_ids": [],
+                    "steps": [
+                        {
+                            "kind": "data.scan",
+                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
+                            "params": {"path": "/data/kk/berkeley_ego_data"},
+                            "resources": {"gpus": 0},
+                        },
+                        {
+                            "kind": "data.slice",
+                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
+                            "params": {
+                                "dataset_id": "ds_berkeley_ego",
+                                "query": {"limit": 1},
+                            },
+                            "resources": {"gpus": 0},
+                        },
+                    ],
                 },
             )
         )
