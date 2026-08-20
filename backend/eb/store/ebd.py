@@ -36,6 +36,34 @@ class EbdClient:
             r.raise_for_status()
             return r.json()
 
+    async def get_run(self, run_id: str) -> dict:
+        async with self._client() as c:
+            r = await c.get(f"http://ebd/v1/runs/{run_id}")
+            r.raise_for_status()
+            return r.json()
+
+    async def ps(self) -> dict:
+        try:
+            async with self._client() as c:
+                r = await c.get("http://ebd/v1/ps")
+                r.raise_for_status()
+                return r.json()
+        except Exception as e:
+            return {"items": [], "error": str(e)}
+
+    async def tsdb_query(self, run_id: str, tag: str | None = None) -> dict:
+        async with self._client() as c:
+            url = f"http://ebd/v1/runs/{run_id}/metrics"
+            r = await c.get(url, params={"tag": tag} if tag else None)
+            r.raise_for_status()
+            return r.json()
+
+    async def logs(self, run_id: str, tail: int = 200) -> dict:
+        async with self._client() as c:
+            r = await c.get(f"http://ebd/v1/runs/{run_id}/logs", params={"tail": tail})
+            r.raise_for_status()
+            return r.json()
+
     async def cancel_run(self, run_id: str) -> dict:
         async with self._client() as c:
             r = await c.post(f"http://ebd/v1/runs/{run_id}/cancel")

@@ -16,6 +16,8 @@ class RenderedJob:
     devices: list[str] = field(default_factory=list)
     gpus: int = 0
     workdir: str = "/workspace"
+    outputs: list[str] = field(default_factory=lambda: ["outputs"])
+    metrics_glob: str = "logs/**/events.out.tfevents.*"
 
 
 class Adapter:

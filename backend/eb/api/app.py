@@ -22,10 +22,14 @@ from eb.store.db import init_engine
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_engine()
     assert store_db.SessionLocal is not None
-    async with store_db.SessionLocal() as session:
-        await seed_if_empty(session)
     scheduler = Scheduler()
     app.state.scheduler = scheduler
+    async with store_db.SessionLocal() as session:
+        await seed_if_empty(session)
+        try:
+            await scheduler.reconcile(session)
+        except Exception:
+            pass
 
     async def _loop() -> None:
         while True:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+import json
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +14,10 @@ from eb.domain.fsm import JobStatus, RunStatus, transition
 from eb.domain.job import JobSpec
 from eb.gates.engine import GateContext, g1_submit
 from eb.ids import new_id
+from eb.settings import get_settings
 from eb.store.ebd import EbdClient
 from eb.store.models import EmbodimentContractRow, Job, Run
+from eb.worktree import overlay_mounts, prepare_run_dirs, prepare_worktree
 
 
 def apply_ebd_result(job, run, result: dict) -> None:
@@ -82,6 +86,16 @@ class Orchestrator:
         )
         session.add(run)
         rendered = get_adapter(spec).render(spec, run.id)
+        run_root = prepare_run_dirs(run.id)
+        mounts = list(rendered.mounts)
+        repo = Path(spec.code_ref.repo) if spec.code_ref and spec.code_ref.repo else get_settings().bhl_repo
+        if repo.exists() and (repo / ".git").exists():
+            try:
+                wt = prepare_worktree(repo, spec.code_ref.commit if spec.code_ref else None, run.id)
+                writable = rendered.writable_paths or ["logs", "outputs", "configs"]
+                mounts = overlay_mounts(wt, run_root, writable)
+            except Exception:
+                mounts = list(rendered.mounts)
         try:
             result = await self.ebd.submit_run(
                 {
@@ -96,11 +110,14 @@ class Orchestrator:
                     "workdir": rendered.workdir,
                     "kind": spec.kind.value,
                     "mounts": [
-                        {"src": src, "dst": dst, "mode": mode} for src, dst, mode in rendered.mounts
+                        {"src": src, "dst": dst, "mode": mode} for src, dst, mode in mounts
                     ],
                 }
             )
             apply_ebd_result(job, run, result)
+            digest = result.get("image_digest")
+            if digest:
+                run.provenance = json.dumps({"kind": "full", "image_digest": digest, "gpus": gpu_ids})
         except Exception as e:
             apply_ebd_result(
                 job,
@@ -111,6 +128,18 @@ class Orchestrator:
         await session.refresh(job)
         await session.refresh(run)
         return run
+
+    async def collect_and_finish(self, session: AsyncSession, job: Job, run: Run) -> None:
+        """COLLECTING_OUT then SUCCEEDED. Artifact claim is filled in later tasks."""
+        run.status = RunStatus.COLLECTING_OUT.value
+        await session.flush()
+        from eb.orchestrator.collect import claim_outputs
+
+        await claim_outputs(session, job, run)
+        run.status = RunStatus.FINISHED.value
+        run.finished_at = datetime.now(timezone.utc)
+        job.status = JobStatus.SUCCEEDED.value
+        await session.commit()
 
     def preview_command(self, spec: JobSpec, run_id: str = "run_preview") -> str:
         return equivalent_command(spec, run_id)
