@@ -217,6 +217,16 @@ class Orchestrator:
                 job.status = JobStatus.FAILED.value
             await session.commit()
             return
+        log = get_settings().data_root / "runs" / run.id / "console.log"
+        if log.exists():
+            text = log.read_text(errors="replace")
+            if "Traceback (most recent call last):" in text:
+                job.status = JobStatus.FAILED.value
+                job.error = "\n".join(text.strip().splitlines()[-12:])[:2000]
+                run.status = RunStatus.ABORTED.value
+                run.abort_reason = "python_exception"
+                await session.commit()
+                return
         run.status = RunStatus.FINISHED.value
         run.finished_at = datetime.now(UTC)
         job.status = JobStatus.SUCCEEDED.value
