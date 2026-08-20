@@ -20,7 +20,7 @@ class IsaacLabRslRlAdapter(Adapter):
             JobKind.EXPORT_POLICY: "scripts/rsl_rl/play.py",
         }.get(spec.kind, "scripts/rsl_rl/train.py")
         cmd = [
-            "python",
+            "/isaac-sim/python.sh",
             script,
             "--task",
             str(task),
@@ -41,7 +41,7 @@ class IsaacLabRslRlAdapter(Adapter):
         ]
         if spec.kind == JobKind.EVAL_SIM:
             cmd = [
-                "python",
+                "/isaac-sim/python.sh",
                 "scripts/rsl_rl/play.py",
                 "--task",
                 str(task),
