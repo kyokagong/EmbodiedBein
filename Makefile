@@ -2,7 +2,7 @@ COMPOSE := docker compose -f deploy/docker-compose.yml --env-file deploy/.env
 export COMPOSE_PROJECT_NAME := eb
 
 .PHONY: up down ps logs restart-api migrate psql backup images \
-	dev-web test lint seed env
+	dev-web test lint seed env smoke-job
 
 env:
 	@test -f deploy/.env || cp deploy/.env.example deploy/.env
@@ -52,3 +52,11 @@ images:
 	-docker tag rlinf-berkeley-openpi:local eb/rlinf:0.4.0-emb
 	docker build -t eb/mujoco:latest -f deploy/images/mujoco.Dockerfile .
 	docker build -t eb/tools:latest -f deploy/images/tools.Dockerfile .
+
+smoke-job:
+	@echo "Submit biped smoke via API (requires make up and eb-dev-key)."
+	curl -sS http://127.0.0.1:8000/api/v1/jobs \
+	  -H 'Authorization: Bearer eb-dev-key' \
+	  -H 'Content-Type: application/json' \
+	  -d '{"spec":{"kind":"train.rl","name":"biped-smoke","contract_id":"ec_bhl_biped_12dof_v1","params":{"task":"Velocity-Berkeley-Humanoid-Lite-Biped-v0","num_envs":64,"max_iterations":5,"seed":0},"resources":{"gpus":1,"shm_gb":2}}}'
+	@echo

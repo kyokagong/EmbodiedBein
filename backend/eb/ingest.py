@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import struct
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,9 +8,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from eb.ids import new_id
 from eb.onnx_io import read_signature, sha256_file
-from eb.store.models import Artifact, Experiment, Job, ModelFamily, ModelVersion, Run
+from eb.store.models import Artifact, ModelFamily, ModelVersion
 
 CHECKPOINT_ROOTS = (
     Path("/data/kk/Berkeley-Humanoid-Lite/checkpoints"),
@@ -41,7 +42,41 @@ def infer_contract(path: Path) -> tuple[str | None, dict[str, int]]:
 async def ingest_all(session: AsyncSession) -> dict[str, int]:
     n_ck = await ingest_checkpoints(session)
     n_log = await ingest_tfevents(session)
-    return {"checkpoints": n_ck, "runs": n_log}
+    n_fix = await refresh_measured_onnx_io(session)
+    return {"checkpoints": n_ck, "runs": n_log, "onnx_refreshed": n_fix}
+
+
+async def refresh_measured_onnx_io(session: AsyncSession) -> int:
+    """Overwrite filename-hint I/O with ONNX graph dims for existing rows."""
+    from eb.store.models import Artifact, ModelVersion
+
+    n = 0
+    rows = (await session.scalars(select(ModelVersion))).all()
+    for mv in rows:
+        if not mv.artifact_id:
+            continue
+        art = await session.get(Artifact, mv.artifact_id)
+        if art is None or art.kind != "onnx":
+            continue
+        path = Path(art.storage)
+        if not path.exists() or path.suffix.lower() != ".onnx":
+            continue
+        try:
+            sig = read_signature(path)
+        except Exception:
+            continue
+        io = {"obs": sig.get("obs"), "act": sig.get("act")}
+        if mv.io_signature == io and (mv.card or {}).get("measured"):
+            continue
+        mv.io_signature = io
+        card = dict(mv.card or {})
+        card["measured"] = True
+        card["filename_hint_only"] = False
+        mv.card = card
+        flag_modified(mv, "io_signature")
+        flag_modified(mv, "card")
+        n += 1
+    return n
 
 
 async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) -> int:
@@ -136,63 +171,11 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
 
 
 async def ingest_tfevents(session: AsyncSession) -> int:
-    n = 0
-    for base in TFEVENTS_ROOTS:
-        if not base.exists():
-            continue
-        for ev in sorted(base.rglob("events.out.tfevents.*")):
-            if n >= 40:
-                return n
-            run_dir = ev.parent
-            rel = str(run_dir)
-            idem = f"legacy:{hashlib.sha256(rel.encode()).hexdigest()[:20]}"
-            exists = await session.scalar(select(Job).where(Job.idem_key == idem))
-            if exists:
-                continue
-            cid, _ = infer_contract(run_dir)
-            cid = cid or "ec_bhl_humanoid_22dof_v1"
-            exp_id = f"exp_legacy_{cid.split('_')[2] if '_' in cid else 'misc'}"
-            if await session.get(Experiment, exp_id) is None:
-                session.add(Experiment(id=exp_id, name=f"legacy {cid}", contract_id=cid))
-                await session.flush()
-            series = downsample_scalars(parse_tfevents(ev))
-            mtime = datetime.fromtimestamp(ev.stat().st_mtime, tz=UTC)
-            last = _last_values(series)
-            job = Job(
-                id=new_id("job"),
-                experiment_id=exp_id,
-                contract_id=cid,
-                kind="train.rl",
-                spec={
-                    "kind": "train.rl",
-                    "contract_id": cid,
-                    "name": run_dir.name,
-                    "params": {"source": rel},
-                },
-                spec_hash=idem,
-                idem_key=idem,
-                status="succeeded",
-                created_by="ingest:legacy",
-            )
-            session.add(job)
-            await session.flush()
-            session.add(
-                Run(
-                    id=new_id("run"),
-                    job_id=job.id,
-                    attempt=1,
-                    status="finished",
-                    metrics_summary={
-                        **last,
-                        "source": str(ev),
-                    },
-                    provenance="partial",
-                    started_at=mtime,
-                    finished_at=mtime,
-                )
-            )
-            n += 1
-    return n
+    """Do not mint succeeded Jobs from host logs.
+
+    Historical tfevents stay on disk; the collector/TSDB path is for platform runs only.
+    """
+    return 0
 
 
 def parse_tfevents(path: Path, max_bytes: int = 8 * 1024 * 1024) -> dict[str, list[dict[str, float]]]:

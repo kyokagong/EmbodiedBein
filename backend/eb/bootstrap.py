@@ -19,8 +19,10 @@ from eb.store.models import (
     DatasetVersion,
     EmbodimentContractRow,
     EvalSuite,
+    Job,
     Pipeline,
     Robot,
+    Run,
     Share,
     User,
 )
@@ -183,3 +185,26 @@ async def seed_if_empty(session: AsyncSession) -> None:
             )
         )
     await session.commit()
+    await _scrub_stub_success(session)
+
+
+async def _scrub_stub_success(session: AsyncSession) -> None:
+    """Never leave skeleton stub runs marked succeeded."""
+    runs = (await session.scalars(select(Run))).all()
+    changed = False
+    for run in runs:
+        ms = run.metrics_summary or {}
+        note = str(ms.get("note") or "")
+        if "stub" not in note.lower() and "image missing" not in note.lower():
+            continue
+        job = await session.get(Job, run.job_id)
+        if job is None:
+            continue
+        job.status = "infra_failed"
+        job.error = note or "stub_forbidden"
+        run.status = "aborted"
+        run.abort_reason = "stub_forbidden"
+        run.metrics_summary = {}
+        changed = True
+    if changed:
+        await session.commit()
