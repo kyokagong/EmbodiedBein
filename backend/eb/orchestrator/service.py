@@ -236,7 +236,10 @@ class Orchestrator:
             await session.commit()
             return
         log = get_settings().data_root / "runs" / run.id / "console.log"
-        if log.exists():
+        onnx_ok = any(
+            get_settings().data_root.joinpath("runs", run.id).rglob("exported/policy.onnx")
+        )
+        if log.exists() and not onnx_ok:
             text = log.read_text(errors="replace")
             if "Traceback (most recent call last):" in text:
                 job.status = JobStatus.FAILED.value

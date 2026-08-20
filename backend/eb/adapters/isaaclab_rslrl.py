@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shlex
+
 from eb.adapters.base import Adapter, RenderedJob, _image
 from eb.domain.job import JobKind, JobSpec
 
@@ -66,7 +68,8 @@ class IsaacLabRslRlAdapter(Adapter):
                 *spec.overrides,
             ]
         if spec.kind == JobKind.EXPORT_POLICY:
-            cmd = [
+            # Committed BHL play.py has no --export_only/--seed; it writes ONNX then loops.
+            play = [
                 "/isaac-sim/python.sh",
                 "scripts/rsl_rl/play.py",
                 "--task",
@@ -76,10 +79,23 @@ class IsaacLabRslRlAdapter(Adapter):
                 "cuda:0",
                 "--num_envs",
                 str(spec.params.get("num_envs", 16)),
-                "--seed",
-                str(seed),
-                "--export_only",
                 *spec.overrides,
+            ]
+            quoted = " ".join(shlex.quote(p) for p in play)
+            cmd = [
+                "bash",
+                "-lc",
+                (
+                    f"{quoted} & pid=$!; "
+                    "for i in $(seq 1 360); do "
+                    "  if find logs outputs -name policy.onnx 2>/dev/null | grep -q .; then "
+                    "    sleep 2; kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true; exit 0; "
+                    "  fi; "
+                    "  if ! kill -0 $pid 2>/dev/null; then wait $pid; exit $?; fi; "
+                    "  sleep 2; "
+                    "done; "
+                    "kill $pid 2>/dev/null || true; exit 1"
+                ),
             ]
         return RenderedJob(
             image=_image(spec, "eb/isaac-lab:2.3.2"),

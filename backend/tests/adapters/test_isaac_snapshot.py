@@ -34,7 +34,7 @@ def test_isaac_adapter_snapshot():
     assert "--headless" in cmd
 
 
-def test_export_policy_uses_play_export_only():
+def test_export_policy_uses_committed_play_cli():
     spec = JobSpec(
         kind=JobKind.EXPORT_POLICY,
         contract_id="ec_bhl_biped_12dof_v1",
@@ -44,9 +44,11 @@ def test_export_policy_uses_play_export_only():
         image="eb/isaac-lab:2.3.2",
     )
     rendered = get_adapter(spec).render(spec, "run_export")
-    assert rendered.command[:3] == ["/isaac-sim/python.sh", "scripts/rsl_rl/play.py", "--task"]
-    assert "--export_only" in rendered.command
-    assert "--load_run" in rendered.command
-    assert "model_4.pt" in rendered.command
-    assert "--max_iterations" not in rendered.command
+    joined = " ".join(rendered.command)
+    assert "scripts/rsl_rl/play.py" in joined
+    assert "--task" in joined
+    assert "--load_run" in joined
+    assert "model_4.pt" in joined
+    assert "--export_only" not in joined
+    assert "--max_iterations" not in joined
     assert "berkeley_humanoid_lite_assets" in rendered.env["PYTHONPATH"]
