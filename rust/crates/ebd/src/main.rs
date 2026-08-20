@@ -1,20 +1,19 @@
 use axum::body::Body;
-use axum::extract::{Path, Request, State};
-use axum::http::{header, StatusCode};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::{Parser, Subcommand};
-use eb_core::{sha256_hex, GpuInfo, HostProfile};
+use eb_core::HostProfile;
+use eb_runner::{RunRequest, Runner, StartError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
-use sysinfo::System;
 use tokio::net::UnixListener;
-use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(name = "ebd")]
@@ -34,6 +33,7 @@ enum Cmd {
 #[derive(Clone)]
 struct App {
     data_root: PathBuf,
+    runner: Runner,
 }
 
 #[tokio::main]
@@ -44,13 +44,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Doctor => {
-            println!("{}", serde_json::to_string_pretty(&doctor())?);
+            println!("{}", serde_json::to_string_pretty(&eb_probe::doctor())?);
         }
         Cmd::Health => {
             println!("{{\"ok\":true}}");
         }
         Cmd::Scan { path } => {
-            println!("{}", serde_json::to_string_pretty(&scan(&path))?);
+            println!("{}", serde_json::to_string_pretty(&eb_scanner::scan(&path))?);
         }
         Cmd::Serve => serve().await?,
     }
@@ -63,26 +63,37 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(data_root.join("cas"))?;
     fs::create_dir_all(data_root.join("tsdb"))?;
     fs::create_dir_all(data_root.join("runs"))?;
-    let app_state = Arc::new(App { data_root: data_root.clone() });
+    fs::create_dir_all(data_root.join("worktrees"))?;
+    let runner = Runner::new(data_root.clone());
+    let app_state = Arc::new(App {
+        data_root: data_root.clone(),
+        runner,
+    });
 
     let control = Router::new()
         .route("/healthz", get(health))
         .route("/v1/doctor", get(doctor_handler))
         .route("/v1/runs", post(submit_run))
+        .route("/v1/runs/{id}", get(get_run))
         .route("/v1/runs/{id}/cancel", post(cancel_run))
+        .route("/v1/runs/{id}/metrics", get(run_metrics))
+        .route("/v1/runs/{id}/logs", get(run_logs))
+        .route("/v1/ps", get(ps_handler))
         .route("/v1/scan", post(scan_handler))
         .with_state(app_state.clone());
 
     let media = Router::new()
         .route("/healthz", get(health))
         .route("/media/{*path}", get(media_get))
-        .with_state(app_state);
+        .with_state(app_state.clone());
 
     let control_path = std::env::var("EB_EBD_UDS").unwrap_or_else(|_| "/run/eb/ebd.sock".into());
     let media_path = std::env::var("EB_EBD_MEDIA_UDS").unwrap_or_else(|_| "/run/eb/ebd-http.sock".into());
     bind_unix(&control_path, control).await?;
     bind_unix(&media_path, media).await?;
     tracing::info!("ebd listening on {control_path} and {media_path}");
+    let root = data_root.clone();
+    tokio::spawn(async move { eb_collector::spawn(root).await });
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
     }
@@ -108,75 +119,89 @@ async fn health() -> Json<Value> {
     Json(json!({"ok": true, "service": "ebd"}))
 }
 
-async fn doctor_handler() -> Json<HostProfile> {
-    Json(doctor())
-}
-
-fn doctor() -> HostProfile {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    let gpus = nvidia_smi_gpus();
-    HostProfile {
-        hostname: System::host_name().unwrap_or_else(|| "unknown".into()),
-        gpus,
-        memory_total_mb: sys.total_memory() / 1024 / 1024,
-        has_dri: FsPath::new("/dev/dri").exists(),
+async fn doctor_handler(State(st): State<Arc<App>>) -> Json<HostProfile> {
+    let mut profile = eb_probe::doctor();
+    for gpu in &mut profile.gpus {
+        gpu.run_id = st.runner.gpu_occupant(gpu.index);
     }
-}
-
-fn nvidia_smi_gpus() -> Vec<GpuInfo> {
-    let out = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=index,name,memory.total,memory.free",
-            "--format=csv,noheader,nounits",
-        ])
-        .output();
-    let Ok(out) = out else {
-        return vec![];
-    };
-    if !out.status.success() {
-        return vec![];
-    }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<_> = line.split(',').map(|s| s.trim()).collect();
-            if parts.len() < 4 {
-                return None;
-            }
-            Some(GpuInfo {
-                index: parts[0].parse().unwrap_or(0),
-                name: parts[1].to_string(),
-                memory_total_mb: parts[2].parse().unwrap_or(0),
-                memory_free_mb: parts[3].parse().unwrap_or(0),
-                run_id: None,
-            })
-        })
-        .collect()
+    Json(profile)
 }
 
 #[derive(Deserialize)]
-struct RunReq {
+struct SubmitBody {
     run_id: String,
-    image: Option<String>,
-    command: Option<Vec<String>>,
-    kind: Option<String>,
+    #[serde(default)]
+    image: String,
+    #[serde(default)]
+    command: Vec<String>,
+    #[serde(default)]
+    env: Value,
+    #[serde(default)]
+    gpus: Vec<u32>,
+    #[serde(default)]
+    shm_gb: Option<u32>,
+    #[serde(default)]
+    devices: Vec<String>,
+    #[serde(default)]
+    mounts: Vec<eb_runner::Mount>,
+    #[serde(default)]
+    workdir: String,
+    #[serde(default)]
+    network: Option<String>,
 }
 
-enum StartFail {
-    ImageMissing(String),
-    Docker(String),
+fn env_pairs(env: &Value) -> Vec<(String, String)> {
+    match env {
+        Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()),
+                )
+            })
+            .collect(),
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| {
+                if let Some(a) = v.as_array() {
+                    if a.len() >= 2 {
+                        return Some((a[0].as_str()?.to_string(), a[1].as_str()?.to_string()));
+                    }
+                }
+                None
+            })
+            .collect(),
+        _ => vec![],
+    }
 }
 
-async fn submit_run(Json(req): Json<RunReq>) -> Json<Value> {
-    match try_docker_run(&req).await {
-        Ok(id) => Json(json!({"container_id": id, "status": "started"})),
-        Err(StartFail::ImageMissing(reason)) => Json(json!({
+async fn submit_run(State(st): State<Arc<App>>, Json(body): Json<SubmitBody>) -> Json<Value> {
+    let req = RunRequest {
+        run_id: body.run_id.clone(),
+        image: body.image,
+        command: body.command,
+        env: env_pairs(&body.env),
+        gpus: body.gpus,
+        shm_gb: body.shm_gb.unwrap_or(2),
+        devices: body.devices,
+        mounts: body.mounts,
+        workdir: body.workdir,
+        network: body.network,
+    };
+    let digest = eb_runner::Runner::image_digest(&req.image).ok();
+    match st.runner.start(&req).await {
+        Ok(id) => Json(json!({
+            "container_id": id,
+            "status": "started",
+            "image_digest": digest,
+        })),
+        Err(StartError::ImageMissing(reason)) => Json(json!({
             "container_id": null,
             "status": "image_missing",
             "reason": reason
         })),
-        Err(StartFail::Docker(reason)) => Json(json!({
+        Err(StartError::Docker(reason)) => Json(json!({
             "container_id": null,
             "status": "docker_error",
             "reason": reason
@@ -184,38 +209,73 @@ async fn submit_run(Json(req): Json<RunReq>) -> Json<Value> {
     }
 }
 
-async fn try_docker_run(req: &RunReq) -> Result<String, StartFail> {
-    let image = req.image.clone().unwrap_or_default();
-    if image.is_empty() {
-        return Err(StartFail::ImageMissing("image not present: (empty)".into()));
+async fn get_run(State(st): State<Arc<App>>, Path(id): Path<String>) -> Json<Value> {
+    match st.runner.get(&id) {
+        Some(info) => Json(serde_json::to_value(info).unwrap_or(json!({"run_id": id}))),
+        None => Json(json!({"run_id": id, "status": "unknown"})),
     }
-    let inspect = std::process::Command::new("docker")
-        .args(["image", "inspect", &image])
-        .output()
-        .map_err(|e| StartFail::Docker(e.to_string()))?;
-    if !inspect.status.success() {
-        return Err(StartFail::ImageMissing(format!("image not present: {image}")));
-    }
-    let name = format!("eb-run-{}", req.run_id);
-    let mut cmd = std::process::Command::new("docker");
-    cmd.args(["run", "-d", "--name", &name, "--label", &format!("eb.run_id={}", req.run_id)]);
-    cmd.arg(&image);
-    if let Some(c) = &req.command {
-        cmd.args(c);
-    }
-    let out = cmd.output().map_err(|e| StartFail::Docker(e.to_string()))?;
-    if !out.status.success() {
-        return Err(StartFail::Docker(String::from_utf8_lossy(&out.stderr).to_string()));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-async fn cancel_run(Path(id): Path<String>) -> Json<Value> {
-    let name = format!("eb-run-{id}");
-    let _ = std::process::Command::new("docker")
-        .args(["rm", "-f", &name])
-        .output();
+async fn cancel_run(State(st): State<Arc<App>>, Path(id): Path<String>) -> Json<Value> {
+    let _ = st.runner.cancel(&id).await;
     Json(json!({"ok": true, "run_id": id}))
+}
+
+async fn ps_handler(State(st): State<Arc<App>>) -> Json<Value> {
+    Json(json!({"items": st.runner.ps()}))
+}
+
+#[derive(Deserialize)]
+struct MetricsQ {
+    tag: Option<String>,
+}
+
+async fn run_metrics(
+    State(st): State<Arc<App>>,
+    Path(id): Path<String>,
+    Query(q): Query<MetricsQ>,
+) -> Json<Value> {
+    let _ = eb_collector::ingest_run_logs(&st.data_root, &id);
+    if let Some(tag) = q.tag {
+        let points = eb_tsdb::query(&st.data_root, &id, &tag).unwrap_or_default();
+        Json(json!({
+            "tag": tag,
+            "points": points.into_iter().map(|(step, value)| json!({"step": step, "value": value})).collect::<Vec<_>>()
+        }))
+    } else {
+        let tags = eb_tsdb::list_tags(&st.data_root, &id).unwrap_or_default();
+        let mut series = serde_json::Map::new();
+        for tag in tags {
+            let points = eb_tsdb::query(&st.data_root, &id, &tag).unwrap_or_default();
+            series.insert(
+                tag,
+                json!(points.into_iter().map(|(step, value)| json!({"step": step, "value": value})).collect::<Vec<_>>()),
+            );
+        }
+        Json(json!({"run_id": id, "series": series}))
+    }
+}
+
+#[derive(Deserialize)]
+struct LogsQ {
+    tail: Option<usize>,
+}
+
+async fn run_logs(
+    State(st): State<Arc<App>>,
+    Path(id): Path<String>,
+    Query(q): Query<LogsQ>,
+) -> Json<Value> {
+    let path = st.data_root.join("runs").join(&id).join("console.log");
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let tail = q.tail.unwrap_or(200);
+    let lines: Vec<&str> = text.lines().collect();
+    let slice = if lines.len() > tail {
+        &lines[lines.len() - tail..]
+    } else {
+        &lines
+    };
+    Json(json!({"run_id": id, "lines": slice}))
 }
 
 #[derive(Deserialize)]
@@ -224,29 +284,7 @@ struct ScanReq {
 }
 
 async fn scan_handler(Json(req): Json<ScanReq>) -> Json<Value> {
-    Json(scan(&req.path))
-}
-
-fn scan(path: &str) -> Value {
-    let mut files = 0u64;
-    let mut bytes = 0u64;
-    let mut samples = vec![];
-    if FsPath::new(path).exists() {
-        for ent in WalkDir::new(path).max_depth(6).into_iter().flatten() {
-            if ent.file_type().is_file() {
-                files += 1;
-                let sz = ent.metadata().map(|m| m.len()).unwrap_or(0);
-                bytes += sz;
-                if samples.len() < 20 {
-                    samples.push(json!({
-                        "path": ent.path().display().to_string(),
-                        "size": sz
-                    }));
-                }
-            }
-        }
-    }
-    json!({"path": path, "files": files, "bytes": bytes, "samples": samples})
+    Json(eb_scanner::scan(&req.path))
 }
 
 async fn media_get(State(st): State<Arc<App>>, Path(path): Path<String>, req: Request) -> Response {
@@ -254,24 +292,61 @@ async fn media_get(State(st): State<Arc<App>>, Path(path): Path<String>, req: Re
     if !full.exists() {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
+    let Ok(meta) = fs::metadata(&full) else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "stat").into_response();
+    };
+    let len = meta.len();
+    let headers = req.headers();
+    if let Some(range) = parse_range(headers, len) {
+        let Ok(buf) = fs::read(&full) else {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "read").into_response();
+        };
+        let (start, end) = range;
+        let slice = buf.get(start as usize..=end as usize).unwrap_or(&[]);
+        let mut res = Response::new(Body::from(slice.to_vec()));
+        *res.status_mut() = StatusCode::PARTIAL_CONTENT;
+        res.headers_mut().insert(
+            header::CONTENT_TYPE,
+            "application/octet-stream".parse().unwrap(),
+        );
+        res.headers_mut().insert(
+            header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{len}").parse().unwrap(),
+        );
+        res.headers_mut()
+            .insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+        return res;
+    }
     match fs::read(&full) {
         Ok(buf) => {
             let mut res = Response::new(Body::from(buf));
             res.headers_mut()
                 .insert(header::CONTENT_TYPE, "application/octet-stream".parse().unwrap());
-            let _ = req;
+            res.headers_mut()
+                .insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
             res
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "read").into_response(),
     }
 }
 
-#[allow(dead_code)]
-fn cas_put(root: &FsPath, data: &[u8]) -> PathBuf {
-    let digest = sha256_hex(data);
-    let dir = root.join("cas").join(&digest[..2]);
-    let _ = fs::create_dir_all(&dir);
-    let p = dir.join(&digest);
-    let _ = fs::write(&p, data);
-    p
+fn parse_range(headers: &HeaderMap, len: u64) -> Option<(u64, u64)> {
+    let raw = headers.get(header::RANGE)?.to_str().ok()?;
+    let spec = raw.strip_prefix("bytes=")?;
+    let (a, b) = spec.split_once('-')?;
+    if a.is_empty() {
+        let n: u64 = b.parse().ok()?;
+        let start = len.saturating_sub(n);
+        return Some((start, len.saturating_sub(1)));
+    }
+    let start: u64 = a.parse().ok()?;
+    let end = if b.is_empty() {
+        len.saturating_sub(1)
+    } else {
+        b.parse().ok()?
+    };
+    if start >= len || end >= len || start > end {
+        return None;
+    }
+    Some((start, end))
 }

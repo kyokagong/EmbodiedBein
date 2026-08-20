@@ -7,12 +7,14 @@ edition.workspace = true
 name = "ebd"
 path = "src/main.rs"
 
-[[bin]]
-name = "ebctl"
-path = "src/ctl.rs"
-
 [dependencies]
 eb-core = { path = "../eb-core" }
+eb-probe = { path = "../eb-probe" }
+eb-runner = { path = "../eb-runner" }
+eb-tsdb = { path = "../eb-tsdb" }
+eb-collector = { path = "../eb-collector" }
+eb-scanner = { path = "../eb-scanner" }
+eb-artifact = { path = "../eb-artifact" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -20,7 +22,3 @@ axum.workspace = true
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-walkdir.workspace = true
-sysinfo.workspace = true
-sha2.workspace = true
-hex.workspace = true

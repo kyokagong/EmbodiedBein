@@ -1,6 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["crates/eb-core", "crates/ebd"]
+members = [
+  "crates/eb-core",
+  "crates/eb-probe",
+  "crates/eb-runner",
+  "crates/eb-tsdb",
+  "crates/eb-collector",
+  "crates/eb-scanner",
+  "crates/eb-artifact",
+  "crates/eb-cli",
+  "crates/ebd",
+]
 
 [workspace.package]
 edition = "2021"

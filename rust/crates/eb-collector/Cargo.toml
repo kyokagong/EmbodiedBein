@@ -1,0 +1,12 @@
+[package]
+name = "eb-collector"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eb-tsdb = { path = "../eb-tsdb" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+walkdir.workspace = true

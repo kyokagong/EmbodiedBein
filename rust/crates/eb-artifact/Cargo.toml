@@ -1,0 +1,7 @@
+[package]
+name = "eb-artifact"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eb-core = { path = "../eb-core" }

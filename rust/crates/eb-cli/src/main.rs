@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
-use std::os::unix::net::UnixStream;
 use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 
 #[derive(Parser)]
 #[command(name = "ebctl")]
@@ -19,32 +19,31 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Health => {
-            match uds_get("/run/eb/ebd.sock", "/healthz") {
-                Ok(body) => {
-                    print!("{body}");
-                    std::process::exit(0);
-                }
-                Err(e) => {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
+        Cmd::Health => match uds_get("/run/eb/ebd.sock", "/healthz") {
+            Ok(body) => {
+                print!("{body}");
+                std::process::exit(0);
             }
-        }
-        Cmd::Doctor => {
-            match uds_get("/run/eb/ebd.sock", "/v1/doctor") {
-                Ok(body) => println!("{body}"),
-                Err(e) => {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
             }
-        }
-        Cmd::Ps => {
-            let _ = std::process::Command::new("docker")
-                .args(["ps", "--filter", "label=eb.run_id"])
-                .status();
-        }
+        },
+        Cmd::Doctor => match uds_get("/run/eb/ebd.sock", "/v1/doctor") {
+            Ok(body) => println!("{body}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+        Cmd::Ps => match uds_get("/run/eb/ebd.sock", "/v1/ps") {
+            Ok(body) => println!("{body}"),
+            Err(_) => {
+                let _ = std::process::Command::new("docker")
+                    .args(["ps", "--filter", "label=eb.run_id"])
+                    .status();
+            }
+        },
     }
 }
 

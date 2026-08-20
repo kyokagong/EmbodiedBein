@@ -1,0 +1,10 @@
+[package]
+name = "eb-probe"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eb-core = { path = "../eb-core" }
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true

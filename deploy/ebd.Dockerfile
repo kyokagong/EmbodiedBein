@@ -2,7 +2,7 @@
 FROM rust:1.83-bookworm AS build
 WORKDIR /src
 COPY rust/ ./
-RUN cargo build --release -p ebd
+RUN cargo build --release -p ebd -p eb-cli
 
 FROM debian:bookworm-slim
 # Host NVIDIA driver is bind-mounted / injected by nvidia-container-runtime.
