@@ -69,6 +69,7 @@ def overlay_mounts(worktree: Path, run_root: Path, writable_paths: list[str]) ->
     for rel in writable_paths:
         host = run_root / rel
         host.mkdir(parents=True, exist_ok=True)
+        (worktree / rel).mkdir(parents=True, exist_ok=True)
         mounts.append((str(host), f"/workspace/isaaclab_extension_template/{rel}", "rw"))
     return mounts
 
