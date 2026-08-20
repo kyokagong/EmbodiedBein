@@ -22,6 +22,13 @@ def test_isaac_adapter_snapshot():
     assert "--num_envs" in rendered.command
     assert "4096" in rendered.command
     assert "logs" in rendered.writable_paths
+    pythonpath = rendered.env.get("PYTHONPATH", "")
+    for pkg in (
+        "/workspace/isaaclab_extension_template/source/berkeley_humanoid_lite",
+        "/workspace/isaaclab_extension_template/source/berkeley_humanoid_lite_assets",
+        "/workspace/isaaclab_extension_template/source/berkeley_humanoid_lite_lowlevel",
+    ):
+        assert pkg in pythonpath.split(":")
     cmd = equivalent_command(spec, "run_test")
     assert "docker run" in cmd
     assert "--headless" in cmd

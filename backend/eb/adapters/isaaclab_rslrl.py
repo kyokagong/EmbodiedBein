@@ -3,6 +3,17 @@ from __future__ import annotations
 from eb.adapters.base import Adapter, RenderedJob, _image
 from eb.domain.job import JobKind, JobSpec
 
+# Image site-packages only has an editable install of berkeley_humanoid_lite.
+# The assets/lowlevel packages live under source/ and must be on PYTHONPATH
+# so a read-only worktree overlay is importable without writing .egg-info.
+_BHL_PYTHONPATH = ":".join(
+    [
+        "/workspace/isaaclab_extension_template/source/berkeley_humanoid_lite",
+        "/workspace/isaaclab_extension_template/source/berkeley_humanoid_lite_assets",
+        "/workspace/isaaclab_extension_template/source/berkeley_humanoid_lite_lowlevel",
+    ]
+)
+
 
 class IsaacLabRslRlAdapter(Adapter):
     kind = JobKind.TRAIN_RL
@@ -57,7 +68,11 @@ class IsaacLabRslRlAdapter(Adapter):
         return RenderedJob(
             image=_image(spec, "eb/isaac-lab:2.3.2"),
             command=cmd,
-            env={"ACCEPT_EULA": "Y", "OMNI_KIT_ACCEPT_EULA": "YES"},
+            env={
+                "ACCEPT_EULA": "Y",
+                "OMNI_KIT_ACCEPT_EULA": "YES",
+                "PYTHONPATH": _BHL_PYTHONPATH,
+            },
             writable_paths=["logs", "configs", "outputs"],
             devices=spec.resources.devices or ["/dev/dri"],
             gpus=spec.resources.gpus or 1,

@@ -27,3 +27,4 @@ RSL-RL 随该镜像内的 Isaac Lab 安装提供，不另起栈。
 - **禁止**回落到 busybox 或凭空 NGC tag。
 - `eb/isaac-lab:2.3.2` Dockerfile 清空 ENTRYPOINT：源镜像是 `runheadless.sh`（Isaac Sim Streaming），权威容器 `isaac-lab-template` 实际用 bash 跑 `python scripts/rsl_rl/train.py`。
 - Job 指纹使用 `docker image inspect --format '{{.Id}}'`，不用浮动 tag。
+- 镜像 site-packages 只有 `berkeley_humanoid_lite` 的 editable 安装；`berkeley_humanoid_lite_assets` 的 `.pth` 只存在于正在运行的 `isaac-lab-template` 可写层。Adapter 必须注入 `PYTHONPATH` 指向 worktree 的 `source/berkeley_humanoid_lite{,_assets,_lowlevel}`，否则 `train.py` 会 `ModuleNotFoundError`。
