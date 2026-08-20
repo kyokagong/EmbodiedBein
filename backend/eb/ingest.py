@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from eb.ids import new_id
+from eb.onnx_io import read_signature, sha256_file
 from eb.store.models import Artifact, Experiment, Job, ModelFamily, ModelVersion, Run
 
 CHECKPOINT_ROOTS = (
@@ -35,14 +36,6 @@ def infer_contract(path: Path) -> tuple[str | None, dict[str, int]]:
     if "humanoid" in n:
         return "ec_bhl_humanoid_22dof_v1", {"obs": 75, "act": 22}
     return None, {}
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        while chunk := f.read(1024 * 1024):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 async def ingest_all(session: AsyncSession) -> dict[str, int]:
@@ -92,8 +85,17 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
         if existing:
             continue
         size = path.stat().st_size
-        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-        cid, io = infer_contract(path)
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        cid, _hint_io = infer_contract(path)
+        io: dict[str, Any] = {}
+        measured = False
+        if path.suffix.lower() == ".onnx":
+            try:
+                sig = read_signature(path)
+                io = {"obs": sig.get("obs"), "act": sig.get("act")}
+                measured = True
+            except Exception:
+                io = {}
         art = Artifact(
             id=new_id("art"),
             sha256=digest,
@@ -114,12 +116,18 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
                 io_signature=io,
                 provenance="partial",
                 artifact_id=art.id,
-                tags=["legacy", path.suffix.lstrip(".")],
+                tags=["legacy", path.suffix.lstrip("."), "policy" if path.suffix.lower() == ".onnx" else "checkpoint"],
                 card={
                     "source_path": str(path),
-                    "contract": cid or "待人工归属",
+                    "contract_hint": cid,
                     "intended_use": "遗留导入策略",
-                    "limitations": "五元组不完整；I/O 由文件名推断，待 ONNX 实测核对",
+                    "limitations": (
+                        "五元组不完整；I/O 为 ONNX 实测"
+                        if measured
+                        else "五元组不完整；未能实测 I/O，文件名仅作 UI hint"
+                    ),
+                    "filename_hint_only": True,
+                    "measured": measured,
                 },
             )
         )
@@ -148,7 +156,7 @@ async def ingest_tfevents(session: AsyncSession) -> int:
                 session.add(Experiment(id=exp_id, name=f"legacy {cid}", contract_id=cid))
                 await session.flush()
             series = downsample_scalars(parse_tfevents(ev))
-            mtime = datetime.fromtimestamp(ev.stat().st_mtime, tz=timezone.utc)
+            mtime = datetime.fromtimestamp(ev.stat().st_mtime, tz=UTC)
             last = _last_values(series)
             job = Job(
                 id=new_id("job"),
@@ -177,7 +185,6 @@ async def ingest_tfevents(session: AsyncSession) -> int:
                     metrics_summary={
                         **last,
                         "source": str(ev),
-                        "series": series,
                     },
                     provenance="partial",
                     started_at=mtime,

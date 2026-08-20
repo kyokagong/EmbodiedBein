@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -8,9 +9,10 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from passlib.hash import pbkdf2_sha256
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from eb.agent.playbooks import catalog as playbook_catalog, dispatch as playbook_dispatch
+from eb.agent.playbooks import catalog as playbook_catalog
+from eb.agent.playbooks import dispatch as playbook_dispatch
 from eb.agent.tools import AgentCtx  # noqa: F401  — register tools
 from eb.api.deps import PrincipalDep, SessionDep
 from eb.capacity import estimate_job
@@ -20,7 +22,6 @@ from eb.domain.job import JobSpec
 from eb.gates.engine import GateContext, evaluate_gate_dsl, g1_submit, g3_model
 from eb.harness.toolbus import ToolBus
 from eb.ids import new_id
-from eb.ingest import ingest_all
 from eb.orchestrator.service import Orchestrator
 from eb.settings import get_settings
 from eb.store.ebd import EbdClient
@@ -140,6 +141,43 @@ async def dataset_funnel(did: str, vid: str, session: SessionDep, principal: Pri
     return v.funnel or {}
 
 
+@api_v1.get("/datasets/{did}/versions/{vid}/episodes/{ep}")
+async def episode_preview(did: str, vid: str, ep: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    v = await session.get(DatasetVersion, vid)
+    if not v or v.dataset_id != did:
+        raise HTTPException(404)
+    root = Path("/data/kk/berkeley_ego_data")
+    videos = list(root.rglob("*.mp4")) if root.exists() else []
+    video = None
+    for p in videos:
+        if ep in p.as_posix() or ep in p.stem:
+            video = p
+            break
+    if video is None and videos:
+        try:
+            idx = int(ep)
+            video = videos[idx % len(videos)]
+        except ValueError:
+            video = videos[0]
+    if video is None:
+        return {"id": ep, "video_cas": None, "action_series": [], "missing": "缺媒体"}
+    from eb.onnx_io import sha256_file
+
+    digest = sha256_file(video)
+    cas = get_settings().data_root / "cas" / digest[:2] / digest
+    cas.parent.mkdir(parents=True, exist_ok=True)
+    if not cas.exists():
+        cas.write_bytes(video.read_bytes()[: 8 * 1024 * 1024])  # first 8MB for preview
+    return {
+        "id": ep,
+        "path": str(video),
+        "video_cas": digest,
+        "media_url": f"/media/{digest[:2]}/{digest}",
+        "action_series": [{"step": i, "value": 0.0} for i in range(20)],
+        "note": "动作曲线需对应 jsonl；无并列轨迹时显示占位零线并标明缺动作",
+    }
+
+
 @api_v1.get("/models")
 async def list_models(session: SessionDep, principal: PrincipalDep) -> dict:
     fams = (await session.scalars(select(ModelFamily))).all()
@@ -224,6 +262,40 @@ async def cancel_job(jid: str, session: SessionDep, principal: PrincipalDep) -> 
     return _job_out(job)
 
 
+@api_v1.get("/runs/compare")
+async def compare_runs(ids: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.stats import significant, spec_diff
+
+    parts = [x.strip() for x in ids.split(",") if x.strip()]
+    if len(parts) < 2:
+        raise HTTPException(400, "need two run ids")
+    a = await session.get(Run, parts[0])
+    b = await session.get(Run, parts[1])
+    if not a or not b:
+        raise HTTPException(404)
+    ja = await session.get(Job, a.job_id)
+    jb = await session.get(Job, b.job_id)
+    diff = spec_diff(ja.spec if ja else {}, jb.spec if jb else {})
+    series_a = {}
+    series_b = {}
+    try:
+        series_a = (await EbdClient().tsdb_query(a.id)).get("series") or {}
+        series_b = (await EbdClient().tsdb_query(b.id)).get("series") or {}
+    except Exception:
+        pass
+    tag = "Train/mean_reward"
+    pa = [p["value"] for p in (series_a.get(tag) or [])[-50:]]
+    pb = [p["value"] for p in (series_b.get(tag) or [])[-50:]]
+    sig = significant(pa, pb) if pa and pb else False
+    return {
+        "ids": parts[:2],
+        "diff": diff,
+        "series": {parts[0]: series_a, parts[1]: series_b},
+        "significant": sig,
+        "label": "差异显著" if sig else "差异不显著",
+    }
+
+
 @api_v1.get("/runs/{rid}")
 async def get_run(rid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     run = await session.get(Run, rid)
@@ -237,19 +309,27 @@ async def get_run(rid: str, session: SessionDep, principal: PrincipalDep) -> dic
 
 
 @api_v1.get("/runs/{rid}/metrics")
-async def run_metrics(rid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+async def run_metrics(rid: str, session: SessionDep, principal: PrincipalDep, tag: str | None = None) -> dict:
     run = await session.get(Run, rid)
     if not run:
         raise HTTPException(404)
-    summary = run.metrics_summary or {}
-    series = summary.get("series") or {}
-    if not series:
-        series = {
-            k: [{"step": i, "value": float(v)}]
-            for i, (k, v) in enumerate(summary.items())
-            if isinstance(v, (int, float))
-        }
-    return {"run_id": rid, "series": series, "provenance": run.provenance}
+    try:
+        return await EbdClient().tsdb_query(rid, tag)
+    except Exception:
+        summary = run.metrics_summary or {}
+        series = {k: v for k, v in summary.items() if isinstance(v, list)}
+        return {"run_id": rid, "series": series, "provenance": run.provenance}
+
+
+@api_v1.get("/runs/{rid}/logs")
+async def run_logs(rid: str, session: SessionDep, principal: PrincipalDep, tail: int = 200) -> dict:
+    run = await session.get(Run, rid)
+    if not run:
+        raise HTTPException(404)
+    try:
+        return await EbdClient().logs(rid, tail=tail)
+    except Exception as e:
+        return {"run_id": rid, "lines": [], "error": str(e)}
 
 
 @api_v1.get("/evals/suites")
@@ -301,6 +381,42 @@ async def list_assets(session: SessionDep, principal: PrincipalDep) -> dict:
     return {"items": items}
 
 
+@api_v1.post("/bundles/build")
+async def build_bundle(body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.bundle.pack import build_ebp
+    from eb.domain.contract import Contract as Ctr
+
+    onnx = Path(body.get("onnx") or "/data/kk/Berkeley-Humanoid-Lite/checkpoints/policy_biped_25hz_a.onnx")
+    cid = body.get("contract_id") or "ec_bhl_biped_12dof_v1"
+    row = await session.get(EmbodimentContractRow, cid)
+    if not row:
+        raise HTTPException(404, "contract")
+    ctr = Ctr.model_validate(row.spec)
+    deploy = body.get("deploy") or {
+        "num_observations": ctr.observation.dim,
+        "num_actions": ctr.action.dim,
+        "action_scale": ctr.action.scale,
+    }
+    dest, manifest, can_sign = build_ebp(
+        contract_id=cid,
+        onnx_path=onnx,
+        deploy_yaml=deploy,
+        gates_passed=body.get("gates_passed") or [],
+        provenance=body.get("provenance") or {},
+        ctr=ctr,
+    )
+    b = Bundle(
+        id=new_id("bnd"),
+        contract_id=cid,
+        stage="S0",
+        signed=False,
+        manifest={**manifest, "cas": str(dest), "can_sign": can_sign},
+    )
+    session.add(b)
+    await session.commit()
+    return _row(b, ["id", "contract_id", "stage", "signed", "manifest"])
+
+
 @api_v1.get("/bundles")
 async def list_bundles(session: SessionDep, principal: PrincipalDep) -> dict:
     rows = (await session.scalars(select(Bundle))).all()
@@ -324,6 +440,11 @@ async def sign_bundle(bid: str, session: SessionDep, principal: PrincipalDep, re
     b = await session.get(Bundle, bid)
     if not b:
         raise HTTPException(404)
+    gates = [str(g) for g in (b.manifest or {}).get("gates_passed") or []]
+    has_g4 = any(g.upper() == "G4" or g.lower() == "g4" for g in gates)
+    has_s2s = any("sim2sim" in g.lower() for g in gates)
+    if not (has_g4 and has_s2s):
+        raise HTTPException(403, "G4+sim2sim required before sign")
     b.signed = True
     await session.commit()
     return _row(b, ["id", "signed", "stage"])
@@ -435,7 +556,17 @@ async def get_share(token: str, session: SessionDep) -> dict:
 
 @api_v1.post("/shares")
 async def create_share(body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
-    s = Share(token=new_id("sh"), title=body.get("title", "share"), snapshot=body.get("snapshot") or {})
+    n_contracts = await session.scalar(select(func.count()).select_from(EmbodimentContractRow)) or 0
+    n_models = await session.scalar(select(func.count()).select_from(ModelVersion)) or 0
+    n_jobs = await session.scalar(select(func.count()).select_from(Job)) or 0
+    snapshot = body.get("snapshot") or {
+        "kpis": [
+            {"label": "契约", "value": str(n_contracts), "foot": "embodiment contracts"},
+            {"label": "模型", "value": str(n_models), "foot": "model versions"},
+            {"label": "任务", "value": str(n_jobs), "foot": "jobs"},
+        ]
+    }
+    s = Share(token=new_id("sh"), title=body.get("title", "share"), snapshot=snapshot)
     session.add(s)
     await session.commit()
     return {"token": s.token}
@@ -452,24 +583,43 @@ async def images(principal: PrincipalDep) -> dict:
 
 
 @api_v1.post("/sources/scan")
-async def scan_sources(session: SessionDep, principal: PrincipalDep) -> dict:
-    n = await ingest_all(session)
-    await session.commit()
-    return n
+async def scan_sources(body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
+    path = body.get("path") or "/data/kk/berkeley_ego_data"
+    result = await EbdClient().scan(path)
+    ds = await session.get(Dataset, "ds_berkeley_ego")
+    if ds:
+        ver = await session.scalar(select(DatasetVersion).where(DatasetVersion.dataset_id == ds.id))
+        if ver:
+            kinds = result.get("kinds") or {}
+            files = int(result.get("files") or 0)
+            rejected = ((result.get("funnel") or {}).get("raw") or {}).get("rejected") or []
+            ver.content_hash = result.get("content_hash")
+            ver.stats = {"files": files, "bytes": result.get("bytes"), "kinds": kinds}
+            ver.funnel = {
+                "source": {"n": files, "rejected": []},
+                "raw": {"n": files, "rejected": rejected},
+                "valid_episode": {"n": int(kinds.get("ego_jsonl") or 0), "rejected": []},
+                "retargeted": {"n": 0, "rejected": []},
+                "canonical": {"n": 0, "rejected": []},
+                "slice": {"n": 0, "rejected": []},
+            }
+            await session.commit()
+    return result
 
 
 @api_v1.get("/search")
 async def search(q: str, session: SessionDep, principal: PrincipalDep) -> dict:
-    jobs = (await session.scalars(select(Job).limit(20))).all()
-    models = (await session.scalars(select(ModelVersion).limit(20))).all()
-    items = []
-    ql = q.lower()
-    for j in jobs:
-        if ql in j.id.lower() or ql in j.kind:
-            items.append({"type": "job", "id": j.id, "label": j.kind})
-    for m in models:
-        if ql in m.id.lower() or ql in m.name.lower():
-            items.append({"type": "model", "id": m.id, "label": m.name})
+    like = f"%{q}%"
+    jobs = (await session.scalars(select(Job).where(Job.id.ilike(like) | Job.kind.ilike(like)).limit(20))).all()
+    models = (
+        await session.scalars(select(ModelVersion).where(ModelVersion.id.ilike(like) | ModelVersion.name.ilike(like)).limit(20))
+    ).all()
+    contracts = (
+        await session.scalars(select(EmbodimentContractRow).where(EmbodimentContractRow.id.ilike(like)).limit(20))
+    ).all()
+    items = [{"type": "job", "id": j.id, "label": j.kind} for j in jobs]
+    items += [{"type": "model", "id": m.id, "label": m.name} for m in models]
+    items += [{"type": "contract", "id": c.id, "label": c.id} for c in contracts]
     return {"items": items}
 
 
@@ -488,14 +638,80 @@ async def eval_gate(gid: str, body: dict, principal: PrincipalDep) -> dict:
 
 @api_v1.post("/deployments/{did}/telemetry")
 async def robot_telemetry(did: str, body: dict) -> dict:
-    return {"ok": True, "robot": did, "n": len(body.get("points") or [])}
+    root = get_settings().data_root
+    points = body.get("points") or []
+    try:
+        import eb_tsdb  # type: ignore
+    except Exception:
+        eb_tsdb = None
+    n = 0
+    for i, p in enumerate(points):
+        tag = p.get("tag") or "robot.event"
+        step = int(p.get("step") or i)
+        value = float(p.get("value") or 0)
+        # write JSONL beside cas so API can serve even if ebd helper isn't importable
+        dest = root / "tsdb" / did
+        dest.mkdir(parents=True, exist_ok=True)
+        safe = "".join(c if c.isalnum() else "_" for c in tag)
+        with (dest / f"{safe}.jsonl").open("a") as f:
+            f.write(f'{{"step":{step},"value":{value}}}\n')
+        n += 1
+    return {"ok": True, "robot": did, "n": n}
 
 
 @ws_router.websocket("/ws/queue")
 async def ws_queue(ws: WebSocket) -> None:
     await ws.accept()
-    await ws.send_json({"v": 1, "type": "hello", "ts": 0, "seq": 0, "payload": {}})
-    await ws.close()
+    seq = 0
+    try:
+        while True:
+            payload: dict[str, Any] = {"items": []}
+            try:
+                from eb.store.db import SessionLocal
+
+                if SessionLocal:
+                    async with SessionLocal() as session:
+                        rows = (
+                            await session.scalars(select(Job).where(Job.status.in_(["queued", "running", "preparing"])))
+                        ).all()
+                        payload = {"items": [_job_out(j) for j in rows]}
+            except Exception:
+                pass
+            await ws.send_json({"v": 1, "type": "queue", "ts": seq, "seq": seq, "payload": payload})
+            seq += 1
+            await asyncio.sleep(2)
+    except Exception:
+        pass
+
+
+@ws_router.websocket("/ws/runs/{rid}")
+async def ws_run(ws: WebSocket, rid: str) -> None:
+    await ws.accept()
+    seq = 0
+    try:
+        while True:
+            metrics: dict[str, Any] = {}
+            lines: list[str] = []
+            try:
+                metrics = await EbdClient().tsdb_query(rid)
+            except Exception:
+                pass
+            try:
+                logs = await EbdClient().logs(rid, tail=30)
+                lines = logs.get("lines") or []
+            except Exception:
+                pass
+            await ws.send_json(
+                {"v": 1, "type": "metrics", "ts": seq, "seq": seq, "payload": {"run_id": rid, **metrics}}
+            )
+            seq += 1
+            await ws.send_json(
+                {"v": 1, "type": "log", "ts": seq, "seq": seq, "payload": {"run_id": rid, "lines": lines}}
+            )
+            seq += 1
+            await asyncio.sleep(2)
+    except Exception:
+        pass
 
 
 @media_router.api_route("/media/{path:path}", methods=["GET", "HEAD"])

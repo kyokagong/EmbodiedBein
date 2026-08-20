@@ -48,6 +48,10 @@ class IsaacLabRslRlAdapter(Adapter):
                 "--headless",
                 "--num_envs",
                 str(spec.params.get("num_envs", 128)),
+                "--seed",
+                str(seed),
+                "--metrics_output",
+                "/workspace/isaaclab_extension_template/outputs/metrics.json",
                 *spec.overrides,
             ]
         return RenderedJob(
@@ -59,4 +63,6 @@ class IsaacLabRslRlAdapter(Adapter):
             gpus=spec.resources.gpus or 1,
             shm_gb=spec.resources.shm_gb,
             workdir="/workspace/isaaclab_extension_template",
+            outputs=["outputs", "logs"],
+            metrics_glob="logs/**/events.out.tfevents.*",
         )

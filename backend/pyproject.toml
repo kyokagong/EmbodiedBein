@@ -21,6 +21,8 @@ dependencies = [
   "orjson>=3.10",
   "greenlet>=3.1",
   "psycopg2-binary>=2.9",
+  "onnx>=1.16",
+  "pyzstd>=0.16",
 ]
 
 [project.optional-dependencies]

@@ -24,6 +24,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     assert store_db.SessionLocal is not None
     scheduler = Scheduler()
     app.state.scheduler = scheduler
+    from eb.pluginhost import PluginHost
+
+    host = PluginHost()
+    try:
+        import sys
+
+        sys.path.append(str(Path(__file__).resolve().parents[3] / "plugins"))
+        from eb_plugin_isaaclab import setup as isaac_setup
+
+        host.load("isaaclab", isaac_setup)
+    except Exception:
+        pass
+    app.state.plugins = host
     async with store_db.SessionLocal() as session:
         await seed_if_empty(session)
         try:

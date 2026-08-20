@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from passlib.hash import pbkdf2_sha256
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from datetime import datetime, timedelta, timezone
 
 from eb.domain.contract import load_contract_dir
 from eb.ids import new_id, sha256_bytes
@@ -19,7 +18,6 @@ from eb.store.models import (
     Dataset,
     DatasetVersion,
     EmbodimentContractRow,
-    EvalReport,
     EvalSuite,
     Robot,
     Share,
@@ -120,20 +118,11 @@ async def seed_if_empty(session: AsyncSession) -> None:
         )
         await session.flush()
         session.add(
-            EvalReport(
-                id="ev_biped_baseline",
-                suite_id="suite_biped_locomotion_v2",
-                model_version_id=None,
-                metrics={"success_rate": 0.82, "mean_reward": 16.4},
-                gate_results={"g1": "pass", "g3": "unknown"},
-            )
-        )
-        session.add(
             Robot(
                 id="robot_bhl_01",
                 name="BHL-01",
                 contract_id="ec_bhl_biped_12dof_v1",
-                calibration={"expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()},
+                calibration={"expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat()},
             )
         )
         session.add(
