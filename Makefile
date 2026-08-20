@@ -45,7 +45,10 @@ lint:
 	cd frontend && npx vue-tsc --noEmit
 
 images:
-	docker build -t eb/isaac-lab:2.3.2 -f deploy/images/isaac.Dockerfile .
-	docker build -t eb/rlinf:0.4.0-emb -f deploy/images/rlinf.Dockerfile .
+	@docker image inspect isaac-lab-template >/dev/null 2>&1 || { echo "先有 isaac-lab-template"; exit 1; }
+	docker tag $$(docker inspect isaac-lab-template --format '{{.Image}}') eb/isaac-lab:2.3.2
+	docker build -t eb/isaac-lab:2.3.2 -f deploy/images/isaac.Dockerfile --build-arg BASE=isaac-lab-template .
+	@docker image inspect rlinf-berkeley-openpi >/dev/null 2>&1 || docker image inspect rlinf/rlinf:agentic-rlinf0.2-maniskill_libero >/dev/null 2>&1 || { echo "缺少本机 RLinf 镜像，跳过 eb/rlinf 标签"; true; }
+	-docker tag rlinf-berkeley-openpi:local eb/rlinf:0.4.0-emb
 	docker build -t eb/mujoco:latest -f deploy/images/mujoco.Dockerfile .
 	docker build -t eb/tools:latest -f deploy/images/tools.Dockerfile .
