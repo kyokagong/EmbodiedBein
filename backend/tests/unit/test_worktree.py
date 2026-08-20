@@ -1,4 +1,3 @@
-from pathlib import Path
 import subprocess
 
 from eb.worktree import overlay_mounts, prepare_worktree

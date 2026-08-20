@@ -1,10 +1,9 @@
 from pathlib import Path
 
 from eb.domain.contract import load_contract
-from eb.domain.fsm import JobStatus, IllegalTransition, transition
+from eb.domain.fsm import IllegalTransition, JobStatus, transition
 from eb.domain.job import JobKind, JobSpec
 from eb.gates.engine import GateContext, g1_submit, g5_robot
-
 
 ROOT = Path(__file__).resolve().parents[3]
 
