@@ -87,7 +87,15 @@ class Orchestrator:
         session.add(run)
         spec_kind = spec.kind
         if spec_kind in CONTAINERLESS_KINDS:
-            await self._run_containerless(session, job, run, spec)
+            try:
+                await self._run_containerless(session, job, run, spec)
+            except Exception as e:
+                apply_ebd_result(
+                    job,
+                    run,
+                    {"status": "docker_error", "reason": str(e), "container_id": None},
+                )
+                await session.commit()
             await session.refresh(job)
             await session.refresh(run)
             return run

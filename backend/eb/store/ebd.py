@@ -9,8 +9,8 @@ class EbdClient:
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=self.settings.ebd_uds), timeout=30.0)
+    def _client(self, timeout: float = 30.0) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=self.settings.ebd_uds), timeout=timeout)
 
     async def health(self) -> dict:
         try:
@@ -71,7 +71,7 @@ class EbdClient:
             return r.json()
 
     async def scan(self, path: str) -> dict:
-        async with self._client() as c:
+        async with self._client(timeout=3600.0) as c:
             r = await c.post("http://ebd/v1/scan", json={"path": path})
             r.raise_for_status()
             return r.json()

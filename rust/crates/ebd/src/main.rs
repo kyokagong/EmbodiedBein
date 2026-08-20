@@ -284,7 +284,11 @@ struct ScanReq {
 }
 
 async fn scan_handler(Json(req): Json<ScanReq>) -> Json<Value> {
-    Json(eb_scanner::scan(&req.path))
+    let path = req.path;
+    let value = tokio::task::spawn_blocking(move || eb_scanner::scan(&path))
+        .await
+        .unwrap_or_else(|e| json!({"error": e.to_string()}));
+    Json(value)
 }
 
 async fn media_get(State(st): State<Arc<App>>, Path(path): Path<String>, req: Request) -> Response {
