@@ -16,6 +16,21 @@ from eb.store.ebd import EbdClient
 from eb.store.models import EmbodimentContractRow, Job, Run
 
 
+def apply_ebd_result(job, run, result: dict) -> None:
+    """Map ebd submit_run JSON onto Job/Run. Never invent success or metrics."""
+    status = result.get("status")
+    if status == "started":
+        run.container_id = result["container_id"]
+        run.status = RunStatus.RUNNING.value
+        job.status = JobStatus.RUNNING.value
+        return
+    run.status = RunStatus.ABORTED.value
+    run.abort_reason = status or "docker_error"
+    job.status = JobStatus.INFRA_FAILED.value
+    job.error = result.get("reason") or status
+    run.metrics_summary = {}
+
+
 class Orchestrator:
     def __init__(self, ebd: EbdClient | None = None) -> None:
         self.ebd = ebd or EbdClient()
@@ -67,8 +82,6 @@ class Orchestrator:
         )
         session.add(run)
         rendered = get_adapter(spec).render(spec, run.id)
-        job.status = transition(JobStatus(job.status), JobStatus.RUNNING).value
-        run.status = RunStatus.RUNNING.value
         try:
             result = await self.ebd.submit_run(
                 {
@@ -82,19 +95,18 @@ class Orchestrator:
                     "devices": rendered.devices,
                     "workdir": rendered.workdir,
                     "kind": spec.kind.value,
+                    "mounts": [
+                        {"src": src, "dst": dst, "mode": mode} for src, dst, mode in rendered.mounts
+                    ],
                 }
             )
-            run.container_id = result.get("container_id")
-            if result.get("status") == "stub_finished":
-                run.status = RunStatus.FINISHED.value
-                run.finished_at = datetime.now(timezone.utc)
-                job.status = JobStatus.SUCCEEDED.value
-                run.metrics_summary = result.get("metrics") or {"Train/mean_reward": 12.4}
+            apply_ebd_result(job, run, result)
         except Exception as e:
-            run.status = RunStatus.ABORTED.value
-            run.abort_reason = "infra_failed"
-            job.status = JobStatus.INFRA_FAILED.value
-            job.error = str(e)
+            apply_ebd_result(
+                job,
+                run,
+                {"status": "docker_error", "reason": str(e), "container_id": None},
+            )
         await session.commit()
         await session.refresh(job)
         await session.refresh(run)

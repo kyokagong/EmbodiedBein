@@ -163,37 +163,38 @@ struct RunReq {
     kind: Option<String>,
 }
 
+enum StartFail {
+    ImageMissing(String),
+    Docker(String),
+}
+
 async fn submit_run(Json(req): Json<RunReq>) -> Json<Value> {
-    let kind = req.kind.clone().unwrap_or_default();
-    if kind == "data.scan" || req.image.as_deref().unwrap_or("").is_empty() {
-        return Json(json!({
-            "container_id": null,
-            "status": "stub_finished",
-            "metrics": {"ok": 1.0}
-        }));
-    }
     match try_docker_run(&req).await {
         Ok(id) => Json(json!({"container_id": id, "status": "started"})),
-        Err(e) => Json(json!({
+        Err(StartFail::ImageMissing(reason)) => Json(json!({
             "container_id": null,
-            "status": "stub_finished",
-            "reason": e,
-            "metrics": {"Train/mean_reward": 11.2, "note": "image missing; stub run for first deploy"}
+            "status": "image_missing",
+            "reason": reason
+        })),
+        Err(StartFail::Docker(reason)) => Json(json!({
+            "container_id": null,
+            "status": "docker_error",
+            "reason": reason
         })),
     }
 }
 
-async fn try_docker_run(req: &RunReq) -> Result<String, String> {
+async fn try_docker_run(req: &RunReq) -> Result<String, StartFail> {
     let image = req.image.clone().unwrap_or_default();
     if image.is_empty() {
-        return Err("no image".into());
+        return Err(StartFail::ImageMissing("image not present: (empty)".into()));
     }
     let inspect = std::process::Command::new("docker")
         .args(["image", "inspect", &image])
         .output()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| StartFail::Docker(e.to_string()))?;
     if !inspect.status.success() {
-        return Err(format!("image not present: {image}"));
+        return Err(StartFail::ImageMissing(format!("image not present: {image}")));
     }
     let name = format!("eb-run-{}", req.run_id);
     let mut cmd = std::process::Command::new("docker");
@@ -202,9 +203,9 @@ async fn try_docker_run(req: &RunReq) -> Result<String, String> {
     if let Some(c) = &req.command {
         cmd.args(c);
     }
-    let out = cmd.output().map_err(|e| e.to_string())?;
+    let out = cmd.output().map_err(|e| StartFail::Docker(e.to_string()))?;
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).to_string());
+        return Err(StartFail::Docker(String::from_utf8_lossy(&out.stderr).to_string()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
