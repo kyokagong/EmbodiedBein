@@ -1,0 +1,38 @@
+:root {
+  --bg: #071018;
+  --panel: #0d1924;
+  --line: #284052;
+  --text: #edf6fb;
+  --muted: #9fb4c2;
+  --cyan: #53d4ff;
+  --green: #53e5a3;
+  --amber: #ffc857;
+  --red: #ff5d68;
+  --violet: #b28dff;
+  --pink: #ff7ac0;
+}
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+a { color: var(--cyan); text-decoration: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; background: #122332; border: 1px solid var(--line); border-radius: 8px; padding: .4rem .8rem; }
+input, select, textarea { background: #0a151f; border: 1px solid var(--line); border-radius: 8px; padding: .45rem .7rem; }
+.shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100%; }
+.nav { border-right: 1px solid #1d3243; padding: 1rem .8rem; background: #050c12; }
+.nav h1 { font-size: .95rem; margin: 0 0 1rem; letter-spacing: .04em; color: var(--cyan); }
+.nav a { display: block; padding: .35rem .5rem; border-radius: 6px; color: var(--muted); }
+.nav a.router-link-active { background: #122332; color: var(--text); }
+.main { padding: 1.2rem 1.6rem; overflow: auto; }
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem; margin-bottom: 1.2rem; }
+.card { background: var(--panel); border: 1px solid #1d3243; border-radius: 12px; padding: 1rem 1.1rem; }
+.card .l { color: var(--muted); font-size: .78rem; }
+.card .v { font-size: 1.5rem; margin-top: .2rem; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th, td { text-align: left; padding: .45rem .4rem; border-bottom: 1px solid #1d3243; }
+.badge { font-size: .72rem; padding: .1rem .4rem; border-radius: 999px; background: #16293a; }
+h2 { margin: 0 0 1rem; font-size: 1.35rem; }
+.muted { color: var(--muted); }
+pre { background: #050c12; padding: .8rem; border-radius: 8px; overflow: auto; font-size: .8rem; }
+.row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+.error { color: var(--red); }

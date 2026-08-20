@@ -1,0 +1,61 @@
+id: ec_bhl_wbc_22dof_v1
+robot_family: berkeley_humanoid_lite
+morphology: humanoid
+interface_version: 1
+status: active
+dof: 22
+joint_groups:
+  arm: { count: 10 }
+  leg: { count: 12 }
+joint_order:
+  - arm_left_shoulder_pitch_joint
+  - arm_left_shoulder_roll_joint
+  - arm_left_shoulder_yaw_joint
+  - arm_left_elbow_pitch_joint
+  - arm_left_elbow_roll_joint
+  - arm_right_shoulder_pitch_joint
+  - arm_right_shoulder_roll_joint
+  - arm_right_shoulder_yaw_joint
+  - arm_right_elbow_pitch_joint
+  - arm_right_elbow_roll_joint
+  - leg_left_hip_roll_joint
+  - leg_left_hip_yaw_joint
+  - leg_left_hip_pitch_joint
+  - leg_left_knee_pitch_joint
+  - leg_left_ankle_pitch_joint
+  - leg_left_ankle_roll_joint
+  - leg_right_hip_roll_joint
+  - leg_right_hip_yaw_joint
+  - leg_right_hip_pitch_joint
+  - leg_right_knee_pitch_joint
+  - leg_right_ankle_pitch_joint
+  - leg_right_ankle_roll_joint
+observation:
+  dim: 85
+  history_length: 1
+  concat: true
+  layout:
+    - { term: velocity_commands, dim: 3, source: command }
+    - { term: arm_reference, dim: 10, source: command }
+    - { term: base_ang_vel, dim: 3, source: imu }
+    - { term: projected_gravity, dim: 3, source: imu }
+    - { term: joint_pos_rel, dim: 22, source: encoder }
+    - { term: joint_vel_rel, dim: 22, source: encoder }
+    - { term: last_action, dim: 22, source: policy }
+action:
+  dim: 22
+  terms:
+    - { name: arm, type: joint_position_to_limits, dim: 10, indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] }
+    - { name: leg, type: joint_position, dim: 12, scale: 0.25, indices: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] }
+control:
+  policy_hz: 50
+  control_hz: 200
+  sim_dt: 0.005
+  decimation: 4
+  max_policy_latency_ms: 8
+  command_dim: 13
+sim_bindings:
+  isaac_task: Tracking-Berkeley-Humanoid-Lite-WholeBody-v0
+  experiment_name: wbc
+real_bindings:
+  firmware_n_joints: 22

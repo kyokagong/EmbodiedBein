@@ -1,0 +1,1047 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein Agent：三层架构、Runtime 选型（自研 harness vs deepseek-harness/dsh）、ToolBus 内核、插件封装契约、工具集与权限矩阵、剧本、护栏与预算、审计与失效模式。">
+<title>08 · Agent 设计｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">08 · Agent</p>
+  <h1>Agent 设计</h1>
+  <p class="hero-copy">
+    你选择了<b>可自主发起任务</b>的 Agent。这意味着它会花掉你的 GPU、占用你的磁盘、
+    在你睡觉时改变系统状态。所以这一章的重点不是「Agent 能做什么」——
+    那部分相对容易——而是<b>它不能做什么、如何被限制、以及出错后如何收拾</b>。
+    <br><br>
+    8.3–8.5 回答工程上的三个问题：<b>runtime 是自研还是站在开源框架上</b>、
+    <b>harness 内核到底由哪几件东西构成</b>、<b>插件怎么封</b>。
+    结论是自研内核 + 借 <a href="https://github.com/deepseek-ai/deepseek-harness">dsh</a>/Cordis 的插件范式 + 复用 MCP 协议。
+  </p>
+</header>
+
+<h2 id="premise">8.1 前提：Agent 只是一个特殊的用户</h2>
+
+<div class="note decide">
+  <span class="note-t">最重要的架构约束</span>
+  Agent <b>没有任何后门</b>。它触达的是与前端完全相同的<b>领域服务</b>——
+  同样的鉴权、同样的契约门禁、同样的资源准入、同样的审计日志。
+  唯一的区别是它的身份是 <code>actor_type=agent</code>，
+  因而受一套<b>更严格的配额与白名单</b>约束。
+  <br><br>
+  <span class="xs muted-2">
+  措辞上要精确一点：<b>「同一套 API」指的是同一套门禁与同一套领域逻辑，不是同一条 HTTP 传输</b>。
+  单机部署下 harness 与 API 同进程，工具直接调进程内 service（见 <a href="#impl">8.10</a>），
+  不绕 loopback。真正的不变量是<b>没有特权通道</b>：
+  所有动作都必须经过 <a href="#harness">ToolBus</a> 与领域层的校验，
+  而这个收口点恰好也是前端请求最终落到的地方。
+  </span>
+</div>
+
+<div class="grid g3">
+<div class="card">
+  <p class="card-title">这个约束带来什么</p>
+  <ul class="small mb0">
+    <li>Agent 不可能绕过门禁做出人做不到的破坏</li>
+    <li>Agent 的每个动作都天然可审计、可回放、可归因</li>
+    <li>平台不需要为 Agent 写第二套逻辑，维护成本减半</li>
+    <li>把 Agent 换成另一个模型、或直接关掉，系统照常运行</li>
+  </ul>
+</div>
+<div class="card">
+  <p class="card-title">Agent 的真实价值定位</p>
+  <p class="small mb0">
+    它不是「更聪明的研究员」，而是<b>不会累的值班员</b>。
+    它的优势在于：24 小时盯着队列与曲线、记得住三个月前那次相似的失败、
+    愿意把 40 个配置一个个跑完并整理成表、
+    不会因为「差不多了」就跳过检查项。
+    <b>把判断留给你，把耐心留给它。</b>
+  </p>
+</div>
+<div class="card">
+  <p class="card-title">明确不指望它做的事</p>
+  <ul class="small mb0">
+    <li>设计新的奖励函数或网络结构</li>
+    <li>判断某个研究方向是否值得投入</li>
+    <li>决定真机放行（S0/S1/S2 一律需人工）</li>
+    <li>解释物理现象的成因（它可以列出可疑项，但结论归你）</li>
+  </ul>
+</div>
+</div>
+
+<h2 id="arch">8.2 三层架构</h2>
+
+<figure>
+<div class="diagram diagram-wide">
+<svg viewBox="0 0 980 340" role="img" aria-label="Agent 三层架构">
+  <defs>
+    <marker id="aa" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,1 L7,4.5 L0,8 z" fill="#3d5f78"/></marker>
+  </defs>
+
+  <rect x="12" y="16" width="956" height="86" rx="10" class="svg-lane"/>
+  <text x="26" y="36" class="svg-t-lane">① 感知层 · Perception</text>
+  <rect x="26" y="46" width="168" height="44" rx="7" class="svg-box"/>
+  <text x="110" y="66" class="svg-t-sm" text-anchor="middle">事件订阅</text>
+  <text x="110" y="81" class="svg-t-mono" text-anchor="middle">Redis Streams</text>
+  <rect x="206" y="46" width="168" height="44" rx="7" class="svg-box"/>
+  <text x="290" y="66" class="svg-t-sm" text-anchor="middle">结构化事实查询</text>
+  <text x="290" y="81" class="svg-t-mono" text-anchor="middle">REST（只读）</text>
+  <rect x="386" y="46" width="168" height="44" rx="7" class="svg-box"/>
+  <text x="470" y="66" class="svg-t-sm" text-anchor="middle">指标与曲线</text>
+  <text x="470" y="81" class="svg-t-mono" text-anchor="middle">TSDB 聚合而非原始</text>
+  <rect x="566" y="46" width="168" height="44" rx="7" class="svg-box"/>
+  <text x="650" y="66" class="svg-t-sm" text-anchor="middle">日志摘要</text>
+  <text x="650" y="81" class="svg-t-mono" text-anchor="middle">尾部 + 异常行</text>
+  <rect x="746" y="46" width="208" height="44" rx="7" class="svg-box"/>
+  <text x="850" y="66" class="svg-t-sm" text-anchor="middle">经验库检索</text>
+  <text x="850" y="81" class="svg-t-mono" text-anchor="middle">历史相似案例</text>
+
+  <path d="M490,104 L490,124" class="svg-edge" marker-end="url(#aa)"/>
+
+  <rect x="12" y="128" width="956" height="106" rx="10" class="svg-lane"/>
+  <text x="26" y="148" class="svg-t-lane">② 决策层 · Reasoning（规则优先，LLM 兜底）</text>
+  <rect x="26" y="158" width="290" height="62" rx="7" class="svg-box-2"/>
+  <text x="171" y="178" class="svg-t" text-anchor="middle">确定性规则引擎</text>
+  <text x="171" y="196" class="svg-t-mono" text-anchor="middle">OOM → 降 num_envs 重试</text>
+  <text x="171" y="211" class="svg-t-mono" text-anchor="middle">标定过期 → 拦放行 + 提醒</text>
+  <rect x="328" y="158" width="290" height="62" rx="7" class="svg-box-2"/>
+  <text x="473" y="178" class="svg-t" text-anchor="middle">剧本执行器 Playbook</text>
+  <text x="473" y="196" class="svg-t-mono" text-anchor="middle">预定义多步流程 + 分支</text>
+  <text x="473" y="211" class="svg-t-mono" text-anchor="middle">可完全离线运行，无 LLM</text>
+  <rect x="630" y="158" width="324" height="62" rx="7" class="svg-box-2"/>
+  <text x="792" y="178" class="svg-t" text-anchor="middle">LLM 推理</text>
+  <text x="792" y="196" class="svg-t-mono" text-anchor="middle">开放式诊断 · 自然语言交互 · 报告撰写</text>
+  <text x="792" y="211" class="svg-t-mono" text-anchor="middle">只在规则与剧本都不适用时介入</text>
+
+  <path d="M490,236 L490,256" class="svg-edge" marker-end="url(#aa)"/>
+
+  <rect x="12" y="260" width="956" height="70" rx="10" class="svg-lane"/>
+  <text x="26" y="280" class="svg-t-lane">③ 执行层 · Action（全部经过护栏）</text>
+  <rect x="26" y="290" width="150" height="32" rx="7" class="svg-box"/>
+  <text x="101" y="310" class="svg-t-sm" text-anchor="middle">白名单校验</text>
+  <rect x="188" y="290" width="150" height="32" rx="7" class="svg-box"/>
+  <text x="263" y="310" class="svg-t-sm" text-anchor="middle">预算扣减</text>
+  <rect x="350" y="290" width="150" height="32" rx="7" class="svg-box"/>
+  <text x="425" y="310" class="svg-t-sm" text-anchor="middle">审批判定</text>
+  <rect x="512" y="290" width="150" height="32" rx="7" class="svg-box"/>
+  <text x="587" y="310" class="svg-t-sm" text-anchor="middle">速率限制</text>
+  <rect x="674" y="290" width="150" height="32" rx="7" class="svg-box"/>
+  <text x="749" y="310" class="svg-t-sm" text-anchor="middle">调用平台 API</text>
+  <rect x="836" y="290" width="118" height="32" rx="7" class="svg-box"/>
+  <text x="895" y="310" class="svg-t-sm" text-anchor="middle">写审计</text>
+</svg>
+</div>
+<figcaption>图 8-1　三层架构。注意决策层的顺序：<b>规则 → 剧本 → LLM</b>，而不是把一切都交给 LLM。</figcaption>
+</figure>
+
+<div class="note good">
+  <span class="note-t">为什么规则优先而不是 LLM 优先</span>
+  「显存不够就减小 num_envs 重试」这种事，用 if 语句写出来是<b>确定的、免费的、瞬时的、可测试的</b>；
+  交给 LLM 则变成不确定的、要花钱的、有延迟的、难测试的。
+  <b>LLM 应该只处理那些确实需要判断力的部分。</b>
+  按经验，日常运维中 80% 的动作可以用规则覆盖，
+  剧本再覆盖 15%，剩下 5% 才真正需要 LLM——而这 5% 恰恰是它最有价值的地方。
+</div>
+
+<h2 id="runtime">8.3 Runtime 选型：自研内核，借范式，不借地基</h2>
+
+<div class="note decide">
+  <span class="note-t">先说结论</span>
+  <b>Harness 内核自研（Python，约 2000 行），插件范式抄
+  <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-harness</a> / Cordis，
+  协议层复用 MCP 与 OpenAI tool-calling schema，但不把 dsh 作为运行时地基。</b>
+  理由一句话：<b>agent 循环不是难的部分，护栏、审计、上下文构造才是——
+  而后面这些没有任何框架能替我们写。</b>
+  引入重框架的结果是「难的照样自己写，还多背一层抽象和一条升级跑道」。
+</div>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr>
+  <th style="width:13%">方案</th><th style="width:17%">代表</th><th style="width:25%">能拿到什么</th>
+  <th style="width:28%">代价</th><th>判断</th>
+</tr></thead>
+<tbody>
+<tr>
+  <td><b>A 纯自研</b></td>
+  <td class="xs">—</td>
+  <td class="xs">完全贴合领域；零版本风险；调试路径最短</td>
+  <td class="xs">会话循环、流式、schema 校验、上下文压缩都要自己写。<b>实测量级约 1500–2500 行</b>，比想象的小</td>
+  <td><span class="badge b-green">内核采用</span></td>
+</tr>
+<tr>
+  <td><b>B Python agent 框架</b></td>
+  <td class="xs">LangGraph · Pydantic-AI · OpenAI Agents SDK</td>
+  <td class="xs">循环、工具 schema、流式、重试、多模型适配现成</td>
+  <td class="xs">抽象形状不匹配：LangGraph 的图状态是为「一次性工作流」设计的，
+      我们要的是<b>常驻值班员 + 剧本优先</b>；框架的 agent 循环反而要被我们绕开</td>
+  <td><span class="badge b-cyan">部分借用</span><br><span class="xs">Pydantic-AI 仅作 LLM 客户端与 schema 层</span></td>
+</tr>
+<tr>
+  <td><b>C dsh / Cordis</b></td>
+  <td class="xs">deepseek-harness</td>
+  <td class="xs">成熟的「一切皆插件」范式、DI 与生命周期作用域、Web UI、插件生态</td>
+  <td class="xs"><b>引入 Node 作为第三运行时</b>；工具无法直接访问 Python 领域对象；
+      官方明示 developer preview 且<b>会有破坏性变更</b></td>
+  <td><span class="badge b-amber">借范式不借地基</span></td>
+</tr>
+<tr>
+  <td><b>D 协议层复用</b></td>
+  <td class="xs">MCP · OpenAI tool schema</td>
+  <td class="xs">互操作：我们的工具可被 Cursor / Claude Desktop 直接调用；外部 MCP 工具可接进来</td>
+  <td class="xs">需维护一层 schema 导出，但它由类型签名自动生成（见 <a href="#harness">8.4</a>）</td>
+  <td><span class="badge b-green">采用</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="grid g2">
+<div>
+<div class="note warn">
+  <span class="note-t">为什么不直接用 dsh 当地基</span>
+  <b>① 它的强项我们一个都不需要。</b>dsh 是<b>编码 agent</b> harness——终端执行、文件编辑、diff、LSP、沙箱。
+  而我们的 agent 明确<b>没有 shell、没有文件系统、没有任意 HTTP</b>（见本节安全边界），
+  它只调那二十来个平台 API。买了一整套厨具只为了拧瓶盖。<br>
+  <b>② 语言错位的代价是结构性的。</b>我们的工具需要直接访问 Python 领域对象——
+  契约校验器、<a href="04-model.html#mem">容量估算器</a>、调度器的预算账本。
+  harness 若在 Node，每个工具都要跨进程 RPC 回 Python：
+  <b>把本可以是函数调用的东西变成网络调用，只为了用一个插件框架。</b><br>
+  <b>③ 地基风险。</b>README 原话是「THERE WILL BE COMPATIBILITY-BREAKING CHANGES」。
+  对单人维护的项目，把 agent 内核压在一个明示会破坏兼容的 preview 上，
+  代价会在某个你正忙着调机器人的周一早上兑现。<br>
+  <b>④ compose 里再加一套构建链。</b>已有 Python + Rust 两套依赖锁与安全更新，
+  加 Node 就是第三套。<a href="01-architecture.html#deployform">单机部署</a>的每一个新运行时都是长期税。
+</div>
+</div>
+<div>
+<div class="note good">
+  <span class="note-t">但有四件事值得照抄</span>
+  <b>① Everything is a Plugin，连核心能力也是插件。</b>
+  这对我们不是审美偏好而是刚需——平台的成长路径就是「新训练栈 / 新模型族 / 新本体」，
+  详见 <a href="#plugin">8.5</a>。<br>
+  <b>② Cordis 式的 DI + 生命周期作用域。</b>
+  插件<b>声明</b>依赖哪些服务而不是 import 全局单例；卸载时自动回收它注册过的一切
+  （路由、定时任务、事件订阅、工具）。这条直接消灭「插件卸下了但定时任务还在跑」这类幽灵 bug。<br>
+  <b>③ 插件即独立单元、可独立分发。</b>
+  我们不需要插件市场，但需要「接一个新本体不必改主仓库」。<br>
+  <b>④ 把 benchmark 与快照测试当一等公民。</b>
+  dsh 仓库里有 <code>BENCHMARK.md</code> 和整套 snapshot / e2e 配置。
+  <b>agent 唯一可靠的测试方式就是回放 + 快照断言</b>，见 <a href="#harness">8.4</a>。
+</div>
+</div>
+</div>
+
+<h3>Agent 的 LLM 跑在哪里：一个容易漏的资源冲突</h3>
+
+<div class="note warn">
+  <span class="note-t">别让 agent 的脑子吃掉训练的卡</span>
+  如果 agent 的 LLM 用本地 vLLM 起一个 32B 模型，那它<b>常驻占掉一张 4090</b>——
+  而我们总共只有四张，还要跑 Isaac 和 π₀。这等于为了「不会累的值班员」永久裁掉四分之一算力。
+  <br><br>
+  <b>决定</b>：默认走 <b>API 托管模型</b>（成本以 token 计，不占 GPU），
+  预算与 GPU 预算分开记账。本地推理作为可选项，但必须满足两个条件：
+  ① 经<a href="04-model.html#mem">容量估算器</a>申报并占用一个正式的资源槽位，
+  不允许「悄悄常驻」；② 标记为<b>可抢占</b>，优先级低于一切训练任务——
+  <b>训练要卡时，agent 先让位</b>。它只是值班员，不是主角。
+</div>
+
+<h3>安全边界：agent 的沙箱就是工具白名单本身</h3>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:20%">编码 agent 通常需要</th><th style="width:14%">我们给不给</th><th>为什么</th></tr></thead>
+<tbody>
+<tr><td class="mono xs">shell / exec</td><td><span class="badge b-red">不给</span></td>
+  <td class="xs">它要做的每件事都已有对应的平台 API。给 shell 等于把前面所有护栏变成装饰——
+      <b>能执行任意命令的 agent 的权限矩阵是一张空表</b></td></tr>
+<tr><td class="mono xs">文件读写</td><td><span class="badge b-red">不给</span></td>
+  <td class="xs">代码仓库是<a href="05-training.html#isolation">只读</a>的，产物走 CAS。
+      需要读日志就用 <code>logs.tail</code>，需要读配置就用 <code>query.*</code>——这些都带审计</td></tr>
+<tr><td class="mono xs">任意 HTTP / 浏览</td><td><span class="badge b-red">不给</span></td>
+  <td class="xs">出网能力意味着数据外泄路径与提示注入的放大器。
+      需要的外部资源（HF 权重、镜像）由<b>人</b>发起的入库流程引入</td></tr>
+<tr><td class="mono xs">直连数据库 / SQL</td><td><span class="badge b-red">不给</span></td>
+  <td class="xs">绕过领域逻辑的写入会破坏血缘与状态机不变量。<b>只读也不给</b>——
+      因为 schema 是内部实现，agent 依赖它就等于冻结了我们的重构自由</td></tr>
+<tr><td class="mono xs">子 agent 无限派生</td><td><span class="badge b-amber">限制</span></td>
+  <td class="xs">允许，但深度 ≤2、共享同一份预算与速率账本。防的是「派生出一百个分身各自守规矩，
+      合起来把机器打满」</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note info">
+  <span class="note-t">这张表的意义</span>
+  编码 agent 需要沙箱，是因为它的能力集<b>本质上是开放的</b>（任意代码、任意命令），
+  只能靠隔离来约束后果。我们的 agent 能力集<b>本质上是封闭的</b>——
+  一张二十来行的工具表，每行都经过 ToolBus 的护栏。
+  <b>封闭能力集不需要沙箱，它自己就是沙箱</b>，而且是可读、可审计、可推理的那种。
+  这是「agent 只是一个特殊用户」这条前提带来的第二个红利。
+</div>
+
+<h2 id="harness">8.4 Harness 内核：ToolBus 是唯一收口</h2>
+
+<figure>
+<div class="diagram diagram-wide">
+<svg viewBox="0 0 980 396" role="img" aria-label="Harness 内核结构与 ToolBus 处理链">
+  <defs>
+    <marker id="hh" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,1 L7,4.5 L0,8 z" fill="#3d5f78"/></marker>
+    <marker id="hhx" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,1 L7,4.5 L0,8 z" fill="#53d4ff"/></marker>
+  </defs>
+
+  <rect x="12" y="14" width="956" height="66" rx="10" class="svg-lane"/>
+  <text x="26" y="34" class="svg-t-lane">触发源 · Trigger</text>
+  <rect x="26" y="44" width="176" height="28" rx="6" class="svg-box"/>
+  <text x="114" y="63" class="svg-t-sm" text-anchor="middle">事件（Redis Streams）</text>
+  <rect x="214" y="44" width="176" height="28" rx="6" class="svg-box"/>
+  <text x="302" y="63" class="svg-t-sm" text-anchor="middle">cron（剧本排期）</text>
+  <rect x="402" y="44" width="176" height="28" rx="6" class="svg-box"/>
+  <text x="490" y="63" class="svg-t-sm" text-anchor="middle">人工指令（对话）</text>
+  <rect x="590" y="44" width="176" height="28" rx="6" class="svg-box"/>
+  <text x="678" y="63" class="svg-t-sm" text-anchor="middle">子 agent（深度 ≤2）</text>
+  <rect x="778" y="44" width="176" height="28" rx="6" class="svg-box"/>
+  <text x="866" y="63" class="svg-t-sm" text-anchor="middle">MCP 外部调用</text>
+
+  <path d="M490,82 L490,100" class="svg-edge" marker-end="url(#hh)"/>
+
+  <rect x="12" y="104" width="956" height="76" rx="10" class="svg-lane"/>
+  <text x="26" y="124" class="svg-t-lane">Session / Turn 循环（自研内核 · 约 2 000 行）</text>
+  <rect x="26" y="134" width="222" height="36" rx="6" class="svg-box-2"/>
+  <text x="137" y="157" class="svg-t-sm" text-anchor="middle">① 规则引擎（无 LLM）</text>
+  <rect x="260" y="134" width="222" height="36" rx="6" class="svg-box-2"/>
+  <text x="371" y="157" class="svg-t-sm" text-anchor="middle">② 剧本执行器（无 LLM）</text>
+  <rect x="494" y="134" width="222" height="36" rx="6" class="svg-box-2"/>
+  <text x="605" y="157" class="svg-t-sm" text-anchor="middle">③ LLM 规划（仅 5%）</text>
+  <rect x="728" y="134" width="226" height="36" rx="6" class="svg-box" style="stroke:#8b7cf6"/>
+  <text x="841" y="152" class="svg-t-sm" text-anchor="middle" fill="#c3b8ff">上下文构造器</text>
+  <text x="841" y="166" class="svg-t-mono" text-anchor="middle">摘要 + ref，不塞原始数据</text>
+
+  <path d="M137,172 L137,196 L470,196 L470,214" class="svg-edge-hot" marker-end="url(#hhx)"/>
+  <path d="M371,172 L371,196" class="svg-edge-hot"/>
+  <path d="M605,172 L605,196 L510,196" class="svg-edge-hot"/>
+  <text x="694" y="192" class="svg-t-sm" fill="#8fd8ff">三条决策路径，同一个出口</text>
+
+  <rect x="12" y="218" width="956" height="94" rx="10" class="svg-lane" style="stroke:#53d4ff"/>
+  <text x="26" y="238" class="svg-t-lane" fill="#8fd8ff">ToolBus · 唯一收口（所有动作必经）</text>
+  <rect x="26" y="248" width="112" height="52" rx="6" class="svg-box"/>
+  <text x="82" y="269" class="svg-t-sm" text-anchor="middle">schema</text>
+  <text x="82" y="285" class="svg-t-mono" text-anchor="middle">参数校验</text>
+  <rect x="150" y="248" width="112" height="52" rx="6" class="svg-box"/>
+  <text x="206" y="269" class="svg-t-sm" text-anchor="middle">权限类</text>
+  <text x="206" y="285" class="svg-t-mono" text-anchor="middle">白名单 + 禁止线</text>
+  <rect x="274" y="248" width="112" height="52" rx="6" class="svg-box"/>
+  <text x="330" y="269" class="svg-t-sm" text-anchor="middle">幂等键</text>
+  <text x="330" y="285" class="svg-t-mono" text-anchor="middle">重放不重复</text>
+  <rect x="398" y="248" width="112" height="52" rx="6" class="svg-box"/>
+  <text x="454" y="269" class="svg-t-sm" text-anchor="middle">预算</text>
+  <text x="454" y="285" class="svg-t-mono" text-anchor="middle">GPU·h / token</text>
+  <rect x="522" y="248" width="112" height="52" rx="6" class="svg-box"/>
+  <text x="578" y="269" class="svg-t-sm" text-anchor="middle">dry-run</text>
+  <text x="578" y="285" class="svg-t-mono" text-anchor="middle">审批卡片来源</text>
+  <rect x="646" y="248" width="112" height="52" rx="6" class="svg-box"/>
+  <text x="702" y="269" class="svg-t-sm" text-anchor="middle">执行</text>
+  <text x="702" y="285" class="svg-t-mono" text-anchor="middle">调平台 API</text>
+  <rect x="770" y="248" width="112" height="52" rx="6" class="svg-box"/>
+  <text x="826" y="269" class="svg-t-sm" text-anchor="middle">结果整形</text>
+  <text x="826" y="285" class="svg-t-mono" text-anchor="middle">ref_id + 摘要</text>
+  <rect x="894" y="248" width="60" height="52" rx="6" class="svg-box" style="stroke:#53e5a3"/>
+  <text x="924" y="269" class="svg-t-sm" text-anchor="middle" fill="#a8f0c8">审计</text>
+  <text x="924" y="285" class="svg-t-mono" text-anchor="middle">必写</text>
+
+  <path d="M490,314 L490,332" class="svg-edge" marker-end="url(#hh)"/>
+
+  <rect x="12" y="336" width="956" height="52" rx="10" class="svg-lane" style="stroke:#53e5a3"/>
+  <text x="26" y="356" class="svg-t-lane" fill="#a8f0c8">插件贡献的工具实现（同进程 Python）</text>
+  <text x="26" y="376" class="svg-t-mono">core.query · core.job · rlinf.* · isaaclab.* · bhl.* · mcp-bridge.*　　每个工具的 schema、权限、限速都由装饰器声明，与本表同源</text>
+</svg>
+</div>
+<figcaption>
+  图 8-2　Harness 内核。<b>关键结构是那个漏斗</b>：规则、剧本、LLM 三条决策路径宽度不同，
+  但都只能从 ToolBus 这一个口子发出动作。
+</figcaption>
+</figure>
+
+<div class="grid g2">
+<div class="card">
+  <p class="card-title">为什么「唯一收口」值得当作硬性约束</p>
+  <ul class="small mb0">
+    <li><b>护栏只写一遍。</b>如果规则引擎能直接调 API 抄近路，
+        那预算和审计就有了旁路，而旁路一定会在赶时间的那天被用到</li>
+    <li><b>LLM 挂掉不影响护栏。</b>护栏在 ToolBus 而不在提示词里。
+        「请不要删除数据」写在 system prompt 里叫许愿，写在 ToolBus 里叫约束</li>
+    <li><b>审计天然完备。</b>「agent 昨晚干了什么」＝ 查 ToolBus 的流水，
+        不存在「有个动作没走审计」的可能</li>
+    <li><b>可回放。</b>录下 ToolBus 的输入输出就等于录下 agent 的全部行为</li>
+  </ul>
+</div>
+<div class="card">
+  <p class="card-title">六个内核能力（也就是全部）</p>
+  <ol class="small mb0">
+    <li><b>Session/Turn 循环</b>：turn 级的 token、工具调用次数、墙钟三重上限；随时可中断，
+        cancel 信号透传到工具执行</li>
+    <li><b>工具注册表</b>：由类型签名生成 schema，见下</li>
+    <li><b>上下文构造器</b>：摘要与引用化，见 <a href="#impl">8.10</a> 三条原则</li>
+    <li><b>ToolBus</b>：上图七道处理</li>
+    <li><b>磁带录制与回放</b>：LLM I/O + 工具 I/O 全量落盘</li>
+    <li><b>流式输出</b>：token、工具状态、审批请求走同一条 SSE 通道到 UI</li>
+  </ol>
+  <p class="xs muted-2 mb0 mt1">
+    清单到此为止。<b>凡不在这六项里的，都应该是插件而不是内核。</b>
+  </p>
+</div>
+</div>
+
+<h3>工具定义的单一真源</h3>
+
+<div class="grid g-2-1">
+<div>
+<pre><code><span class="c"># 工具的 schema、权限、限速、文档、MCP 描述符全部由这一处生成</span>
+<span class="y">@tool</span>(
+    name=<span class="s">"job.submit"</span>,
+    risk=Risk.<span class="n">MEDIUM</span>,
+    approval=<span class="s">"auto_if"</span>,           <span class="c"># 见下方 policy</span>
+    rate=<span class="s">"6/day"</span>,
+    budget=<span class="s">"gpu_hours"</span>,
+    dry_run=<span class="n">True</span>,                 <span class="c"># 必须实现，否则注册时报错</span>
+    policy=<span class="s">"gpus &lt;= 1 and hours &lt;= 6"</span>,   <span class="c"># 超出则自动升级为需审批</span>
+)
+<span class="k">async def</span> <span class="fn">submit_job</span>(
+    ctx: ToolCtx,
+    spec: JobSpec,                    <span class="c"># pydantic 模型 → JSON Schema</span>
+    reason: <span class="t">str</span> = Field(..., min_length=<span class="n">10</span>,
+        description=<span class="s">"为什么要跑这个任务，会出现在审计与审批卡片上"</span>),
+) -&gt; JobRef:
+    <span class="s">"""提交一个任务。提交前必须先调用 capacity.estimate。"""</span>
+    <span class="c"># 前置依赖由 ToolBus 校验，不是靠提示词提醒</span>
+    ctx.require_prior_call(<span class="s">"capacity.estimate"</span>, within_turn=<span class="n">True</span>)
+    ...
+</code></pre>
+<p class="xs muted-2">
+  一处声明，五处受益：<b>JSON Schema</b>（喂给 LLM）、
+  <b>MCP descriptor</b>（导出给 Cursor / Claude Desktop）、
+  <b><a href="#tools">8.6 权限矩阵</a>那张表</b>（由注册表渲染，不再手写）、
+  <b>审批卡片字段</b>、<b>OpenAPI 文档</b>。
+</p>
+</div>
+<div>
+<div class="note good">
+  <span class="note-t">权限表必须由代码生成</span>
+  <a href="#tools">8.6</a> 那张权限矩阵如果是手写的 Markdown 表格，
+  它会在第三次改代码之后开始说谎——<b>而一张说谎的权限表比没有权限表更危险</b>，
+  因为你会依据它做授权决定。
+  所以它必须是注册表的<b>渲染结果</b>，并且 CI 里加一条快照测试：
+  权限表变化必须出现在 diff 里，让改权限这件事无法悄悄发生。
+</div>
+<div class="note info mt2">
+  <span class="note-t"><code>require_prior_call</code> 这个小机制</span>
+  「提任务前必须先查容量估算器」——写在提示词里，LLM 大概会遵守；
+  写成 ToolBus 的前置校验，它<b>必须</b>遵守。
+  凡是能变成机器约束的规范，就不要留在提示词里。
+  提示词负责<b>倾向</b>，ToolBus 负责<b>不变量</b>。
+</div>
+</div>
+</div>
+
+<h3>结果引用化：一个机制同时解决两个问题</h3>
+
+<div class="grid g2">
+<div>
+<pre><code><span class="c"># ToolBus 对工具返回值的统一整形</span>
+{
+  <span class="y">"ref_id"</span>: <span class="s">"tr_8f3a21"</span>,          <span class="c">// 完整结果存 session store</span>
+  <span class="y">"summary"</span>: {                       <span class="c">// 只有这部分进入 LLM 上下文</span>
+    <span class="y">"n_runs"</span>: <span class="n">14</span>,
+    <span class="y">"best"</span>: { run: <span class="s">"r_7c21"</span>, success_rate: <span class="n">0.62</span> },
+    <span class="y">"truncated"</span>: <span class="n">true</span>,
+    <span class="y">"how_to_expand"</span>: <span class="s">"query.detail(ref_id, fields=[...])"</span>
+  },
+  <span class="y">"bytes_full"</span>: <span class="n">1843200</span>,           <span class="c">// 原始 1.8 MB，摘要 &lt; 2 KB</span>
+  <span class="y">"cite_as"</span>: <span class="s">"[tr_8f3a21#best.success_rate]"</span>
+}</code></pre>
+</div>
+<div>
+<div class="note good">
+  <span class="note-t">同一个 ref 机制既防幻觉又压上下文</span>
+  <b>防幻觉</b>：agent 输出里的每个数字都必须写成 <code>cite_as</code> 的形式，
+  UI 渲染成可点击引用，点开看原始数据；没有 ref 的数字标灰为「未经核实」
+  （<a href="#tools">8.6</a> 已有此约定，这里给出它的实现落点）。<br>
+  <b>压上下文</b>：1.8 MB 的查询结果只有 2 KB 进入上下文，
+  需要细节时 agent 自己调 <code>query.detail</code> 展开——<b>按需而非预先</b>。<br>
+  两件事本来要两套机制，引用化让它们共用一套。
+  <b>这类「一个机制解决两个问题」的地方，是设计里最值得多花半天的地方。</b>
+</div>
+</div>
+</div>
+
+<h3>回放与快照测试：agent 唯一可靠的测试方式</h3>
+
+<div class="grid g-2-1">
+<div>
+<div class="card">
+  <p class="card-title">磁带（tape）机制</p>
+  <p class="small mb1">
+    每个 session 落一份磁带：所有 LLM 请求/响应、所有工具调用/返回、所有护栏判定、时间戳。
+    磁带既是审计凭据，也是测试夹具。
+  </p>
+<pre class="mb1"><code><span class="c"># tests/agent/test_playbook_oom.py</span>
+<span class="k">async def</span> test_oom_降配重试():
+    tape = load_tape(<span class="s">"fixtures/oom_isaac_4096.jsonl"</span>)
+    result = <span class="k">await</span> replay(tape, mode=<span class="s">"assert_actions"</span>)
+    <span class="k">assert</span> result.actions == [
+        (<span class="s">"logs.tail"</span>,        {<span class="s">"run_id"</span>: <span class="s">"r_7c21"</span>}),
+        (<span class="s">"capacity.estimate"</span>, {<span class="s">"num_envs"</span>: <span class="n">3072</span>}),
+        (<span class="s">"job.submit"</span>,       {<span class="s">"num_envs"</span>: <span class="n">3072</span>}),
+    ]
+    <span class="k">assert</span> result.llm_calls == <span class="n">0</span>      <span class="c"># 这条路径不该用到 LLM</span>
+    <span class="k">assert</span> result.budget_delta &lt;= <span class="n">6.0</span></code></pre>
+  <p class="xs muted-2 mb0">
+    <code>mode="assert_actions"</code> 时 LLM 调用从磁带回放而不真的发出去，
+    所以测试<b>免费、离线、确定</b>。
+  </p>
+</div>
+</div>
+<div>
+<div class="note decide">
+  <span class="note-t">最有价值的断言是 <code>llm_calls == 0</code></span>
+  <a href="#arch">8.2</a> 说过 80% 的动作应该由规则覆盖。
+  这句话如果没有测试，会慢慢腐化成「反正 LLM 也能处理」，
+  于是规则层逐渐空心化，成本和不确定性一起上升。
+  <b>为每条规则路径断言「零次 LLM 调用」，是守住三层架构的唯一办法。</b>
+</div>
+<div class="note info mt2">
+  <span class="note-t">场景夹具集</span>
+  维护一组带标注答案的场景磁带：OOM、标定过期、指标不显著却想扫参、
+  磁盘将满、契约不匹配、被要求做禁止动作（<b>越权拒绝也要测</b>）。
+  新增护栏或改提示词时全量回放。
+  这就是 dsh 仓库里 <code>BENCHMARK.md</code> 那件事在我们场景下的对应物。
+</div>
+</div>
+</div>
+
+<h2 id="plugin">8.5 插件封装：一个插件装下「一个栈的全部知识」</h2>
+
+<div class="note decide">
+  <span class="note-t">这是抄 dsh 范式带来的真实收益，而且和 agent 无关</span>
+  今天要接入一个新训练栈（比如换掉 RLInf，或加一个新的 VLA 家族），需要改<b>六个地方</b>：
+  适配器、<a href="04-model.html#mem">容量公式</a>、日志/指标解析、契约校验规则、前端面板、agent 工具。
+  它们散落在三个目录里，漏掉任何一处的表现都是「跑起来了但某个环节静默不对」。
+  <br><br>
+  <b>插件契约要解决的就是这件事</b>：把这六样东西<b>放进同一个包、同一个 manifest、同一次评审</b>。
+  「Everything is a Plugin」对我们的意义不是可扩展性，
+  而是<b>让「接入一个新栈」从一件需要记忆清单的事变成一件有模板的事</b>。
+</div>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:15%">贡献点</th><th style="width:20%">类型</th><th style="width:32%">例子</th><th>不做插件化的后果</th></tr></thead>
+<tbody>
+<tr><td class="mono xs">adapters</td><td class="xs">JobSpec → 命令行/Hydra</td>
+  <td class="xs"><code>rlinf</code> · <code>isaaclab_rslrl</code></td>
+  <td class="xs">主仓库里堆 if/elif，每加一个栈动一次核心代码</td></tr>
+<tr><td class="mono xs">estimators</td><td class="xs">容量公式 provider</td>
+  <td class="xs">Isaac 的 <code>c_env</code> 标定曲线；FSDP 的 <code>B(optimizer)</code> 表</td>
+  <td class="xs">公式与适配器分家，改了优化器却忘了改估算 → OOM</td></tr>
+<tr><td class="mono xs">validators</td><td class="xs">契约门禁扩展</td>
+  <td class="xs">G3 的 <code>io_signature</code> 反查按栈有差异</td>
+  <td class="xs">新栈绕过门禁而没人发现</td></tr>
+<tr><td class="mono xs">metrics</td><td class="xs">日志与指标解析</td>
+  <td class="xs">tfevents · SwanLab · stdout 正则</td>
+  <td class="xs">曲线画不出来，或指标名对不齐导致跨栈对比失真</td></tr>
+<tr><td class="mono xs">tools</td><td class="xs">agent 工具</td>
+  <td class="xs"><code>rlinf.suggest_placement</code></td>
+  <td class="xs">agent 对新栈无知，只能给通用建议</td></tr>
+<tr><td class="mono xs">knowledge</td><td class="xs">提示片段 + 失败签名</td>
+  <td class="xs">Isaac 常见崩溃签名与修复步骤</td>
+  <td class="xs">失败诊断退化为「贴日志给 LLM」</td></tr>
+<tr><td class="mono xs">ui</td><td class="xs">前端远程模块（ESM）</td>
+  <td class="xs">RLInf 的 <code>component_placement</code> 可视化</td>
+  <td class="xs">新栈的专有参数只能以 JSON 原文展示</td></tr>
+<tr><td class="mono xs">playbooks</td><td class="xs">剧本定义</td>
+  <td class="xs">该栈专有的诊断流程</td>
+  <td class="xs">剧本集合无法随栈演进</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="grid g-2-1">
+<div>
+<div class="card">
+  <p class="card-title">插件形态与 Cordis 式的生命周期</p>
+<pre class="mb1"><code><span class="c"># plugins/eb_plugin_rlinf/__init__.py</span>
+MANIFEST = PluginManifest(
+    name=<span class="s">"rlinf"</span>,
+    version=<span class="s">"0.3.1"</span>,
+    api_version=<span class="s">"1"</span>,              <span class="c"># 启动时校验，不兼容则拒载</span>
+    requires=[<span class="s">"scheduler"</span>, <span class="s">"capacity"</span>, <span class="s">"cas"</span>],   <span class="c"># 声明式依赖注入</span>
+    contributes=[<span class="s">"adapters"</span>, <span class="s">"estimators"</span>, <span class="s">"metrics"</span>,
+                 <span class="s">"tools"</span>, <span class="s">"knowledge"</span>, <span class="s">"ui"</span>],
+)
+
+<span class="k">def</span> <span class="fn">setup</span>(ctx: Context) -&gt; <span class="t">None</span>:
+    <span class="c"># ctx 是作用域句柄：它注册的一切都挂在这个作用域上</span>
+    ctx.adapter(RlinfAdapter())
+    ctx.estimator(<span class="s">"train.rlft"</span>, rlinf_fsdp_formula)
+    ctx.metrics_parser(<span class="s">"tfevents"</span>, TfEventsParser())
+    ctx.tool(suggest_placement)              <span class="c"># 自动进权限矩阵</span>
+    ctx.knowledge(Path(<span class="s">"knowledge/"</span>))
+    ctx.ui_panel(<span class="s">"placement"</span>, <span class="s">"dist/placement.mjs"</span>)
+    ctx.on(<span class="s">"run.failed"</span>, diagnose_rlinf_failure)
+
+    <span class="c"># 不需要写 teardown：作用域销毁时以上全部自动注销</span></code></pre>
+  <p class="xs muted-2 mb0">
+    <b>「不需要写 teardown」是这套设计的核心收益。</b>
+    手工卸载一定会漏——漏掉的定时任务和事件订阅会在插件卸下之后继续跑，
+    而且极难定位。作用域化注册让「注册」和「回收」在结构上对称，
+    <b>漏不掉是因为它不由人来记</b>。
+  </p>
+</div>
+</div>
+<div>
+<div class="note warn">
+  <span class="note-t">插件是同进程 Python，即完全信任</span>
+  我们<b>不做</b>插件沙箱与进程隔离。理由：单机单人，插件全部由我自己或明确信任的来源提供，
+  隔离的成本（IPC、序列化、调试困难）远超收益。
+  <b>诚实地承认这一点，比假装有安全边界更好</b>——
+  假的边界会让人误以为可以随便装第三方插件。
+  <br><br>
+  但仍要有三条工程纪律：<b>①</b> 插件不得直连数据库，只能通过注入的 service；
+  <b>②</b> 单个插件加载失败必须降级（禁用该插件并在 UI 报警），
+  <b>不能拖垮整个 API 进程</b>；<b>③</b> <code>api_version</code> 不匹配直接拒载，
+  不做「试试看能不能跑」。
+</div>
+<div class="note info mt2">
+  <span class="note-t">热重载：开发要，生产不要</span>
+  dev 用 <code>watchfiles</code> 监听插件目录重载作用域——
+  改一行适配器不用重启整个 FastAPI，这在调适配器时能省下大量时间。
+  生产环境的「重载」就是 <code>docker compose restart api</code>：
+  <b>单机部署下服务重启是秒级的，为它做热更新是纯粹的复杂度支出。</b>
+</div>
+<div class="note good mt2">
+  <span class="note-t">插件契约的隐性好处</span>
+  即使永远只有我一个人写插件、永远不做插件市场，
+  这套契约<b>依然值得</b>——因为它强制核心与领域知识解耦。
+  「把自己的代码也当插件写」是最有效的防腐手段：
+  <b>当核心不得不通过公开契约来使用领域逻辑时，它就没法悄悄长出耦合。</b>
+</div>
+</div>
+</div>
+
+<h2 id="tools">8.6 工具集与权限矩阵</h2>
+
+<div class="note info">
+  <span class="note-t">这张表是生成的，不是写的</span>
+  下表由 <a href="#harness">8.4</a> 的工具注册表渲染而来，
+  与 <code>@tool</code> 装饰器上的声明<b>同源</b>。
+  CI 里有一条快照测试盯着它——改权限这件事不可能不出现在 diff 里。
+</div>
+
+<p>
+  Agent 的能力边界由工具清单精确定义。每个工具标注<b>风险等级</b>与<b>是否需要审批</b>。
+  这张表就是 Agent 的「权限说明书」，也是你决定放多少权的唯一依据。
+</p>
+
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr>
+  <th style="width:22%">工具</th><th style="width:8%">风险</th><th style="width:12%">审批</th>
+  <th style="width:12%">速率上限</th><th>说明与副作用</th>
+</tr></thead>
+<tbody>
+<tr><td class="mono xs">query.*（数据/模型/run/评估检索）</td><td><span class="badge b-green">只读</span></td><td class="xs">不需要</td><td class="xs">200/h</td><td class="xs">任意查询。<b>Agent 引用的每个数字都必须来自这里</b>，不得自行推算</td></tr>
+<tr><td class="mono xs">metrics.read / logs.tail</td><td><span class="badge b-green">只读</span></td><td class="xs">不需要</td><td class="xs">200/h</td><td class="xs">读曲线与日志尾部；大日志强制走摘要通道</td></tr>
+<tr><td class="mono xs">capacity.estimate</td><td><span class="badge b-green">只读</span></td><td class="xs">不需要</td><td class="xs">200/h</td><td class="xs">查<a href="04-model.html#mem">容量估算器</a>：某配置放不放得下、改什么能过。<b>Agent 提任务前必须先查这个</b>，不得自行推算显存</td></tr>
+<tr><td class="mono xs">job.submit（<code>--probe-memory</code>）</td><td><span class="badge b-cyan">低</span></td><td class="xs">不需要</td><td class="xs">20/天</td><td class="xs">几分钟的显存探测，把 analytic 变成 measured。<b>鼓励它多用</b>：成本极低，收益是后续所有同类估算都变准</td></tr>
+<tr><td class="mono xs">lineage.trace</td><td><span class="badge b-green">只读</span></td><td class="xs">不需要</td><td class="xs">100/h</td><td class="xs">血缘追溯，用于「这个模型用了哪些数据」类问题</td></tr>
+<tr><td class="mono xs">job.submit（data.*, eval.*）</td><td><span class="badge b-cyan">低</span></td><td class="xs">不需要</td><td class="xs">20/天</td><td class="xs">消耗 CPU 与磁盘。数据扫描、校验、评估等只读性质任务</td></tr>
+<tr><td class="mono xs">job.submit（train.*, ≤1 GPU, ≤6 h）</td><td><span class="badge b-amber">中</span></td><td class="xs">不需要（扣预算）</td><td class="xs">6/天</td><td class="xs">短期探索性训练。超出规格自动降级为「需审批」</td></tr>
+<tr><td class="mono xs">job.submit（train.*, &gt;1 GPU 或 &gt;6 h）</td><td><span class="badge b-orange">高</span></td><td class="xs c-amber">需要</td><td class="xs">—</td><td class="xs">长时训练。会显著挤占你自己的排队位置</td></tr>
+<tr><td class="mono xs">job.cancel（agent 自己提交的）</td><td><span class="badge b-cyan">低</span></td><td class="xs">不需要</td><td class="xs">20/天</td><td class="xs">只能取消自己的任务，<b>不能取消人提交的任务</b></td></tr>
+<tr><td class="mono xs">pipeline.run（预定义剧本）</td><td><span class="badge b-amber">中</span></td><td class="xs">按剧本声明</td><td class="xs">4/天</td><td class="xs">只能运行已注册的剧本，不能临时组装 DAG</td></tr>
+<tr><td class="mono xs">dataset.version.create</td><td><span class="badge b-amber">中</span></td><td class="xs">不需要</td><td class="xs">5/天</td><td class="xs">创建新版本是追加操作，不破坏旧数据</td></tr>
+<tr><td class="mono xs">model.promote / release</td><td><span class="badge b-orange">高</span></td><td class="xs c-amber">需要</td><td class="xs">—</td><td class="xs">改变「哪个模型是当前基线」，影响后续所有对比</td></tr>
+<tr><td class="mono xs">export.policy / eval.sim2sim</td><td><span class="badge b-amber">中</span></td><td class="xs">不需要</td><td class="xs">10/天</td><td class="xs">产出未放行的包，不接触真机</td></tr>
+<tr><td class="mono xs">deploy.release（S0/S1/S2）</td><td><span class="badge b-red">禁止</span></td><td class="xs c-red">永久禁止</td><td class="xs">—</td><td class="xs"><b>Agent 永远不能放行到真机</b>，连「需审批」都不给——因为它无法验证现场条件</td></tr>
+<tr><td class="mono xs">gc.run / artifact.delete</td><td><span class="badge b-red">危险</span></td><td class="xs c-amber">需要</td><td class="xs">1/天</td><td class="xs">不可逆。Agent 只能<b>建议</b>回收清单，删除动作必须人工确认</td></tr>
+<tr><td class="mono xs">contract.create / modify</td><td><span class="badge b-red">禁止</span></td><td class="xs c-red">永久禁止</td><td class="xs">—</td><td class="xs">契约是所有门禁的基准，让 Agent 改它等于让它改考卷</td></tr>
+<tr><td class="mono xs">gate.override</td><td><span class="badge b-red">禁止</span></td><td class="xs c-red">永久禁止</td><td class="xs">—</td><td class="xs">门禁豁免只能由人做，且必须写理由</td></tr>
+<tr><td class="mono xs">report.write / notify</td><td><span class="badge b-green">低</span></td><td class="xs">不需要</td><td class="xs">10/天</td><td class="xs">写日报、发通知。信息类动作，最坏后果是噪音</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="grid g2">
+<div>
+<div class="note danger">
+  <span class="note-t">三条永久禁止线</span>
+  <b>① 真机放行</b>：涉及物理安全，且前提条件（保护绳、场地、人在旁）平台无法验证。<br>
+  <b>② 修改契约</b>：契约是判断对错的基准，改基准等于取消检查。<br>
+  <b>③ 门禁豁免</b>：如果 Agent 能豁免门禁，那么门禁对 Agent 就不存在。<br>
+  这三条不设「需审批」选项——因为审批疲劳是真实存在的，
+  连续点 20 次「同意」之后第 21 次也会同意。<b>结构上禁止比流程上把关可靠。</b>
+</div>
+</div>
+<div>
+<div class="note info">
+  <span class="note-t">数字必须来自工具，不能来自模型</span>
+  这是防幻觉的核心机制：Agent 在回答里出现的<b>任何数值</b>
+  （成功率、GPU·h、样本数、时间）都必须能追溯到一次 <code>query.*</code> 调用的返回值。
+  实现上，让工具返回值带 <code>ref_id</code>，Agent 输出时引用它，
+  UI 上把这些数字渲染成可点击的引用——<b>点开就能看到原始数据</b>。
+  没有 ref 的数字在 UI 上标灰并提示「未经核实」。
+</div>
+<div class="note warn mt2">
+  <span class="note-t">预算是硬约束</span>
+  Agent 每周 <b>60 GPU·h</b> 配额（与 <a href="05-training.html#sched">05 章</a>
+  的调度面板一致）。用完即停，不接受「再借一点」。
+  预算独立于你自己的用量，这样即使 Agent 疯了，也只能糟蹋掉四分之一的算力，
+  而不是把你的活挤掉。
+</div>
+</div>
+</div>
+
+<h2 id="playbooks">8.7 剧本：Agent 的主要工作方式</h2>
+
+<p>
+  剧本是<b>写死的多步流程</b>，Agent 负责触发与填参，而不是即兴发挥。
+  这让自主行为变得可预测——你能提前知道它会做什么。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:17%">剧本</th><th style="width:15%">触发</th><th style="width:38%">步骤</th><th>产出与价值</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>训练失败诊断</b></td>
+  <td class="xs">run 进入 failed</td>
+  <td class="xs">① 取退出码与日志尾部 → ② 匹配已知失败模式库 →
+      ③ 若 OOM 则算出可行的 num_envs 并重试 → ④ 若为环境问题则贴出对应修复步骤 →
+      ⑤ 若无法归类则调 LLM 分析并附上相似历史案例</td>
+  <td class="xs">失败不再需要你先去看日志。<b>覆盖率高的部分完全不需要 LLM</b></td>
+</tr>
+<tr>
+  <td><b>超参扫描</b></td>
+  <td class="xs">人工发起或例行</td>
+  <td class="xs">① 按声明的搜索空间生成配置 → ② 分批提交（并发受预算约束）→
+      ③ 早停明显更差的分支 → ④ 汇总成对比表与 Pareto 图 → ⑤ 给出推荐与理由</td>
+  <td class="xs">你只需看最后一张表。早停能省下大量无谓的 GPU·h</td>
+</tr>
+<tr>
+  <td><b>夜间队列填充</b></td>
+  <td class="xs">每晚 23:00</td>
+  <td class="xs">① 检查空闲 GPU → ② 从待办池取低优先级任务 → ③ 以可抢占方式提交 →
+      ④ 早上 8:00 前主动腾出资源</td>
+  <td class="xs"><b>把闲置算力变成结果</b>。抢占式提交保证不影响白天的工作</td>
+</tr>
+<tr>
+  <td><b>上机前检查</b></td>
+  <td class="xs">策略包创建</td>
+  <td class="xs">① 跑完 G1–G5 → ② 跑 sim2sim 一致性 → ③ 核对标定新鲜度与固件 →
+      ④ 检查维护记录是否有未处理项 → ⑤ 生成检查清单交给人</td>
+  <td class="xs">把琐碎但关键的核对做完。<b>最后按钮仍由人按</b></td>
+</tr>
+<tr>
+  <td><b>数据缺口分析</b></td>
+  <td class="xs">评估报告产出</td>
+  <td class="xs">① 按维度拆解失败样本 → ② 与训练集分布对比 → ③ 找出覆盖薄弱的组合 →
+      ④ 生成「建议采集 N 条 X 类样本」的清单</td>
+  <td class="xs">把「模型不行」翻译成「缺什么数据」。针对 35 场景的现状特别有用</td>
+</tr>
+<tr>
+  <td><b>资源与存储巡检</b></td>
+  <td class="xs">每天 07:00</td>
+  <td class="xs">① 统计磁盘趋势 → ② 列出可回收候选（附证据：无血缘引用、超期、有更优版本）→
+      ③ 等人确认后执行</td>
+  <td class="xs">防止磁盘写满导致训练崩溃。<b>删除动作永不自动执行</b></td>
+</tr>
+<tr>
+  <td><b>日报</b></td>
+  <td class="xs">每天 09:00</td>
+  <td class="xs">① 汇总 24 h 内的 run/评估/放行 → ② 标出异常与趋势 →
+      ③ 列出待你决策的事项 → ④ 一段自然语言总结</td>
+  <td class="xs">这是<b>给同事看你产出</b>的主要载体，也是你自己的进度回顾</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="console">8.8 原型：Agent 控制台</h2>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/agent</div>
+    <span class="proto-tag">原型 · 占位数据</span>
+  </div>
+  <div class="proto-body">
+    <aside class="app-side">
+      <p class="app-side-t">Agent</p>
+      <nav class="app-nav">
+        <a class="on" href="#console"><span class="ico">◍</span>对话</a>
+        <a href="#console"><span class="ico">☰</span>自主任务<span class="cnt">3</span></a>
+        <a href="#console"><span class="ico">⚑</span>待审批<span class="cnt">2</span></a>
+        <a href="#console"><span class="ico">▤</span>剧本<span class="cnt">7</span></a>
+        <a href="#console"><span class="ico">◫</span>审计<span class="cnt">412</span></a>
+        <a href="#console"><span class="ico">⚙</span>权限与预算</a>
+      </nav>
+      <div class="panel-sm mt2">
+        <p class="panel-sm-t">本周预算</p>
+        <div class="bar-row"><span>GPU·h</span><span class="bar-track"><i class="bar-fill warn" style="width:76.6%"></i></span><span class="bar-val">46/60</span></div>
+        <div class="bar-row"><span>任务提交</span><span class="bar-track"><i class="bar-fill" style="width:41%"></i></span><span class="bar-val">18/44</span></div>
+        <div class="bar-row"><span>LLM tokens</span><span class="bar-track"><i class="bar-fill" style="width:23%"></i></span><span class="bar-val">23%</span></div>
+        <p class="xs muted-2 mb0 mt1">预算耗尽后自动转为只读模式，仍可回答问题与写报告。</p>
+      </div>
+      <div class="panel-sm mt2">
+        <p class="panel-sm-t">自主级别</p>
+        <p class="xs mb0">
+          <span class="badge b-amber">L3 · 可自主发起</span><br>
+          <span class="xs muted-2">中低风险动作自动执行，高风险需审批，真机放行永久禁止。</span>
+        </p>
+        <button class="btn sm mt1">调整为 L2（仅建议）</button>
+      </div>
+    </aside>
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">Agent / 对话 · 会话 8 月 20 日</p>
+          <h3 class="app-h">控制台　<span class="st st-run">2 个自主任务运行中</span></h3>
+        </div>
+        <div class="app-actions">
+          <button class="btn sm">导出会话</button>
+          <button class="btn sm danger">暂停全部自主行为</button>
+        </div>
+      </div>
+
+      <div class="grid g-3-2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">对话　<span class="more">工具调用全部展开可见</span></p>
+          <div class="chat">
+            <div class="msg-row me">
+              <span class="avatar hu">我</span>
+              <div class="bubble">
+                <p class="mb0">昨晚那个 push 任务的评估怎么样？为什么 OOD 掉得这么多</p>
+              </div>
+            </div>
+            <div class="msg-row">
+              <span class="avatar ag">A</span>
+              <div class="bubble">
+                <p class="mb1">先取事实。</p>
+                <div class="toolcall"><b>query.eval_report</b>(id="ev_01JB9C2X4") → success_rate.id=<b>0.75</b> · ood_instruction=<b>0.39</b> · n=160 <span class="muted-2">[ref#1]</span></div>
+                <div class="toolcall"><b>query.dataset_version</b>(id="dsv_…4M2") → scenarios=<b>35</b> · instruction_templates=<b>14</b> · object_variants=<b>2</b> <span class="muted-2">[ref#2]</span></div>
+                <div class="toolcall"><b>query.eval_episodes</b>(report="ev_…2X4", filter="split=ood_object AND task=push") → n=32 · success=<b>6</b> <span class="muted-2">[ref#3]</span></div>
+                <p class="mb1">
+                  <b>结论</b>：id 成功率 <span class="c-cyan">0.75</span>，OOD 指令 <span class="c-amber">0.39</span>，
+                  掉了 48%<span class="xs muted-2">[ref#1]</span>。
+                  最严重的是 OOD 物体下的 push——32 例只成 6 例<span class="xs muted-2">[ref#3]</span>。
+                </p>
+                <p class="mb1">
+                  <b>最可能的原因</b>：训练集只有 <b>2 种</b>物体外观与 <b>14 条</b>指令模板<span class="xs muted-2">[ref#2]</span>，
+                  push 类样本仅 3 条。模型很可能记住了「看到蓝方块就往右推」这一条捷径，
+                  而不是学到「把物体推到目标位」这个任务。
+                </p>
+                <p class="mb0">
+                  <b>可验证的判据</b>：如果是捷径学习，那么换颜色后失败模式应集中在「方向错误」而非「推力不足」。
+                  我查了一下——OOD 物体的 26 次失败中 19 次是方向错误，
+                  <b>支持这个假设</b>。要不要我跑一个诊断实验：把物体颜色随机化后重新评估现有模型？
+                  预计 25 min，占 1 GPU。
+                </p>
+              </div>
+            </div>
+            <div class="msg-row me">
+              <span class="avatar hu">我</span>
+              <div class="bubble"><p class="mb0">跑。另外顺便算下要补多少数据</p></div>
+            </div>
+            <div class="msg-row">
+              <span class="avatar ag">A</span>
+              <div class="bubble">
+                <div class="toolcall"><b>job.submit</b>(kind="eval.suite", mutate="object_color=random", gpus=1) → run_01JB9K4M2 <span class="c-green">已提交（低风险，无需审批）</span></div>
+                <div class="toolcall"><b>playbook.run</b>("数据缺口分析", report="ev_…2X4") → 进行中</div>
+                <p class="mb0">
+                  已提交，预计 09:52 完成。缺口分析初步结果：
+                  要让 OOD 物体成功率达到 id 的 80%，按当前每类样本的边际收益估算，
+                  <b>需要新增约 8–12 种物体外观 × 每种 3 条 push 轨迹</b>。
+                  <span class="c-amber">注意：这是外推估计，置信度低</span>——
+                  因为现有数据点太少（2 种物体），拟合曲线不可靠。
+                  建议先补 4 种验证趋势，再决定是否继续。
+                </p>
+              </div>
+            </div>
+          </div>
+          <div class="toolbar mt2">
+            <input class="input" style="flex:1" placeholder="问点什么，或让它做点什么…">
+            <button class="btn sm primary">发送</button>
+          </div>
+          <p class="xs muted-2 mb0 mt1">
+            <b>注意这段对话里 Agent 的行为特征</b>：先查事实再下结论；每个数字带 ref；
+            提出假设时同时给出<b>可验证的判据</b>；对外推结论主动标注低置信度。
+            这些都不是靠提示词客气话实现的，而是靠工具层强制（无 ref 的数字会被标灰）。
+          </p>
+        </div>
+
+        <div>
+          <div class="panel-sm mb1">
+            <p class="panel-sm-t">待审批　<span class="more">2 项</span></p>
+            <div class="mb2">
+              <p class="xs mb1"><b>① 4 GPU × 18 h 长训</b> <span class="badge b-orange">高风险</span></p>
+              <p class="xs muted-2 mb1">
+                理由：扫参结果显示 entropy_coef=0.012 最优，Agent 建议以此配置跑完整 6000 iter。
+                预计消耗 72 GPU·h，<b>超出本周剩余预算 14 h</b>。
+              </p>
+              <div class="toolbar">
+                <button class="btn sm primary">批准并加预算</button>
+                <button class="btn sm">改为 2 GPU</button>
+                <button class="btn sm">拒绝</button>
+              </div>
+            </div>
+            <div>
+              <p class="xs mb1"><b>② 回收 8.1 GB 产物</b> <span class="badge b-red">不可逆</span></p>
+              <p class="xs muted-2 mb1">
+                31 个中间 checkpoint，均满足：无血缘下游引用 · 同 run 有更优版本 · 超过 14 天。
+                <a href="#console">查看逐项证据</a>
+              </p>
+              <div class="toolbar">
+                <button class="btn sm primary">确认删除</button>
+                <button class="btn sm">仅删前 10 个</button>
+                <button class="btn sm">忽略</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-sm mb1">
+            <p class="panel-sm-t">自主任务</p>
+            <ul class="tl mb0">
+              <li class="ok"><p class="tl-t mb0">夜间队列填充</p><p class="tl-m mb0">23:04 提交 3 个可抢占 run · 07:52 全部完成 · 用 11.2 GPU·h</p></li>
+              <li class="warn"><p class="tl-t mb0">训练失败诊断</p><p class="tl-m mb0">02:17 run_…8K1 OOM → 自动降 num_envs 4096→2048 重试 → 成功</p></li>
+              <li><p class="tl-t mb0">数据缺口分析</p><p class="tl-m mb0">09:31 运行中 · 剧本步骤 3/5</p></li>
+              <li class="ok"><p class="tl-t mb0">上机前检查</p><p class="tl-m mb0">08:40 pb_…F2K7X · G1–G5 通过 · 标定 7 天后到期已提醒</p></li>
+            </ul>
+          </div>
+
+          <div class="panel-sm">
+            <p class="panel-sm-t">今日审计摘要　<span class="more">全部可展开</span></p>
+            <div class="bar-row"><span>只读查询</span><span class="bar-track"><i class="bar-fill" style="width:88%"></i></span><span class="bar-val">176</span></div>
+            <div class="bar-row"><span>任务提交</span><span class="bar-track"><i class="bar-fill good" style="width:26%"></i></span><span class="bar-val">5</span></div>
+            <div class="bar-row"><span>自动重试</span><span class="bar-track"><i class="bar-fill warn" style="width:12%"></i></span><span class="bar-val">2</span></div>
+            <div class="bar-row"><span>被护栏拦截</span><span class="bar-track"><i class="bar-fill bad" style="width:8%"></i></span><span class="bar-val">1</span></div>
+            <p class="xs muted-2 mb0 mt1">
+              被拦截的那一次：Agent 试图提交 <code>train.rl</code> 占 3 GPU × 10 h，
+              超出免审批规格（≤1 GPU / ≤6 h），已自动转为待审批项 ①。
+              <b>护栏生效的记录本身就是护栏有用的证据。</b>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 id="failures">8.9 失效模式与对策</h2>
+
+<p>
+  自主 Agent 一定会出问题。区别在于问题是否被限制在可承受范围内、
+  以及你能否快速发现并纠正。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:18%">失效模式</th><th style="width:26%">具体表现</th><th style="width:28%">对策</th><th>残余风险</th></tr></thead>
+<tbody>
+<tr><td><b>幻觉数字</b></td><td class="xs">「成功率提升了 12%」——实际没查过</td><td class="xs">工具返回值带 ref，输出中的数字必须引用；无 ref 的标灰</td><td class="xs">仍可能对<b>趋势描述</b>夸大（「显著改善」），这类定性词无法机械校验</td></tr>
+<tr><td><b>无限循环</b></td><td class="xs">失败→重试→失败，反复烧 GPU</td><td class="xs">同一 job 自动重试上限 2 次；同一剧本 24 h 内触发上限；预算硬顶</td><td class="xs">低。预算是最后防线</td></tr>
+<tr><td><b>误判归因</b></td><td class="xs">把 seed 波动当成方法改进并据此扫参</td><td class="xs">强制在结论中带置信区间；<a href="06-evaluation.html#compare">对比页</a>自动标注「差异不显著」</td><td class="xs">中。它可能仍在不显著的差异上浪费算力</td></tr>
+<tr><td><b>资源挤占</b></td><td class="xs">夜间提交的任务占满 GPU，早上你没法工作</td><td class="xs">Agent 任务默认可抢占；固定时段（08:00–20:00）自动降优先级</td><td class="xs">低</td></tr>
+<tr><td><b>盲目乐观</b></td><td class="xs">报告只说好消息，异常一笔带过</td><td class="xs">日报模板<b>强制包含「异常与风险」段</b>，为空时需说明依据</td><td class="xs">中。模板能强制结构，但不能强制诚实</td></tr>
+<tr><td><b>过度打扰</b></td><td class="xs">每个小波动都发通知，最后你把通知全关了</td><td class="xs">通知分级；同类事件合并；每天通知数上限</td><td class="xs">低但需调优</td></tr>
+<tr><td><b>审批疲劳</b></td><td class="xs">连续批准后失去审查意识</td><td class="xs">高风险审批要求填写<b>一句理由</b>；三条永久禁止线不给审批入口</td><td class="xs">中。这是人的问题，工具只能减轻</td></tr>
+<tr><td><b>LLM 服务不可用</b></td><td class="xs">API 挂了或超预算</td><td class="xs">规则与剧本层<b>完全不依赖 LLM</b>，可独立运行；仅失去开放式对话能力</td><td class="xs">很低——这是三层架构的直接收益</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note decide">
+  <span class="note-t">一个关键的产品判断</span>
+  Agent 的自主级别应该<b>可随时下调</b>，并且下调不需要改配置文件重启服务——
+  UI 上一个按钮，立刻从「可自主发起」变成「仅给建议」。
+  因为信任是逐步建立的：刚开始你会想看着它做每一步，
+  几周之后确认它靠得住了，再放开。<b>把这个滑块交给用户，比替用户决定要好。</b>
+</div>
+
+<h2 id="impl">8.10 实现要点</h2>
+
+<div class="grid g2">
+<div>
+<div class="card">
+  <p class="card-title">Agent 不需要独立进程</p>
+  <p class="small mb1">
+    在单机场景下，harness 就是 FastAPI 应用里的一个模块 + 一组 APScheduler 定时任务。
+    它订阅 Redis Streams 的事件、按 cron 触发剧本、通过进程内 service 调用领域逻辑
+    （<b>不走 loopback HTTP</b>——护栏在 <a href="#harness">ToolBus</a> 而不在 HTTP 层，
+    绕一圈网络只会让调试变难、延迟变高）。
+    <b>不要为它做微服务</b>——那只会增加部署复杂度而没有任何收益。
+  </p>
+  <p class="xs muted-2 mb0">
+    唯一的例外是 MCP 桥：对外暴露工具时它是一个独立端点，
+    因为外部客户端（Cursor / Claude Desktop）本来就在进程外。
+  </p>
+</div>
+<div class="card mt2">
+  <p class="card-title">经验库的朴素实现</p>
+  <p class="small mb0">
+    「记得住三个月前的相似失败」听起来需要向量数据库，实际上不需要。
+    失败模式的判别特征是<b>结构化的</b>：退出码、异常类名、日志中的关键行、
+    JobKind、镜像 digest。用一张 PG 表存
+    <code>(signature, cause, fix, occurrences, last_seen)</code>，
+    signature 由这些字段规范化后哈希——<b>精确匹配就能覆盖大部分情况</b>。
+    只有匹配不上时才需要 LLM 去做模糊关联。
+  </p>
+</div>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">上下文构造是主要工程量</p>
+  <p class="small">
+    LLM 的效果几乎完全取决于喂给它什么。三条实践原则：
+  </p>
+  <ul class="small mb0">
+    <li><b>给聚合而非原始</b>：曲线传 200 个降采样点，不传 6000 个 iter</li>
+    <li><b>给结构而非文本</b>：传 JSON 事实表，不传拼接好的自然语言段落</li>
+    <li><b>给差异而非全量</b>：对比两个 run 时只传参数 diff 与指标 diff</li>
+  </ul>
+  <p class="xs muted-2 mb0 mt1">
+    这三条能把上下文压到十分之一，同时<b>提高</b>准确率——
+    因为噪音本身就是幻觉的来源。
+  </p>
+</div>
+<div class="note good mt2">
+  <span class="note-t">审计日志的字段</span>
+  每条 Agent 动作记录：<code>actor_type=agent</code>、
+  <code>trigger</code>（事件 / cron / 人工指令）、
+  <code>playbook_id</code> 与步号、<code>tool</code> 与参数、
+  <code>guardrail_result</code>（通过 / 降级 / 拦截）、
+  <code>budget_delta</code>、<code>llm_call_id</code>（若有）、结果与耗时。
+  <b>有了这些字段，「Agent 昨晚干了什么」是一次 SQL 查询，而不是一场考古。</b>
+</div>
+</div>
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

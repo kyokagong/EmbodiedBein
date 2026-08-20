@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein：面向 Berkeley Humanoid Lite 本体与 RLinf 训练栈的具身智能研发管理平台设计文档。覆盖数据、模型、训练、评估、部署与内置 Agent。">
+<title>EmbodiedBein｜具身智能研发管理平台 · 设计总览</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">EmbodiedBein · Design v0.1</p>
+  <h1>把一个人的具身智能研发，<br>变成一条看得见的流水线。</h1>
+  <p class="hero-copy">
+    EmbodiedBein 是一个<b>单机部署</b>的具身智能研发管理平台：统一管理异构数据、多种模型、两套训练栈、
+    仿真与真机评估，直到策略发布上机；并内置一个可自主闭环的 Agent 承担重复劳动。
+    它同时是你的<b>工作台</b>，也是同事理解你产出的<b>窗口</b>。
+  </p>
+  <div class="chips">
+    <span class="chip is-infra"><span class="chip-dot"></span>本体 <b>Berkeley&nbsp;Humanoid&nbsp;Lite</b></span>
+    <span class="chip is-train"><span class="chip-dot"></span>训练栈 <b>Isaac&nbsp;Lab+RSL-RL</b> / <b>RLinf</b></span>
+    <span class="chip is-data"><span class="chip-dot"></span>数据 <b>44&nbsp;GB · 18,974&nbsp;文件</b></span>
+    <span class="chip is-deploy"><span class="chip-dot"></span>算力 <b>4×RTX&nbsp;4090&nbsp;24G</b> · 96&nbsp;core · 125&nbsp;GB</span>
+    <span class="chip is-agent"><span class="chip-dot"></span>后端 <b>Python+Rust</b> · 前端 <b>Vue&nbsp;3</b></span>
+  </div>
+</header>
+
+<h2 id="why">一、为什么需要这个平台</h2>
+
+<p class="lede">
+  这套设计不是从「MLOps 平台该有什么」出发的，而是从你现有三个仓库里<b>实际存在的失败模式</b>倒推出来的。
+  下表每一行的左侧都能在代码或数据里找到出处，右侧是平台对应的机制。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:31%">现有痛点（有据可查）</th><th style="width:33%">证据</th><th>平台机制</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>本体维度矩阵极易静默出错</b><br><span class="xs muted">四套观测布局、三套自由度共存</span></td>
+  <td class="xs">humanoid <code>obs 75/act 22</code> @25Hz、biped <code>45/12</code> @25Hz、WBC <code>85/22</code> @50Hz（<code>command_dim 13</code>）、fixed-hand <code>state 10/act 10</code> @20Hz。写错一处要等仿真起来几十分钟后才暴露。</td>
+  <td><a href="02-domain-model.html#contract">Embodiment&nbsp;Contract</a> 作为一等实体，在<b>提交任务 / 注册数据 / 注册模型 / 导出 / 上机</b>五个卡口做静态校验，秒级拦截。</td>
+</tr>
+<tr>
+  <td><b>训练任务互相污染仓库</b></td>
+  <td class="xs"><code>play.py</code> 会直接改写仓库内的 <code>configs/policy_latest.yaml</code>；训练默认写 <code>logs/rsl_rl/&lt;exp&gt;/&lt;timestamp&gt;/</code>。并发两个任务就会打架。</td>
+  <td>源码<b>只读挂载</b>＋每个 Run 独立 <code>workspace/</code> overlay，输出全部重定向；产物再回收进内容寻址仓库。见 <a href="05-training.html#isolation">05·工作区隔离</a>。</td>
+</tr>
+<tr>
+  <td><b>两套训练栈的配置语义完全不同</b></td>
+  <td class="xs">Isaac 侧是 <code>argparse</code>＋<code>@configclass</code>＋Hydra entry point；RLinf 侧是 <code>Ray</code>＋纯 Hydra YAML＋<code>cluster.component_placement</code>。人脑切换成本高、容易漏参。</td>
+  <td>统一 <a href="02-domain-model.html#jobspec">JobSpec</a> ＋ 每栈一个 <a href="05-training.html#adapters">Adapter</a>，把平台语义翻译成各自 CLI；命令行做 snapshot 测试防漂移。</td>
+</tr>
+<tr>
+  <td><b>数据可用性极低且过程不可见</b></td>
+  <td class="xs">Ego4D FHO 155,369 个候选事件 → 最终仅 <b>35</b> 个场景被接受（reach 29 / push 6）；TACO 2,212 与 goalstep 34,332 全部为 0。拒绝原因散落在 JSONL 里。</td>
+  <td><a href="03-data.html#funnel">数据漏斗审计</a>：每一级留存率、拒绝原因分布、可下钻到样本与视频；漏斗本身是可复现的流水线产物。</td>
+</tr>
+<tr>
+  <td><b>4 张卡会被抢爆</b></td>
+  <td class="xs">Isaac Sim 需整卡＋Vulkan；OpenVLA-7B 全参微调按公式算连 4 卡都放不下（需 LoRA 或 8-bit 优化器）。凭感觉估显存，代价是跑到第 8 小时 OOM。</td>
+  <td><a href="04-model.html#mem">容量估算器</a>（实测&gt;解析&gt;目录，估算自带出处与降配建议）＋<a href="05-training.html#sched">资源准入与队列</a>：整卡为调度单位、独占/共享声明、排队与抢占。</td>
+</tr>
+<tr>
+  <td><b>产物散落，复现靠记忆</b></td>
+  <td class="xs">Isaac 产物在 <code>logs/rsl_rl/&lt;exp&gt;/&lt;ts&gt;/</code>，RLinf 在 <code>logs/&lt;ts&gt;-&lt;cfg&gt;/&lt;exp&gt;/checkpoints/global_step_N/</code>，导出物在 <code>exported/</code> 与 <code>configs/</code>。</td>
+  <td>统一 <a href="02-domain-model.html#er">Run / Artifact 注册</a>，复现五元组：<code>code_ref + config_hash + data_version + image_digest + seed</code>。</td>
+</tr>
+<tr>
+  <td><b>sim→sim2sim→real 的一致性无人追踪</b></td>
+  <td class="xs">链路是 Isaac 训练 → 导出 ONNX → MuJoCo 验证 → UDP/CAN 上机，但三段之间的行为差异没有量化留档。</td>
+  <td><a href="06-evaluation.html#cross">跨域一致性指标</a>（L3）：同一策略同一 seed 在三域的动作/状态偏差与分布 KL，进入发布门禁。</td>
+</tr>
+<tr>
+  <td><b>数据许可有合规风险</b></td>
+  <td class="xs">Ego4D 为非商业许可、HOI4D 为 CC-BY-NC-4.0、TACO 为 CC-BY-4.0；HOI4D 部分资源当前处于 403 受阻状态。</td>
+  <td>数据集强制 <code>license</code> ＋ <code>gate_status</code> 标签，导出/分享/发布时按许可传染性拦截。见 <a href="03-data.html#license">03·许可与门禁</a>。</td>
+</tr>
+<tr>
+  <td><b>磁盘一定会爆</b></td>
+  <td class="xs">仅原始数据 44 GB；Isaac 每 100 iter 存一个 checkpoint，一次 6000 iter 训练就是 60 个模型文件，再加视频。</td>
+  <td><a href="03-data.html#version">配额与生命周期治理</a>：top-k checkpoint 保留、视频降采样归档、水位告警与 GC 预演。</td>
+</tr>
+<tr>
+  <td><b>同事看不到你在干什么</b></td>
+  <td class="xs">进展分散在终端、TensorBoard、若干 Markdown 设计文档里，没有单一入口。</td>
+  <td><a href="09-ui-system.html#showcase">Showcase 叙事视图</a>：血缘图、周报快照、只读分享链接，30 秒讲清「现在做到哪、下一步卡在哪」。</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="overview">二、系统全景</h2>
+
+<p>
+  六层结构。<b>控制面（Python）负责决策与编排，数据面（Rust）负责高吞吐的采集、扫描与搬运</b>，
+  两者以 Unix Domain Socket 上的 gRPC ＋ Redis Streams 通信；执行层一律是容器，
+  这样单机的 Docker 与未来的 K8s 只是同一 <code>Executor</code> 接口的两种实现。
+</p>
+
+<figure class="diagram diagram-wide">
+<svg viewBox="0 0 1140 606" role="img" aria-label="EmbodiedBein 六层系统架构全景图：从上到下依次为交互层、控制面、数据面、执行层、存储与资源层、外部世界">
+  <!-- ============ L1 交互层 ============ -->
+  <rect class="svg-lane" x="6" y="8" width="1128" height="84" rx="12"/>
+  <text class="svg-t-lane" x="18" y="26">L5 交互层 · Vue 3 SPA</text>
+  <g transform="translate(112,32)">
+    <g><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#55d6be"/><text class="svg-t" x="9" y="20">总览</text><text class="svg-t-sm" x="9" y="36">Overview</text></g>
+    <g transform="translate(112,0)"><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#55d6be"/><text class="svg-t" x="9" y="20">数据</text><text class="svg-t-sm" x="9" y="36">Datasets</text></g>
+    <g transform="translate(224,0)"><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#b28dff"/><text class="svg-t" x="9" y="20">模型</text><text class="svg-t-sm" x="9" y="36">Models</text></g>
+    <g transform="translate(336,0)"><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#53d4ff"/><text class="svg-t" x="9" y="20">训练</text><text class="svg-t-sm" x="9" y="36">Runs·Pipelines</text></g>
+    <g transform="translate(448,0)"><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#ffc857"/><text class="svg-t" x="9" y="20">评估</text><text class="svg-t-sm" x="9" y="36">Eval·Compare</text></g>
+    <g transform="translate(560,0)"><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#ff884d"/><text class="svg-t" x="9" y="20">部署</text><text class="svg-t-sm" x="9" y="36">Release·Fleet</text></g>
+    <g transform="translate(672,0)"><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#5b8cff"/><text class="svg-t" x="9" y="20">本体</text><text class="svg-t-sm" x="9" y="36">Embodiment</text></g>
+    <g transform="translate(784,0)"><rect class="svg-box" width="104" height="50" rx="8" style="stroke:#ff7ac0"/><text class="svg-t" x="9" y="20">Agent</text><text class="svg-t-sm" x="9" y="36">Console</text></g>
+    <g transform="translate(896,0)"><rect class="svg-box" width="112" height="50" rx="8" style="stroke:#53e5a3"/><text class="svg-t" x="9" y="20">展示</text><text class="svg-t-sm" x="9" y="36">Showcase·分享</text></g>
+  </g>
+
+  <!-- ============ L2 控制面 ============ -->
+  <rect class="svg-lane" x="6" y="100" width="1128" height="86" rx="12"/>
+  <text class="svg-t-lane" x="18" y="118">L4 控制面 · Python / FastAPI</text>
+  <g transform="translate(112,124)">
+    <g><rect class="svg-box-2" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">API 网关</text><text class="svg-t-sm" x="9" y="34">REST · WS · SSE</text><text class="svg-t-mono" x="9" y="47">OpenAPI 3.1 / JWT</text></g>
+    <g transform="translate(168,0)"><rect class="svg-box-2" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">编排器</text><text class="svg-t-sm" x="9" y="34">Job 状态机 · DAG</text><text class="svg-t-mono" x="9" y="47">重试 · 幂等 · 补偿</text></g>
+    <g transform="translate(336,0)"><rect class="svg-box-2" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">调度器</text><text class="svg-t-sm" x="9" y="34">GPU 准入 · 队列</text><text class="svg-t-mono" x="9" y="47">整卡 · 抢占 · 预算</text></g>
+    <g transform="translate(504,0)"><rect class="svg-box-2" width="158" height="54" rx="8" style="stroke:#5b8cff"/><text class="svg-t" x="9" y="20">契约校验器</text><text class="svg-t-sm" x="9" y="34">Embodiment Gate</text><text class="svg-t-mono" x="9" y="47">obs/act/hz/joints</text></g>
+    <g transform="translate(672,0)"><rect class="svg-box-2" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">栈适配器</text><text class="svg-t-sm" x="9" y="34">isaaclab · rlinf</text><text class="svg-t-mono" x="9" y="47">lerobot · deploy</text></g>
+    <g transform="translate(840,0)"><rect class="svg-box-2" width="168" height="54" rx="8" style="stroke:#ff7ac0"/><text class="svg-t" x="9" y="20">Agent 服务</text><text class="svg-t-sm" x="9" y="34">规划 · 工具 · 记忆</text><text class="svg-t-mono" x="9" y="47">护栏 · 审计 · 预算</text></g>
+  </g>
+
+  <!-- ============ L3 数据面 ============ -->
+  <rect class="svg-lane" x="6" y="194" width="1128" height="86" rx="12"/>
+  <text class="svg-t-lane" x="18" y="212">L3 数据面 · Rust（高吞吐旁路）</text>
+  <g transform="translate(112,218)">
+    <g><rect class="svg-box" width="190" height="54" rx="8" style="stroke:#5b8cff"/><text class="svg-t" x="9" y="20">eb-runner</text><text class="svg-t-sm" x="9" y="34">容器生命周期 · GPU 绑定</text><text class="svg-t-mono" x="9" y="47">bollard · 日志多路 · OOM</text></g>
+    <g transform="translate(200,0)"><rect class="svg-box" width="190" height="54" rx="8" style="stroke:#5b8cff"/><text class="svg-t" x="9" y="20">eb-collector</text><text class="svg-t-sm" x="9" y="34">tfevents · stdout · DCGM</text><text class="svg-t-mono" x="9" y="47">归一化 → 指标流</text></g>
+    <g transform="translate(400,0)"><rect class="svg-box" width="190" height="54" rx="8" style="stroke:#55d6be"/><text class="svg-t" x="9" y="20">eb-scanner</text><text class="svg-t-sm" x="9" y="34">sha256 · schema 嗅探</text><text class="svg-t-mono" x="9" y="47">rayon · ffprobe · 缩略图</text></g>
+    <g transform="translate(600,0)"><rect class="svg-box" width="190" height="54" rx="8" style="stroke:#55d6be"/><text class="svg-t" x="9" y="20">eb-artifact</text><text class="svg-t-sm" x="9" y="34">内容寻址 · Range · HLS</text><text class="svg-t-mono" x="9" y="47">分片上传 · sendfile</text></g>
+    <g transform="translate(800,0)"><rect class="svg-box" width="208" height="54" rx="8" style="stroke:#53d4ff"/><text class="svg-t" x="9" y="20">eb-tsdb</text><text class="svg-t-sm" x="9" y="34">append-only 时序段</text><text class="svg-t-mono" x="9" y="47">降采样 · 多 run 对齐查询</text></g>
+  </g>
+
+  <!-- ============ L4 执行层 ============ -->
+  <rect class="svg-lane" x="6" y="288" width="1128" height="86" rx="12"/>
+  <text class="svg-t-lane" x="18" y="306">L2 执行层 · Docker 容器（未来可换 K8s）</text>
+  <g transform="translate(112,312)">
+    <g><rect class="svg-box-2" width="238" height="54" rx="8" style="stroke:#53d4ff"/><text class="svg-t" x="9" y="20">isaac-lab-template</text><text class="svg-t-sm" x="9" y="34">RSL-RL PPO · play/export · VLA 采集</text><text class="svg-t-mono" x="9" y="47">整卡 + Vulkan + /dev/dri</text></g>
+    <g transform="translate(248,0)"><rect class="svg-box-2" width="238" height="54" rx="8" style="stroke:#b28dff"/><text class="svg-t" x="9" y="20">rlinf-embodied</text><text class="svg-t-sm" x="9" y="34">VLA SFT · PPO/GRPO · DAgger</text><text class="svg-t-mono" x="9" y="47">Ray + Hydra + FSDP</text></g>
+    <g transform="translate(496,0)"><rect class="svg-box-2" width="238" height="54" rx="8" style="stroke:#ff884d"/><text class="svg-t" x="9" y="20">mujoco-sim2sim</text><text class="svg-t-sm" x="9" y="34">ONNX 回归 · 无 GPU</text><text class="svg-t-mono" x="9" y="47">CPU 多副本并行</text></g>
+    <g transform="translate(744,0)"><rect class="svg-box-2" width="264" height="54" rx="8" style="stroke:#55d6be"/><text class="svg-t" x="9" y="20">eb-tools</text><text class="svg-t-sm" x="9" y="34">数据编译 · 格式转换 · 报告渲染</text><text class="svg-t-mono" x="9" y="47">CPU · 可高并发</text></g>
+  </g>
+
+  <!-- ============ L5 存储 ============ -->
+  <rect class="svg-lane" x="6" y="382" width="1128" height="86" rx="12"/>
+  <text class="svg-t-lane" x="18" y="400">L1 存储与资源 · 单机 docker compose</text>
+  <g transform="translate(112,406)">
+    <g><rect class="svg-box" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">PostgreSQL</text><text class="svg-t-sm" x="9" y="34">元数据 · 血缘</text><text class="svg-t-mono" x="9" y="47">事务真源</text></g>
+    <g transform="translate(168,0)"><rect class="svg-box" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">Redis</text><text class="svg-t-sm" x="9" y="34">Streams 队列 · 缓存</text><text class="svg-t-mono" x="9" y="47">事件总线 · 锁</text></g>
+    <g transform="translate(336,0)"><rect class="svg-box" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">MinIO</text><text class="svg-t-sm" x="9" y="34">artifact · 视频</text><text class="svg-t-mono" x="9" y="47">S3 兼容 · CAS</text></g>
+    <g transform="translate(504,0)"><rect class="svg-box" width="158" height="54" rx="8"/><text class="svg-t" x="9" y="20">时序存储</text><text class="svg-t-sm" x="9" y="34">训练指标</text><text class="svg-t-mono" x="9" y="47">本地段文件</text></g>
+    <g transform="translate(672,0)"><rect class="svg-box" width="158" height="54" rx="8" style="stroke:#53e5a3"/><text class="svg-t" x="9" y="20">4×RTX 4090</text><text class="svg-t-sm" x="9" y="34">24 GB / 卡</text><text class="svg-t-mono" x="9" y="47">整卡调度单位</text></g>
+    <g transform="translate(840,0)"><rect class="svg-box" width="168" height="54" rx="8" style="stroke:#53e5a3"/><text class="svg-t" x="9" y="20">数据盘</text><text class="svg-t-sm" x="9" y="34">/data/kk（44 GB+）</text><text class="svg-t-mono" x="9" y="47">只读挂载 + 配额</text></g>
+  </g>
+
+  <!-- ============ L6 外部 ============ -->
+  <rect class="svg-lane" x="6" y="476" width="1128" height="80" rx="12" style="stroke:#3d5f78"/>
+  <text class="svg-t-lane" x="18" y="494">L0 外部世界（平台只读引用，不改写）</text>
+  <g transform="translate(112,500)">
+    <g><rect class="svg-box-2" width="200" height="46" rx="8" style="stroke:#3d5f78"/><text class="svg-t" x="9" y="19">Berkeley-Humanoid-Lite</text><text class="svg-t-mono" x="9" y="34">仓库 + 2 个子模块</text></g>
+    <g transform="translate(210,0)"><rect class="svg-box-2" width="200" height="46" rx="8" style="stroke:#3d5f78"/><text class="svg-t" x="9" y="19">RLinf</text><text class="svg-t-mono" x="9" y="34">v0.4.0 · Ray + Hydra</text></g>
+    <g transform="translate(420,0)"><rect class="svg-box-2" width="200" height="46" rx="8" style="stroke:#3d5f78"/><text class="svg-t" x="9" y="19">berkeley_ego_data</text><text class="svg-t-mono" x="9" y="34">Ego4D · TACO · HOI4D</text></g>
+    <g transform="translate(630,0)"><rect class="svg-box-2" width="180" height="46" rx="8" style="stroke:#3d5f78"/><text class="svg-t" x="9" y="19">HF / 模型仓</text><text class="svg-t-mono" x="9" y="34">π₀ · OpenVLA · GR00T</text></g>
+    <g transform="translate(820,0)"><rect class="svg-box-2" width="188" height="46" rx="8" style="stroke:#ff884d"/><text class="svg-t" x="9" y="19">真机 · 22/12 DOF</text><text class="svg-t-mono" x="9" y="34">UDP 10000/10001 · CAN</text></g>
+  </g>
+
+  <!-- 层间连线 -->
+  <path class="svg-edge-hot" d="M 570 82 L 570 124" marker-end="url(#ah)"/>
+  <path class="svg-edge" d="M 300 178 L 300 218" marker-end="url(#ah)"/>
+  <path class="svg-edge" d="M 700 178 L 700 218" marker-end="url(#ah)"/>
+  <path class="svg-edge-hot" d="M 200 272 L 200 312" marker-end="url(#ah)"/>
+  <path class="svg-edge-dash" d="M 640 272 L 640 312" marker-end="url(#ah)"/>
+  <path class="svg-edge" d="M 420 366 L 420 406" marker-end="url(#ah)"/>
+  <path class="svg-edge" d="M 900 366 L 900 406" marker-end="url(#ah)"/>
+  <path class="svg-edge-dash" d="M 1000 460 L 1000 500" marker-end="url(#ah)"/>
+  <path class="svg-edge-dash" d="M 240 500 L 240 460" marker-end="url(#ah)"/>
+  <text class="svg-t-mono" x="576" y="108">REST / WS</text>
+  <text class="svg-t-mono" x="306" y="204">gRPC over UDS</text>
+  <text class="svg-t-mono" x="706" y="204">Redis Streams</text>
+  <text class="svg-t-mono" x="206" y="298">Docker API</text>
+  <text class="svg-t-mono" x="646" y="298">指标/日志回流</text>
+
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3d5f78"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>图 0-1　六层系统全景。青色实线为高频热路径，虚线为异步旁路。详细拆解见 <a href="01-architecture.html">01 · 系统架构</a>。</figcaption>
+</figure>
+
+<h2 id="pipeline">三、端到端主干管线</h2>
+
+<p>
+  平台的核心叙事是一条<b>可复现、可门禁、可回流</b>的主干管线。九个阶段各自是一类容器化 Job，
+  阶段之间靠 Artifact 与门禁连接，任何一段都能单独重跑而不破坏上下游的血缘记录。
+</p>
+
+<figure class="diagram diagram-wide">
+<svg viewBox="0 0 1140 330" role="img" aria-label="端到端主干管线：从数据登记到真机部署共九个阶段，含三道门禁与两条回流">
+  <g class="stage">
+    <!-- 第一行：数据 -->
+    <g transform="translate(14,44)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#55d6be"/>
+      <text class="svg-t" x="10" y="20">① 数据登记</text>
+      <text class="svg-t-sm" x="10" y="35">源扫描 · sha256</text>
+      <text class="svg-t-mono" x="10" y="50">→ DatasetVersion</text>
+    </g>
+    <g transform="translate(190,44)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#55d6be"/>
+      <text class="svg-t" x="10" y="20">② 场景编译</text>
+      <text class="svg-t-sm" x="10" y="35">ego → scenario</text>
+      <text class="svg-t-mono" x="10" y="50">漏斗审计 155k→35</text>
+    </g>
+    <g transform="translate(366,44)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#55d6be"/>
+      <text class="svg-t" x="10" y="20">③ 示教采集</text>
+      <text class="svg-t-sm" x="10" y="35">脚本专家 · Isaac</text>
+      <text class="svg-t-mono" x="10" y="50">→ LeRobot 数据集</text>
+    </g>
+    <g transform="translate(542,44)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#b28dff"/>
+      <text class="svg-t" x="10" y="20">④ SFT 预训练</text>
+      <text class="svg-t-sm" x="10" y="35">RLinf · π₀ / VLA</text>
+      <text class="svg-t-mono" x="10" y="50">→ ModelVersion</text>
+    </g>
+    <g transform="translate(718,44)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#53d4ff"/>
+      <text class="svg-t" x="10" y="20">⑤ 强化训练</text>
+      <text class="svg-t-sm" x="10" y="35">RSL-RL / RLinf RL</text>
+      <text class="svg-t-mono" x="10" y="50">→ checkpoint 序列</text>
+    </g>
+    <g transform="translate(894,44)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#ffc857"/>
+      <text class="svg-t" x="10" y="20">⑥ 仿真评估</text>
+      <text class="svg-t-sm" x="10" y="35">成功率 · 终止分布</text>
+      <text class="svg-t-mono" x="10" y="50">→ EvalReport</text>
+    </g>
+    <!-- 第二行：发布 -->
+    <g transform="translate(190,204)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#ff884d"/>
+      <text class="svg-t" x="10" y="20">⑨ 真机部署</text>
+      <text class="svg-t-sm" x="10" y="35">包下发 · 遥测回传</text>
+      <text class="svg-t-mono" x="10" y="50">物理确认 + 双人</text>
+    </g>
+    <g transform="translate(454,204)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#ff884d"/>
+      <text class="svg-t" x="10" y="20">⑧ sim2sim 回归</text>
+      <text class="svg-t-sm" x="10" y="35">MuJoCo · 跨域一致性</text>
+      <text class="svg-t-mono" x="10" y="50">CPU 并行 N seeds</text>
+    </g>
+    <g transform="translate(718,204)">
+      <rect class="svg-box" width="150" height="62" rx="10" style="stroke:#ff884d"/>
+      <text class="svg-t" x="10" y="20">⑦ 导出签名</text>
+      <text class="svg-t-sm" x="10" y="35">ONNX + JIT + YAML</text>
+      <text class="svg-t-mono" x="10" y="50">sha256 → PolicyBundle</text>
+    </g>
+  </g>
+
+  <!-- 主干箭头 -->
+  <path class="svg-edge-hot" d="M 164 75 L 186 75" marker-end="url(#ah2)"/>
+  <path class="svg-edge-hot" d="M 340 75 L 362 75" marker-end="url(#ah2)"/>
+  <path class="svg-edge-hot" d="M 516 75 L 538 75" marker-end="url(#ah2)"/>
+  <path class="svg-edge-hot" d="M 692 75 L 714 75" marker-end="url(#ah2)"/>
+  <path class="svg-edge-hot" d="M 868 75 L 890 75" marker-end="url(#ah2)"/>
+  <path class="svg-edge-hot" d="M 969 106 L 969 160 L 793 160 L 793 200" marker-end="url(#ah2)"/>
+  <path class="svg-edge-hot" d="M 714 235 L 608 235" marker-end="url(#ah2)"/>
+  <path class="svg-edge-hot" d="M 450 235 L 344 235" marker-end="url(#ah2)"/>
+
+  <!-- 门禁标记 -->
+  <g transform="translate(940,140)"><rect x="0" y="0" width="120" height="18" rx="5" fill="rgba(255,200,87,.16)" stroke="#ffc857"/><text class="svg-t-mono" x="7" y="13" style="fill:#ffc857">门禁 A：契约+指标</text></g>
+  <g transform="translate(620,214)"><rect x="0" y="0" width="90" height="18" rx="5" fill="rgba(255,200,87,.16)" stroke="#ffc857"/><text class="svg-t-mono" x="7" y="13" style="fill:#ffc857">门禁 B：签名</text></g>
+  <g transform="translate(352,214)"><rect x="0" y="0" width="94" height="18" rx="5" fill="rgba(255,93,104,.16)" stroke="#ff5d68"/><text class="svg-t-mono" x="7" y="13" style="fill:#ff5d68">门禁 C：回归</text></g>
+
+  <!-- 回流 -->
+  <path class="svg-edge-dash" d="M 265 204 L 265 130 L 90 130 L 90 108" marker-end="url(#ah2)"/>
+  <text class="svg-t-mono" x="96" y="126">真机遥测回流 → 数据集（失败样本）</text>
+  <path class="svg-edge-dash" d="M 1044 60 L 1090 60 L 1090 300 L 480 300 L 480 268" marker-end="url(#ah2)"/>
+  <text class="svg-t-mono" x="490" y="320">评估失败样本 → DAgger 在线数据 → 回到 ④</text>
+
+  <text class="svg-t-lane" x="14" y="26">主干：数据 → 模型 → 训练 → 评估</text>
+  <text class="svg-t-lane" x="14" y="188">发布：导出 → 回归 → 上机</text>
+  <defs>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#53d4ff"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>图 0-2　九阶段主干管线与三道门禁。虚线为两条回流：真机遥测与评估失败样本都回到数据层，形成闭环。</figcaption>
+</figure>
+
+<div class="note info">
+  <span class="note-t">三道门禁的意义</span>
+  门禁不是流程官僚，而是把「本来要在真机上炸出来的问题」提前到几分钟内的自动检查。
+  <b>A</b> 拦维度/频率不匹配与指标不达标；<b>B</b> 拦导出物与契约不一致、校验和缺失；
+  <b>C</b> 拦 sim2sim 行为漂移。三道全过才允许生成上机包，详见 <a href="07-deploy.html#pipeline">07 · 三段放行流水线</a>。
+</div>
+
+<h2 id="modules">四、九大模块职责</h2>
+
+<div class="grid g3">
+  <div class="card mcard m-data">
+    <p class="card-title"><span class="badge b-green">03</span> 数据管理</p>
+    <p class="card-sub">多源异构 → 可训练资产</p>
+    <ul class="small mb0">
+      <li>源登记、增量扫描、sha256 对账</li>
+      <li>格式嗅探：LeRobot / JSONL / pkl / npy / mp4</li>
+      <li>漏斗审计与拒绝原因下钻</li>
+      <li>视频＋叙述时间轴＋位姿三联预览</li>
+      <li>版本、切片、转换、许可门禁</li>
+    </ul>
+    <p class="mt1 mb0"><a href="03-data.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-model">
+    <p class="card-title"><span class="badge b-violet">04</span> 模型与本体资产</p>
+    <p class="card-sub">权重、契约、资产同源治理</p>
+    <ul class="small mb0">
+      <li>模型注册表与版本谱系</li>
+      <li>ONNX/JIT 维度自动反查契约</li>
+      <li>模型卡：来源、许可、显存画像</li>
+      <li>URDF/MJCF/USD 资产版本</li>
+      <li>标定数据与本体实例绑定</li>
+    </ul>
+    <p class="mt1 mb0"><a href="04-model.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-train">
+    <p class="card-title"><span class="badge b-cyan">05</span> 训练与编排</p>
+    <p class="card-sub">统一 JobSpec 驱动异构栈</p>
+    <ul class="small mb0">
+      <li>Job 状态机与 Pipeline DAG</li>
+      <li>Docker 下发：镜像/挂载/env/GPU</li>
+      <li>整卡准入、排队、抢占、预算</li>
+      <li>工作区隔离与产物回收</li>
+      <li>实时曲线、日志、视频、资源</li>
+    </ul>
+    <p class="mt1 mb0"><a href="05-training.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-eval">
+    <p class="card-title"><span class="badge b-amber">06</span> 评估与可视化</p>
+    <p class="card-sub">五层指标体系</p>
+    <ul class="small mb0">
+      <li>L0 过程 / L1 行为 / L2 任务</li>
+      <li>L3 跨域一致性 / L4 部署健康</li>
+      <li>多 run 对比、seed 聚合、消融矩阵</li>
+      <li>失败聚类与视频对比墙</li>
+      <li>回归门禁与排行榜</li>
+    </ul>
+    <p class="mt1 mb0"><a href="06-evaluation.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-deploy">
+    <p class="card-title"><span class="badge b-orange">07</span> 发布与真机</p>
+    <p class="card-sub">三段式，安全优先</p>
+    <ul class="small mb0">
+      <li>PolicyBundle 规范与签名</li>
+      <li>sim2sim 回归门禁</li>
+      <li>Fleet 注册、遥测、健康度</li>
+      <li>灰度、回滚、安全联锁</li>
+      <li>平台不远程使能电机</li>
+    </ul>
+    <p class="mt1 mb0"><a href="07-deploy.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-agent">
+    <p class="card-title"><span class="badge b-pink">08</span> 平台 Agent</p>
+    <p class="card-sub">Copilot / Operator / Autopilot</p>
+    <ul class="small mb0">
+      <li>问答与定位（只读）</li>
+      <li>生成配置并提交任务</li>
+      <li>目标驱动的自动实验闭环</li>
+      <li>预算、白名单、熔断、审计</li>
+      <li>失败知识库与根因诊断</li>
+    </ul>
+    <p class="mt1 mb0"><a href="08-agent.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-infra">
+    <p class="card-title"><span class="badge b-blue">02</span> 领域模型</p>
+    <p class="card-sub">所有模块共享的语言</p>
+    <ul class="small mb0">
+      <li>18 个核心实体与 ER</li>
+      <li>Embodiment Contract 规范</li>
+      <li>Job/Run 状态机</li>
+      <li>REST 资源树与事件 topic</li>
+      <li>数据库 schema 要点</li>
+    </ul>
+    <p class="mt1 mb0"><a href="02-domain-model.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-infra">
+    <p class="card-title"><span class="badge b-blue">01</span> 架构与选型</p>
+    <p class="card-sub">Python/Rust 边界的取舍</p>
+    <ul class="small mb0">
+      <li>六层职责与通信协议</li>
+      <li>Rust crate 划分与理由</li>
+      <li>进程、端口、目录布局</li>
+      <li>FastAPI 单端口部署形态</li>
+      <li>单机 → 多机演进路径</li>
+    </ul>
+    <p class="mt1 mb0"><a href="01-architecture.html">进入 →</a></p>
+  </div>
+  <div class="card mcard" style="--c: #53e5a3">
+    <p class="card-title"><span class="badge b-green">09</span> UI 与协作展示</p>
+    <p class="card-sub">核心诉求：让同事看懂</p>
+    <ul class="small mb0">
+      <li>设计 token 与组件库</li>
+      <li>信息架构与 38 个页面清单</li>
+      <li>Showcase 血缘叙事视图</li>
+      <li>周报快照与只读分享链接</li>
+      <li>评审模式与批注</li>
+    </ul>
+    <p class="mt1 mb0"><a href="09-ui-system.html">进入 →</a></p>
+  </div>
+</div>
+
+<h2 id="adr">五、关键设计决策（ADR 摘要）</h2>
+
+<p>
+  下表是十条会显著影响实现的决策。每条都给出被放弃的替代方案与代价，
+  以便日后条件变化时可以有依据地推翻，而不是重新猜。
+</p>
+
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th style="width:52px">编号</th><th style="width:20%">决策</th><th style="width:29%">理由</th><th style="width:22%">放弃的替代</th><th>代价 / 触发重议的条件</th></tr></thead>
+<tbody>
+<tr><td class="mono">ADR-01</td><td>控制面 Python，数据面 Rust</td><td>编排逻辑变化快、生态在 Python；tfevents 解析、44 GB sha256、视频 Range 是 CPU/IO 密集，Rust 在 96 核上收益明确</td><td>纯 Python（多进程绕 GIL）</td><td>两套工具链与 CI；需要清晰的 IPC 契约。若数据量长期 &lt;5 GB 则收益不明显</td></tr>
+<tr><td class="mono">ADR-02</td><td>Docker 直连，抽象 <code>Executor</code> 接口</td><td>当前单机，K8s 会引入大量运维面；接口留口后迁移只需新增实现</td><td>一上来就 K8s + Volcano</td><td>失去 K8s 的调度器与故障恢复；多机时必须补 <code>K8sExecutor</code></td></tr>
+<tr><td class="mono">ADR-03</td><td>Redis Streams 作队列</td><td>已需 Redis 做缓存；Streams 有消费组与 ack，够用且可观测</td><td>Celery / RQ / Kafka</td><td>没有成熟的重试中间件生态，需自写补偿逻辑</td></tr>
+<tr><td class="mono">ADR-04</td><td>Artifact 内容寻址（sha256）</td><td>天然去重与完整性校验；与 Berkeley 导出物已带 sha256 的做法一致</td><td>路径寻址 + 数据库记 md5</td><td>需要维护引用计数才能安全 GC</td></tr>
+<tr><td class="mono">ADR-05</td><td>时序先自研 append-only 段文件</td><td>指标模型极简（run×metric×step×value），自研可控且零外部依赖</td><td>直接上 VictoriaMetrics / Prometheus</td><td>缺 PromQL 生态。<b>触发重议</b>：需要跨月长周期聚合或多机汇聚</td></tr>
+<tr><td class="mono">ADR-06</td><td>Embodiment Contract 为一等实体与全局门禁</td><td>这是本领域最高频的静默错误来源，收益最大的一条</td><td>把维度当训练配置的普通字段</td><td>新增本体形态时要先建契约，前期略繁琐</td></tr>
+<tr><td class="mono">ADR-07</td><td>源码只读挂载 + per-run workspace</td><td><code>play.py</code> 会改写仓库内 YAML，必须隔离；同时保证复现</td><td>直接 bind mount 可写仓库</td><td>需要 overlay 或输出重定向补丁层，个别脚本硬编码路径要特殊处理</td></tr>
+<tr><td class="mono">ADR-08</td><td>Agent 分三层，Autopilot 带硬预算</td><td>你要的是自动闭环，但 4 张卡经不起无约束探索</td><td>单一全权 Agent</td><td>实现复杂度上升；需要完整审计与回放</td></tr>
+<tr><td class="mono">ADR-09</td><td>真机需物理确认，平台不远程使能电机</td><td>22 个电机 + CAN 总线，误触发有人身与硬件风险</td><td>Web 一键上机</td><td>牺牲便利性换安全，不可协商</td></tr>
+<tr><td class="mono">ADR-10</td><td>全部服务由一份 <code>docker-compose.yml</code> 拉起；前端打包进 api 镜像的 <code>web/dist</code>，FastAPI 单端口对外</td><td>部署只有 <code>docker compose up -d</code> 一步；宿主除 Docker 外零依赖，重装机器十分钟可恢复</td><td>宿主 systemd 起 uvicorn + Nginx 反代 + 独立前端容器</td><td>失去 Nginx 的静态优化与限流（需要时用 <code>--profile tls</code> 起 Caddy 补）；改前端要重建 api 镜像</td></tr>
+<tr><td class="mono">ADR-11</td><td>Agent harness <b>内核自研</b>（Python ~2000 行），插件范式借鉴 <a href="https://github.com/deepseek-ai/deepseek-harness">dsh</a>/Cordis，协议层复用 MCP</td><td>难的部分（护栏、审计、上下文构造）没有框架能代写；自研内核与领域对象同进程，调试路径最短；MCP 让工具可被外部客户端复用</td><td>直接以 dsh 为地基；或用 LangGraph 等重框架</td><td>会话循环、流式、schema 校验需自己维护；放弃 dsh 的插件生态（我们本就不需要编码 agent 的终端/文件能力）。详见 <a href="08-agent.html#runtime">8.3</a></td></tr>
+<tr><td class="mono">ADR-12</td><td>Agent <b>无 shell / 无文件系统 / 无出网 / 无 SQL</b>；一切动作经 ToolBus 单一收口</td><td>封闭能力集自身即沙箱，无需进程隔离；护栏只写一遍且无旁路；审计天然完备、行为可回放</td><td>给 agent 沙箱化的 shell 与文件工具</td><td>Agent 无法处理工具表未覆盖的新情况——但这正是我们想要的边界。详见 <a href="08-agent.html#harness">8.4</a></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="reading">六、怎么读这套文档</h2>
+
+<div class="grid g3">
+  <div class="card">
+    <p class="card-title">你（研究者 / Owner）</p>
+    <p class="card-sub">关心「能不能省我的事」</p>
+    <ol class="small mb0">
+      <li><a href="05-training.html">05 训练与编排</a>：一次实验从提交到看到曲线</li>
+      <li><a href="06-evaluation.html">06 评估可视化</a>：怎么比较与定位失败</li>
+      <li><a href="08-agent.html">08 Agent</a>：哪些活可以彻底不干</li>
+      <li><a href="10-roadmap.html">10 路线图</a>：先做哪一块最快见效</li>
+    </ol>
+  </div>
+  <div class="card">
+    <p class="card-title">同事 / 合作方（Viewer）</p>
+    <p class="card-sub">关心「他做到哪一步了」</p>
+    <ol class="small mb0">
+      <li>本页 <a href="#pipeline">主干管线</a>：整体在做什么</li>
+      <li><a href="09-ui-system.html#showcase">09 Showcase</a>：血缘叙事与周报</li>
+      <li><a href="06-evaluation.html#report">06 评估报告</a>：结论长什么样</li>
+      <li><a href="07-deploy.html">07 发布</a>：离上机还差什么</li>
+    </ol>
+  </div>
+  <div class="card">
+    <p class="card-title">实现者（Engineer）</p>
+    <p class="card-sub">关心「怎么落地」</p>
+    <ol class="small mb0">
+      <li><a href="01-architecture.html">01 架构</a>：模块与通信</li>
+      <li><a href="02-domain-model.html">02 领域模型</a>：实体、状态机、API</li>
+      <li>各模块页的「实现要点」小节</li>
+      <li><a href="10-roadmap.html#repo">10 目录结构与里程碑</a></li>
+    </ol>
+  </div>
+</div>
+
+<h2 id="facts">七、现状盘点（设计输入）</h2>
+
+<p>下面是本设计所依据的事实基线。任何与之矛盾的后续改动都应回头修订本表。</p>
+
+<div class="tabs">
+  <div class="tabbar">
+    <button>本体与训练栈</button>
+    <button>数据现状</button>
+    <button>算力与依赖</button>
+  </div>
+
+  <div class="tabpanel">
+    <div class="tbl-wrap">
+    <table class="compact">
+    <thead><tr><th>项目</th><th>humanoid</th><th>biped</th><th>WBC</th><th>fixed-hand</th></tr></thead>
+    <tbody>
+    <tr><td>自由度</td><td class="mono">22（10 臂 + 12 腿）</td><td class="mono">12（腿）</td><td class="mono">22</td><td class="mono">10（臂）</td></tr>
+    <tr><td>观测维度</td><td class="mono">75</td><td class="mono">45</td><td class="mono">85</td><td class="mono">10 + 224×224×3</td></tr>
+    <tr><td>动作维度</td><td class="mono">22</td><td class="mono">12</td><td class="mono">22（双 term）</td><td class="mono">10</td></tr>
+    <tr><td>策略频率</td><td class="mono">25 Hz</td><td class="mono">25 Hz</td><td class="mono">50 Hz</td><td class="mono">20 Hz</td></tr>
+    <tr><td>Gym 任务</td><td class="mono xs">Velocity-…-v0</td><td class="mono xs">Velocity-…-Biped-v0</td><td class="mono xs">Tracking-…-WholeBody-v0</td><td class="mono xs">Isaac-…-Reach/Push-v0</td></tr>
+    <tr><td>实验目录</td><td class="mono">logs/rsl_rl/humanoid</td><td class="mono">…/biped</td><td class="mono">…/wbc</td><td class="mono">outputs/vla</td></tr>
+    </tbody>
+    </table>
+    </div>
+    <ul class="small">
+      <li>Isaac 侧训练库为 <b>RSL-RL 5.0.1</b>（<code>OnPolicyRunner</code>），默认 TensorBoard，可切 wandb/neptune；<code>save_interval=100</code>。</li>
+      <li>RLinf 为 <b>v0.4.0</b>，Ray ≥ 2.47 + Hydra，具身路径以 FSDP + HuggingFace rollout 为主，支持 π₀/π₀.₅、OpenVLA(-OFT)、GR00T、LingBotVLA 等。</li>
+      <li>真机链路：策略与低层之间 <b>UDP 10000/10001</b>，电机 <b>SocketCAN</b>，IMU <b>串口 1 Mbps</b>；无 ROS、无 LCM。</li>
+    </ul>
+  </div>
+
+  <div class="tabpanel">
+    <div class="grid g2">
+      <div>
+        <div class="chart-box">
+          <div class="chart-head"><span class="chart-title">Ego4D FHO 场景编译漏斗</span><span class="chart-meta">ego4d_fho_v1</span></div>
+          <div class="chart" data-chart='{"type":"funnel","w":540,"labelW":150,"stages":[
+            {"name":"FHO 候选事件","v":155369},
+            {"name":"动词可映射","v":8420},
+            {"name":"无需工具/抓取","v":1160},
+            {"name":"物体可实例化","v":214},
+            {"name":"接受为场景","v":35,"color":"#53e5a3"}]}'></div>
+          <p class="xs muted-2 mb0">中间层为示意分解；末端 35 为实测值（reach 29 / push 6）。</p>
+        </div>
+      </div>
+      <div>
+        <div class="tbl-wrap">
+        <table class="compact">
+        <thead><tr><th>子集</th><th class="t-num">候选事件</th><th class="t-num">接受</th><th>状态</th></tr></thead>
+        <tbody>
+        <tr><td class="mono">ego4d_fho_v1</td><td class="t-num">155,369</td><td class="t-num c-green">35</td><td><span class="badge b-green">可用</span></td></tr>
+        <tr><td class="mono">ego4d_goalstep_train_v1</td><td class="t-num">27,600</td><td class="t-num c-red">0</td><td><span class="badge b-red">全拒</span></td></tr>
+        <tr><td class="mono">ego4d_goalstep_val_v1</td><td class="t-num">6,732</td><td class="t-num c-red">0</td><td><span class="badge b-red">全拒</span></td></tr>
+        <tr><td class="mono">human_v1 (TACO)</td><td class="t-num">2,212</td><td class="t-num c-red">0</td><td><span class="badge b-amber">待放宽规则</span></td></tr>
+        <tr><td class="mono">HOI4D</td><td class="t-num">2,971</td><td class="t-num">—</td><td><span class="badge b-red">403 受阻</span></td></tr>
+        </tbody>
+        </table>
+        </div>
+        <ul class="small">
+          <li>总量 <b>44 GB / 18,974 文件</b>，其中 TACO 手部位姿 <code>.pkl</code> 占 9,268 个、约 24 GB。</li>
+          <li><b>不存在标准 LeRobot / RLDS 数据集</b>：目录内 parquet、HDF5、tfrecord 均为 0。当前是自定义 JSON/JSONL + pkl/npy + mp4 的预处理仓。</li>
+          <li>无任何机器人关节轨迹；人手为 MANO 48 维，与机器人 10/12/22 维动作空间之间需要显式重定向。</li>
+          <li>派生事件切片 35 段，H.264、720×540 或 960×540、约 7–8 秒。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="note warn">
+      <span class="note-t">对设计的直接影响</span>
+      「数据模块」的第一优先级不是数据集浏览器，而是<b>漏斗可解释性</b>与<b>重定向管线</b>：
+      当前 35 个场景不足以支撑 VLA 训练，平台必须让你快速看出「卡在哪条规则上、放宽后能多出多少」。
+    </div>
+  </div>
+
+  <div class="tabpanel">
+    <div class="grid g2">
+      <div class="card">
+        <p class="card-title">本机资源</p>
+        <table class="compact">
+        <tbody>
+        <tr><td>GPU</td><td class="mono">4 × RTX 4090 · 24,564 MiB</td></tr>
+        <tr><td>CPU</td><td class="mono">96 逻辑核</td></tr>
+        <tr><td>内存</td><td class="mono">125 GB（可用 ~95 GB）</td></tr>
+        <tr><td>Docker</td><td class="mono">Server 28.0.1</td></tr>
+        </tbody>
+        </table>
+        <p class="xs muted mb0 mt1">
+          24 GB 单卡是最强约束：OpenVLA-7B 全参训练（AdamW fp32）静态就需 30 GB/卡，
+          <b>4 卡也放不下</b>，只能走 LoRA；π₀ 级（~3B）更现实，8-bit 优化器下 2 卡即可。
+          Isaac Sim 必须独占卡与渲染设备。详见 <a href="04-model.html#mem">4.4</a>。
+        </p>
+      </div>
+      <div class="card">
+        <p class="card-title">容器与依赖要点</p>
+        <ul class="small mb0">
+          <li>Isaac 侧宿主环境 <code>python &gt;=3.11,&lt;3.12</code>、<code>isaacsim 5.1.0</code>、<code>isaaclab 2.3.2</code>、<code>torch 2.7.0</code>；
+              而训练容器内为 <code>isaaclab 0.54.3</code> + <code>rsl-rl-lib 5.0.1</code>，<b>两条线不一致</b>，平台必须按镜像记录能力矩阵。</li>
+          <li>RLinf 基础镜像 <code>nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04</code>，按 <code>BUILD_TARGET</code> 分化（reason / embodied-maniskill_libero / embodied-robotwin …）。</li>
+          <li>两个 Git 子模块（assets、lowlevel）必须 <code>--init --recursive</code>，否则任务必然失败——这是平台的前置检查项。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note evidence">
+  <span class="note-t">文档约定</span>
+  <b>凡是从代码/数据里读出来的事实</b>，本文会写明出处（文件名、字段名、数值）；
+  <b>凡是设计推断或估算</b>，会显式标注为「估算 / 待实测校准」。
+  界面截图全部是 HTML 原型＋占位数据，可直接点击体验交互，但数值不代表真实结果。
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

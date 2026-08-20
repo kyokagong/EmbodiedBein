@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 实施路线：六个里程碑、单体仓库结构、依赖清单、风险登记册、验收标准与待决问题。">
+<title>10 · 实施路线与风险｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">10 · Roadmap</p>
+  <h1>实施路线与风险</h1>
+  <p class="hero-copy">
+    前九章描述了一个完整的系统。这一章处理一个更现实的问题：
+    <b>在只有你一个人、算力有限的前提下，按什么顺序做，才能每一步都立刻有用。</b>
+    以及同样重要的：哪些地方我判断不了，需要你来定。
+  </p>
+</header>
+
+<h2 id="principle">10.1 排序原则</h2>
+
+<div class="grid g3">
+<div class="card">
+  <p class="card-title">① 每个里程碑独立可用</p>
+  <p class="small mb0">
+    不做「先搭三个月基础设施再看到东西」。
+    M0 结束时就应该有一个能打开、能看到你现有资产的页面。
+    <b>能用的半成品 &gt; 完美的未完成品。</b>
+  </p>
+</div>
+<div class="card">
+  <p class="card-title">② 先记录，后控制</p>
+  <p class="small mb0">
+    「把已有的东西纳管并可视化」比「通过平台下发任务」简单得多，
+    风险也低得多，但价值不低——因为它立刻解决了「产出看不见」的问题。
+    <b>所以只读能力全部前置。</b>
+  </p>
+</div>
+<div class="card">
+  <p class="card-title">③ Agent 放最后</p>
+  <p class="small mb0">
+    Agent 是所有 API 的消费者。API 不稳定时做 Agent，
+    等于同时调试两个不确定的东西。
+    <b>而且没有 Agent 平台也完全能用</b>，它是增益而非基础。
+  </p>
+</div>
+</div>
+
+<h2 id="milestones">10.2 六个里程碑</h2>
+
+<div class="ms">
+  <div class="ms-item m1">
+    <span class="ms-tag">M0<br>2 周</span>
+    <div>
+      <p class="mb1"><b>骨架 + 只读纳管</b>　<span class="badge b-green">最先出价值</span></p>
+      <p class="small mb1">
+        <b>做什么</b>：<code>docker-compose.yml</code> 与两个 Dockerfile（从第一天就用 compose 起，不要先在宿主裸跑再迁移）；FastAPI 骨架 + Postgres schema + Vue 骨架 + 静态托管；
+        <code>EmbodimentContract</code> 实体与四个契约实例落库；
+        扫描并注册现有资产——<code>checkpoints/</code> 下的 ONNX 策略、
+        <code>logs/</code> 下的历史 tfevents、<code>berkeley_ego_data</code> 的目录清单。
+      </p>
+      <p class="small mb1">
+        <b>为什么先做这个</b>：不需要 Docker、不需要调度、不需要 Rust，
+        纯读取现有文件系统。但做完之后<b>你立刻有一个可分享的链接</b>，
+        上面有你所有历史策略与训练曲线。这是整个项目里投入产出比最高的两周。
+      </p>
+      <p class="xs muted-2 mb0">
+        <b>验收</b>：在一台干净机器上 <code>git clone &amp;&amp; make up</code> 后浏览器能打开；能看到 ≥6 个历史策略、≥10 条历史训练曲线、4 个契约；
+        每个策略能显示其 I/O 签名并与契约比对出结论；Showcase 链接可发给同事打开。
+      </p>
+    </div>
+  </div>
+
+  <div class="ms-item m2">
+    <span class="ms-tag">M1<br>3 周</span>
+    <div>
+      <p class="mb1"><b>任务下发闭环（Isaac / RSL-RL）</b></p>
+      <p class="small mb1">
+        <b>做什么</b>：Rust <code>ebd runner</code>（Docker 生命周期 + 日志采集）；
+        Isaac Lab 适配器；工作区隔离（git worktree 快照 + overlay 挂载）；
+        <code>eb-tsdb</code> 最简版 + 指标采集；Run 详情页实时曲线与日志；
+        单机调度器（4 GPU 准入 + 队列），准入依赖
+        <code>ebd doctor</code> + <a href="04-model.html#mem">容量估算器</a>的解析层
+        （L2 公式 + 估算凭据；实测校准留到 M2 自然积累）。
+      </p>
+      <p class="small mb1">
+        <b>难点</b>：Isaac Sim 容器的 GPU 渲染参数、镜像体积、
+        写路径隔离（<code>logs/</code> 与 <code>outputs/</code> 必须落到 overlay）。
+        建议先手工跑通一次容器命令，再把它固化成适配器——
+        <b>不要一开始就写抽象</b>。
+      </p>
+      <p class="xs muted-2 mb0">
+        <b>验收</b>：从 UI 提交一次 <code>train.rl</code>，能看到实时曲线与日志，
+        产物自动认领入库；上游仓库工作树保持干净（<code>git status</code> 无变化）；
+        同一 JobSpec 提交两次能复现（五元组一致）；4 GPU 满载时第 5 个任务正确排队。
+      </p>
+    </div>
+  </div>
+
+  <div class="ms-item m3">
+    <span class="ms-tag">M2<br>3 周</span>
+    <div>
+      <p class="mb1"><b>评估、门禁与对比</b></p>
+      <p class="small mb1">
+        <b>做什么</b>：EvalSuite + seed 注册表；<code>play.py --metrics_output</code>
+        与既有评估脚本的结果解析；门禁 DSL 与判定引擎；Run 对比页（参数 diff + 显著性标注）；
+        评估报告页与失败视频墙；排行榜与基线。
+      </p>
+      <p class="small mb1">
+        <b>为什么排在数据前面</b>：你已经有能跑的策略与评估脚本，
+        所以评估能力立刻可用；而数据模块（尤其是重定向）不确定性大、
+        且当前数据量小，收益兑现慢。<b>先把能立刻用上的能力做完。</b>
+      </p>
+      <p class="xs muted-2 mb0">
+        <b>验收</b>：对同一策略在固定 seed 集上跑两次，成功率完全一致；
+        门禁能拦下一个已知有问题的策略并给出具体断言；
+        对比页能正确标注「差异不显著」；仓库预置的 6 个策略排出第一张基线榜。
+      </p>
+    </div>
+  </div>
+
+  <div class="ms-item m4">
+    <span class="ms-tag">M3<br>4 周</span>
+    <div>
+      <p class="mb1"><b>数据模块 + RLinf 适配器</b>　<span class="badge b-amber">不确定性最高</span></p>
+      <p class="small mb1">
+        <b>做什么</b>：Rust <code>ebd scanner</code>（格式嗅探 + 完整性校验）；
+        六层数据模型与版本化；数据漏斗审计视图；Episode 预览器；
+        RLinf 适配器（Hydra 覆盖 + Ray 端口隔离 + 组件放置）；VLA 训练与评估打通。
+      </p>
+      <p class="small mb1">
+        <b>风险最集中的一段</b>：RLinf 的镜像与依赖较重，Ray 在容器内的行为需要实测；
+        人类 ego 数据到机器人轨迹的重定向管线<b>可能做不出可用结果</b>。
+        建议把重定向单独作为可选子项，主线只做「注册 + 校验 + 漏斗审计 + 预览」。
+      </p>
+      <p class="xs muted-2 mb0">
+        <b>验收</b>：能提交一次 RLinf 的 SFT 任务并看到指标；
+        数据漏斗页能展示 155k → 35 的每一级与拒绝原因；
+        Episode 预览器能同步播放视频与动作曲线；数据集版本可复现（同版本哈希一致）。
+      </p>
+    </div>
+  </div>
+
+  <div class="ms-item m5">
+    <span class="ms-tag">M4<br>3 周</span>
+    <div>
+      <p class="mb1"><b>部署流水线与遥测</b></p>
+      <p class="small mb1">
+        <b>做什么</b>：策略包规范与打包/签名；导出自检（含 ONNX vs PyTorch 数值比对）；
+        sim2sim 门禁与跨域一致性诊断（需小改 <code>play_mujoco.py</code>）；
+        资产一致性校验；分级放行流程与 Fleet 台账；
+        端侧 <code>eb-robot-agent</code> 最简版（接包 + 上报）。
+      </p>
+      <p class="xs muted-2 mb0">
+        <b>验收</b>：从一个 checkpoint 一键产出已签名策略包；
+        故意把 MJCF 限位改错，sim2sim 门禁能拦下并指出具体关节；
+        真机跑一次并在平台看到 jitter/温度/事件；能一键回滚且回滚不依赖网络。
+      </p>
+    </div>
+  </div>
+
+  <div class="ms-item m3">
+    <span class="ms-tag">M5<br>3 周</span>
+    <div>
+      <p class="mb1"><b>Agent</b></p>
+      <p class="small mb1">
+        <b>做什么</b>：<b>harness 内核</b>（ToolBus 七道处理、工具注册表、磁带录制/回放）；
+        护栏（白名单 / 预算 / 速率 / 审批）；规则引擎与 7 个剧本；
+        LLM 接入与上下文构造；控制台 UI；审计视图；MCP 导出。
+      </p>
+      <p class="small mb1">
+        <b>建议的内部顺序</b>：先做<b>只读 + 日报</b>（零风险，立刻有用），
+        再做<b>规则引擎 + 失败诊断</b>（高价值，无需 LLM），
+        最后才开放<b>自主提交任务</b>。每一步观察一周再放开下一步。
+      </p>
+      <p class="xs muted-2 mb0">
+        <b>验收</b>：Agent 输出中的每个数字都可点击溯源；
+        故意让它尝试禁止动作（改契约 / 放行真机），必须被拦截并留审计；
+        预算耗尽后自动降级为只读；关掉 LLM 服务后规则与剧本仍正常工作；
+        <b>场景磁带全量回放通过，且规则路径断言 <code>llm_calls == 0</code></b>；
+        权限矩阵由注册表生成，快照测试能拦住未声明的权限变更。
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="note info">
+  <span class="note-t">关于工期</span>
+  合计约 <b>18 周</b>，这是「一个人专职、且不遇到大坑」的乐观估计。
+  实际情况下 M1 与 M3 的容器相关问题很容易各多花一到两周。
+  <b>如果时间紧张，M0+M1+M2（8 周）就已经构成一个有实用价值的系统</b>——
+  能纳管、能下发、能评估、能分享。后三个里程碑可以按需推进。
+</div>
+
+<h2 id="repo">10.3 单体仓库结构</h2>
+
+<div class="grid g-2-1">
+<div>
+<div class="tree">
+EmbodiedBein/<br>
+├── <span class="d">backend/</span><br>
+│   ├── <span class="d">eb/</span><br>
+│   │   ├── api/            <span class="cm"># FastAPI 路由，按资源分模块</span><br>
+│   │   ├── domain/         <span class="cm"># 实体、状态机、契约模型（纯逻辑，无 IO）</span><br>
+│   │   ├── orchestrator/   <span class="cm"># Job→Run 编排、重试、幂等</span><br>
+│   │   ├── scheduler/      <span class="cm"># 准入、队列、老化、抢占</span><br>
+│   │   ├── adapters/       <span class="cm"># isaaclab_rslrl.py / rlinf.py / mujoco.py / data_*.py</span><br>
+│   │   ├── gates/          <span class="cm"># G1–G5 与门禁 DSL 求值器</span><br>
+│   │   ├── lineage/        <span class="cm"># 血缘边写入与查询</span><br>
+│   │   ├── harness/        <span class="cm"># ToolBus、Session/Turn、注册表、磁带（08 章 8.4）</span><br>
+│   │   ├── pluginhost/     <span class="cm"># 插件加载器、Context、作用域与依赖注入</span><br>
+│   │   ├── agent/          <span class="cm"># 规则引擎、剧本、上下文构造、LLM 客户端</span><br>
+│   │   ├── capacity/       <span class="cm"># 容量估算器（04 章 4.4）</span><br>
+│   │   ├── store/          <span class="cm"># PG / Redis / CAS / TSDB 客户端封装</span><br>
+│   │   └── main.py<br>
+│   ├── <span class="d">web/dist/</span>           <span class="cm"># ← 前端构建产物（git 忽略，见 ADR-10）</span><br>
+│   ├── migrations/         <span class="cm"># Alembic</span><br>
+│   ├── tests/<br>
+│   │   ├── unit/<br>
+│   │   ├── adapters/       <span class="cm"># 命令行快照测试（见 05 章）</span><br>
+│   │   └── agent/          <span class="cm"># 场景磁带回放 + 权限矩阵快照（见 08 章 8.4）</span><br>
+│   └── pyproject.toml<br>
+├── <span class="d">plugins/</span>            <span class="cm"># 各栈插件包：eb_plugin_rlinf / _isaaclab / _bhl（08 章 8.5）</span><br>
+├── <span class="d">rust/</span><br>
+│   ├── <span class="d">crates/</span><br>
+│   │   ├── eb-core/        <span class="cm"># 共享类型、错误、配置</span><br>
+│   │   ├── eb-runner/      <span class="cm"># Docker 生命周期、日志泵、退出码</span><br>
+│   │   ├── eb-collector/   <span class="cm"># tfevents 解析、指标归一化、写 TSDB</span><br>
+│   │   ├── eb-scanner/     <span class="cm"># 目录扫描、格式嗅探、哈希、校验</span><br>
+│   │   ├── eb-artifact/    <span class="cm"># CAS 读写、去重、代理生成</span><br>
+│   │   ├── eb-tsdb/        <span class="cm"># 时序存储与降采样查询</span><br>
+│   │   ├── eb-probe/       <span class="cm"># 硬件探测 HostProfile（ebd doctor）</span><br>
+│   │   ├── eb-cli/         <span class="cm"># ebctl：运维救援命令，不依赖 Web 与 PG</span><br>
+│   │   └── ebd/            <span class="cm"># 单一二进制，子命令组合以上（见 01 章 1.3）</span><br>
+│   └── Cargo.toml          <span class="cm"># workspace</span><br>
+├── <span class="d">frontend/</span>            <span class="cm"># 见 09 章</span><br>
+├── <span class="d">robot-agent/</span>         <span class="cm"># 端侧薄 agent（Rust，独立部署）</span><br>
+├── <span class="d">deploy/</span><br>
+│   ├── docker-compose.yml  <span class="cm"># 部署唯一入口：api/ebd/migrate/PG/Redis(6380)/MinIO</span><br>
+│   ├── api.Dockerfile      <span class="cm"># 多阶段：node 构建前端 → rust → python</span><br>
+│   ├── ebd.Dockerfile      <span class="cm"># 数据面；唯一持有 docker.sock 的服务</span><br>
+│   ├── images/             <span class="cm"># 任务镜像 Dockerfile（isaac/rlinf/mujoco/tools），独立构建</span><br>
+│   ├── .env.example        <span class="cm"># 密码等；实际 .env 不进 git</span><br>
+│   └── Caddyfile           <span class="cm"># 仅 --profile tls 时使用</span><br>
+├── <span class="d">docs/</span><br>
+│   ├── <span class="d">design/</span>          <span class="cm"># ← 本套文档</span><br>
+│   └── adr/                <span class="cm"># 后续架构决策记录</span><br>
+├── Makefile                <span class="cm"># up / down / logs / migrate / backup / images</span><br>
+└── README.md
+</div>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">几个结构上的决定</p>
+  <ul class="small mb0">
+    <li><b>domain/ 保持纯净</b>：不 import 任何 IO 库。这样状态机与契约校验逻辑可以被单元测试直接覆盖，不需要起数据库。</li>
+    <li><b>adapters/ 一个文件一个栈</b>：新增训练栈时只加一个文件 + 一组快照测试，不动核心。</li>
+    <li><b>Rust 是 workspace 而非独立仓</b>：单机场景下版本同步的价值大于解耦的价值。</li>
+    <li><b>robot-agent 单独目录</b>：它部署在另一台机器上，生命周期与平台不同。</li>
+    <li><b>web/dist 由前端构建写入</b>：不进 git，打包时生成（<code>make build</code>）。</li>
+  </ul>
+</div>
+<div class="card mt2">
+  <p class="card-title">依赖清单（关键项）</p>
+  <table class="compact">
+  <thead><tr><th>层</th><th>选择</th></tr></thead>
+  <tbody>
+  <tr><td class="xs">Python</td><td class="xs">3.11 · FastAPI · SQLAlchemy 2 · Alembic · Pydantic v2 · httpx · APScheduler</td></tr>
+  <tr><td class="xs">Rust</td><td class="xs">tokio · bollard（Docker）· axum 或 tonic · serde · rusqlite/自研存储</td></tr>
+  <tr><td class="xs">前端</td><td class="xs">Vue 3 · TS · Vite · Pinia · Vue Router · ECharts · Vue Flow · three.js（懒加载）</td></tr>
+  <tr><td class="xs">存储</td><td class="xs">PostgreSQL 16 · Redis 7（端口 6380）· MinIO · 自研 TSDB</td></tr>
+  <tr><td class="xs">运行时</td><td class="xs">Docker + NVIDIA Container Toolkit</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    <b>刻意不引入的东西</b>：Kubernetes（单机不需要）、
+    Kafka（Redis Streams 够用）、Celery（APScheduler + 自研队列足够）、
+    ClickHouse（自研 TSDB 规模足够）、任何前端 UI 框架（自建设计系统更可控）。
+    每一项都是为了减少运维面。
+  </p>
+</div>
+</div>
+</div>
+
+<h2 id="eng">10.4 工程实践：几个容易被跳过但会反复咬人的细节</h2>
+
+<div class="grid g2">
+<div>
+<div class="card">
+  <p class="card-title">最小 CI（单人项目也值得）</p>
+  <p class="small mb1">
+    不需要完整流水线，四个检查就够，全部能在几分钟内跑完：
+  </p>
+  <ol class="steps mb0">
+    <li><b>类型与静态检查</b><span class="xs muted-2">Python <code>ruff</code> + <code>mypy</code>；Rust <code>clippy</code>；前端 <code>vue-tsc</code></span></li>
+    <li><b>适配器快照测试</b><span class="xs muted-2">最重要的一项：JobSpec → 命令行的输出与基线比对，上游改参数名时立刻失败</span></li>
+    <li><b>domain 层单元测试</b><span class="xs muted-2">状态机迁移、契约校验、门禁 DSL 求值。无需数据库</span></li>
+    <li><b>迁移可回滚检查</b><span class="xs muted-2"><code>alembic upgrade head &amp;&amp; downgrade -1</code>，防止写出不可逆迁移</span></li>
+  </ol>
+  <p class="xs muted-2 mb0 mt1">
+    <b>刻意不做</b>：端到端测试（需要 GPU 与大镜像，成本远超收益）。
+    真正的端到端验证靠每个里程碑的验收清单人工跑一次。
+  </p>
+</div>
+<div class="card mt2">
+  <p class="card-title">单用户模式下的最小鉴权</p>
+  <table class="compact">
+  <thead><tr><th>入口</th><th>机制</th><th>说明</th></tr></thead>
+  <tbody>
+  <tr><td class="xs">Web UI</td><td class="xs">会话 Cookie（HttpOnly, SameSite=Lax）</td><td class="xs">单账号 + 密码；密码哈希存 PG</td></tr>
+  <tr><td class="xs">CLI / 脚本</td><td class="xs">API Key（<code>Authorization: Bearer</code>）</td><td class="xs">可撤销，仅显示一次</td></tr>
+  <tr><td class="xs">Agent</td><td class="xs">内部 API Key，<code>actor_type=agent</code></td><td class="xs">受工具白名单与配额约束</td></tr>
+  <tr><td class="xs">Showcase</td><td class="xs">URL 中的长随机 token</td><td class="xs">仅读一份快照 JSON；可设过期与吊销</td></tr>
+  <tr><td class="xs">robot-agent</td><td class="xs">设备 Key（按 robot_id 签发）</td><td class="xs">只能上报自己的遥测、拉自己的包</td></tr>
+  <tr><td class="xs">免鉴权路由</td><td class="xs">仅 <code>/healthz</code> 与 <code>/showcase/&lt;token&gt;</code></td><td class="xs">其余全部要求身份</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    这套东西约 200 行代码，<b>不做 RBAC、不做多租户、不做 OAuth</b>。
+    但把「谁做的」记进审计日志的能力从第一天就有，
+    这样将来加人时不需要回溯改数据模型。
+  </p>
+</div>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">遗留资产纳管（M0 的实际难点）</p>
+  <p class="small mb1">
+    「扫描现有目录并注册」听起来简单，真正麻烦的是<b>建立稳定身份</b>：
+  </p>
+  <ul class="small mb0">
+    <li><b>身份用内容哈希而非路径</b>：<code>policy.onnx</code> 在多个 run 目录里可能是同一份，
+        按 sha256 去重后只存一份，路径作为「发现位置」记录</li>
+    <li><b>时间来自文件而非导入时刻</b>：用 mtime 与 tfevents 首个事件的时间戳还原历史顺序，
+        否则所有历史 run 都会显示为「今天创建」</li>
+    <li><b>缺失字段显式标为 unknown</b>：历史 run 没有 image digest 与 config hash，
+        不要伪造，标 <code>provenance: partial</code>，并在 UI 上与完整记录区分</li>
+    <li><b>导入可重入</b>：再扫一次不产生重复实体（幂等键 = 内容哈希 + kind）</li>
+    <li><b>契约推断而非假设</b>：从 ONNX 的 I/O 维度反查最匹配的契约，匹配不上就标「待人工归属」</li>
+  </ul>
+  <p class="xs muted-2 mb0 mt1">
+    最后一条很关键：<b>宁可留一批「待归属」的历史策略，也不要错误绑定契约</b>——
+    错误的绑定会让后续所有门禁结论失效。
+  </p>
+</div>
+<div class="card mt2">
+  <p class="card-title">恢复演练与告警渠道</p>
+  <ul class="small mb0">
+    <li><b>RPO ≈ 24 h / RTO ≈ 1 h</b>：每日 <code>pg_dump</code>，最坏丢一天元数据；
+        恢复 = 建库 + 恢复 dump + <code>ebctl reindex</code> 重建与文件系统的一致性</li>
+    <li><b>每季度演练一次</b>：从备份在临时库恢复并跑一次一致性检查。
+        没演练过的备份等于没有备份</li>
+    <li><b>reconcile 优先信任文件</b>：PG 与文件系统冲突时，以 CAS 与
+        <code>runs/&lt;id&gt;/spec.json</code> 为准重建索引，因为它们是 append-only 的</li>
+    <li><b>告警渠道</b>：默认 Webhook（可接飞书/Slack/邮件网关）；
+        分三级——需立刻处理（磁盘满、GPU 掉卡）、需当天关注（门禁失败、趋势异常）、
+        仅记录。同类事件 30 min 内合并，每日总量上限，防止告警疲劳</li>
+  </ul>
+</div>
+<div class="note info mt2">
+  <span class="note-t">端侧协议的定稿时机</span>
+  <code>robot-agent</code> 与平台之间的接口（拉包、上报遥测、心跳、回滚）
+  应在 M4 开始时先写成一页 OpenAPI 定义再动手，
+  因为它跨两个进程、两台机器、两种语言，事后改代价最高。
+  接口面故意做得很小：<code>GET /bundles/next</code>、
+  <code>POST /telemetry:batch</code>、<code>POST /events</code>、<code>GET /policy/active</code>——
+  <b>四个端点足够</b>，不要预留「将来可能有用」的能力。
+</div>
+</div>
+</div>
+
+<h2 id="risks">10.5 风险登记册</h2>
+
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr>
+  <th style="width:19%">风险</th><th style="width:7%">概率</th><th style="width:7%">影响</th>
+  <th style="width:31%">缓解措施</th><th>预警信号</th>
+</tr></thead>
+<tbody>
+<tr><td><b>Isaac Sim 容器 GPU 渲染跑不通</b></td><td><span class="badge b-amber">中</span></td><td><span class="badge b-red">高</span></td>
+  <td class="xs">M1 第一周就手工验证容器命令；保留「宿主直跑 + 平台仅记录」的退路</td><td class="xs">容器内 <code>--headless</code> 报显示设备错误</td></tr>
+<tr><td><b>RLinf 的 Ray 在容器内异常</b></td><td><span class="badge b-amber">中</span></td><td><span class="badge b-orange">中高</span></td>
+  <td class="xs">显式指定 Ray 端口（6390）与 <code>--num-gpus</code>；共享内存 <code>--shm-size</code> 调大；单节点模式优先</td><td class="xs">Ray head 启动超时或端口冲突</td></tr>
+<tr><td><b>4×24 GB 显存跑不动目标 VLA 模型</b></td><td><span class="badge b-red">已确认</span></td><td><span class="badge b-red">高</span></td>
+  <td class="xs"><b>已按公式复核（<a href="04-model.html#mem">4.4.3</a>）</b>：OpenVLA-7B 全参微调在本机不可行，必须 LoRA；π₀ 全参需 4 卡或 8-bit 优化器。缓解手段固化为容量估算器的准入规则与降配建议，而非依赖人工记忆</td><td class="xs">不再是「风险」而是<b>已知约束</b>；监控点转为估算器的 analytic 命中率与 OOM 次数</td></tr>
+<tr><td><b>数据量不足导致 VLA 无法泛化</b></td><td><span class="badge b-red">高</span></td><td><span class="badge b-orange">中高</span></td>
+  <td class="xs">这是<b>已经发生</b>的事实（35 场景）；平台的作用是把缺口量化并指导采集，而非解决它</td><td class="xs">OOD 成功率持续低于 id 的 50%</td></tr>
+<tr><td><b>人类 ego 重定向做不出可用轨迹</b></td><td><span class="badge b-orange">中高</span></td><td><span class="badge b-amber">中</span></td>
+  <td class="xs">列为 M3 可选子项，不阻塞主线；主线走脚本专家采集</td><td class="xs">IK 可行率低或轨迹在仿真中不可执行</td></tr>
+<tr><td><b>磁盘写满导致训练中断</b></td><td><span class="badge b-orange">中高</span></td><td><span class="badge b-amber">中</span></td>
+  <td class="xs">配额 + 分级存储 + 每日巡检剧本；准入时预估产物体积；视频默认不全录</td><td class="xs">磁盘使用率 &gt; 85%</td></tr>
+<tr><td><b>上游仓库变动导致适配器失效</b></td><td><span class="badge b-amber">中</span></td><td><span class="badge b-amber">中</span></td>
+  <td class="xs">固定 <code>code_ref</code> 与镜像 digest；适配器快照测试；升级作为显式动作</td><td class="xs">快照测试失败或参数名不识别</td></tr>
+<tr><td><b>submodule 缺失导致运行失败</b></td><td><span class="badge b-amber">中</span></td><td><span class="badge b-cyan">低</span></td>
+  <td class="xs">工作区准备阶段显式校验 submodule 完整性，缺失则提交前即失败</td><td class="xs">资产或低层控制目录为空</td></tr>
+<tr><td><b>许可合规问题（Ego4D 等非商用）</b></td><td><span class="badge b-amber">中</span></td><td><span class="badge b-orange">中高</span></td>
+  <td class="xs">许可标签沿血缘传播；受限数据训出的模型自动打标并禁止标记为可商用</td><td class="xs">出现无许可标签的数据集版本</td></tr>
+<tr><td><b>Agent 烧掉算力或产生噪音</b></td><td><span class="badge b-amber">中</span></td><td><span class="badge b-amber">中</span></td>
+  <td class="xs">预算硬顶 + 白名单 + 可抢占 + 一键降级为只读</td><td class="xs">预算周中即耗尽；通知量激增</td></tr>
+<tr><td><b>平台本身成为负担（维护成本超过收益）</b></td><td><span class="badge b-amber">中</span></td><td><span class="badge b-red">高</span></td>
+  <td class="xs">刻意不引入 K8s/Kafka 等重组件；每个里程碑独立可用，可随时停在任一阶段</td><td class="xs">你开始绕过平台直接跑脚本</td></tr>
+<tr><td><b>单人维护（bus factor = 1）</b></td><td><span class="badge b-red">高</span></td><td><span class="badge b-amber">中</span></td>
+  <td class="xs">文档即本套设计；ADR 记录决策原因；避免聪明但难懂的实现</td><td class="xs">—</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note warn">
+  <span class="note-t">最后两条风险最值得警惕</span>
+  「平台成为负担」的预警信号写的是<b>「你开始绕过平台直接跑脚本」</b>——
+  这是最诚实也最有用的指标。如果某天你觉得「用平台提交太麻烦，我直接 python train.py」，
+  那说明平台在那个环节的设计失败了，应该去简化它而不是要求自己遵守流程。
+  <b>工具服务于人，不是反过来。</b>
+</div>
+
+<h2 id="acceptance">10.6 整体验收标准</h2>
+
+<p>
+  下面每一条都是可执行的检验，不是主观判断。全部通过即认为平台达成设计目标。
+</p>
+
+<div class="grid g2">
+<div>
+<div class="card">
+  <p class="card-title">可复现性</p>
+  <ul class="small mb0">
+    <li>任取一个 90 天前的 run，能拿到完整五元组并重新提交，结果指标在容差内一致</li>
+    <li>任取一个模型版本，能回答「用了哪些数据、哪段代码、哪个镜像」</li>
+    <li>上游仓库工作树在任何时刻 <code>git status</code> 都是干净的</li>
+  </ul>
+</div>
+<div class="card mt2">
+  <p class="card-title">正确性门禁</p>
+  <ul class="small mb0">
+    <li>人为制造维度不匹配（改契约 obs_dim），G1/G4 必须在提交时拦下</li>
+    <li>人为制造 URDF/MJCF 限位不一致，资产校验必须报出具体关节</li>
+    <li>人为让标定过期，真机放行必须被拒</li>
+    <li>门禁失败时必须显示涉及的断言、期望值与实际值</li>
+  </ul>
+</div>
+<div class="card mt2">
+  <p class="card-title">资源治理</p>
+  <ul class="small mb0">
+    <li>4 GPU 满载时新任务正确排队，不出现 OOM 崩溃</li>
+    <li>Agent 预算耗尽后无法再提交训练任务</li>
+    <li>磁盘超过阈值时提交被拒并提示可回收清单</li>
+  </ul>
+</div>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">协作与可见性</p>
+  <ul class="small mb0">
+    <li>Showcase 链接能被没有账号的同事打开并理解项目现状</li>
+    <li>任意视图能通过复制 URL 分享，对方看到相同内容</li>
+    <li>Agent 的所有动作与人的动作在同一时间线可见</li>
+    <li>日报能自动生成且包含「异常与风险」段</li>
+  </ul>
+</div>
+<div class="card mt2">
+  <p class="card-title">效率（相对现状的改善）</p>
+  <ul class="small mb0">
+    <li>提交一次训练：从「改配置 + 记参数 + 起容器」到<b>表单 3 分钟内完成</b></li>
+    <li>诊断一次失败：从「翻日志目录」到<b>详情页直接看到归类结论</b></li>
+    <li>对比两次实验：从「手工对齐 TensorBoard」到<b>勾选两项点对比</b></li>
+    <li>向同事说明进展：从「口头 + 截图」到<b>发一个链接</b></li>
+  </ul>
+</div>
+<div class="note good mt2">
+  <span class="note-t">不作为验收标准的东西</span>
+  代码行数、页面数量、功能覆盖率、技术先进性。
+  这些都容易刷高但与实际价值无关。
+  <b>唯一真正的标准是：三个月后你还在用它，而不是绕过它。</b>
+</div>
+</div>
+</div>
+
+<h2 id="open">10.7 待你确认的开放问题</h2>
+
+<p>
+  以下几项我无法从现有资料判断，且会实质影响设计。按重要性排列。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:4%">#</th><th style="width:26%">问题</th><th style="width:34%">为什么重要</th><th>我的默认假设</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>1</b></td>
+  <td><b>低层控制侧能否改动？</b>让它读取策略包里的 <code>safety</code> 字段并强制执行限幅与看门狗</td>
+  <td class="xs">决定策略包的 safety 字段是「真约束」还是「仅记录」。若不能改，则分级放行的安全性完全依赖硬件 E-stop 与人工看护，UI 上必须显式标注</td>
+  <td class="xs">假设<b>可以小幅改动</b>（几十行）。若不行，我会调整 07 章的表述</td>
+</tr>
+<tr>
+  <td><b>2</b></td>
+  <td><b><code>play_mujoco.py</code> 能否改造为无头 + 导出轨迹？</b></td>
+  <td class="xs">这是跨域一致性诊断（L3）的前提。没有它，sim2sim 门禁只能给出「跑完没崩」这种弱结论</td>
+  <td class="xs">假设<b>可以</b>。这是整个设计里对上游侵入最大的一处</td>
+</tr>
+<tr>
+  <td><b>3</b></td>
+  <td><b>磁盘总量与可接受的保留策略？</b></td>
+  <td class="xs">决定配额、GC 激进程度、视频录制策略。若磁盘紧张，需要更早引入分级存储</td>
+  <td class="xs">假设 <b>2 TB 可用</b>，中间 checkpoint 保留 14 天</td>
+</tr>
+<tr>
+  <td><b>4</b></td>
+  <td><b>是否需要多用户与权限？</b>还是「你 + 同事只读」就够</td>
+  <td class="xs">影响鉴权复杂度、配额模型、审计粒度。做多用户会增加约 1–2 周工作量</td>
+  <td class="xs">假设<b>单用户 + Showcase 只读链接</b>，不做完整 RBAC</td>
+</tr>
+<tr>
+  <td><b>5</b></td>
+  <td><b>LLM 用什么？</b>可否访问外网 API，还是必须本地模型</td>
+  <td class="xs">影响 Agent 的能力上限与上下文预算。本地模型意味着要占用宝贵的 GPU</td>
+  <td class="xs">假设<b>可访问外网 API</b>，且 Agent 的 LLM 调用不占训练 GPU。若必须本地，见 <a href="08-agent.html#runtime">8.3</a>：须占正式资源槽位且优先级低于训练</td>
+</tr>
+<tr>
+  <td><b>6</b></td>
+  <td><b>Showcase 是否需要暴露到公网？</b></td>
+  <td class="xs">若需要，则要考虑反向代理、HTTPS、链接令牌强度、限流。若只在内网则简单得多</td>
+  <td class="xs">假设<b>仅内网</b>，链接令牌为长随机串 + 30 天过期</td>
+</tr>
+<tr>
+  <td><b>7</b></td>
+  <td><b>是否保留 WandB / SwanLab？</b>还是完全用平台自建 TSDB</td>
+  <td class="xs">若保留，则要做双写与链接跳转；若不保留，历史数据需要迁移</td>
+  <td class="xs">假设<b>平台为唯一入口</b>，但 tfevents 仍落盘以便本地 TensorBoard 兜底</td>
+</tr>
+<tr>
+  <td><b>8</b></td>
+  <td><b>短期最想先解决哪个痛点？</b>可见性 / 复现性 / 资源管理 / 数据治理</td>
+  <td class="xs">会改变里程碑顺序。当前排序是按「投入产出比」而非「你的紧迫感」</td>
+  <td class="xs">假设<b>可见性优先</b>（因此 M0 就出 Showcase）</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="note decide">
+  <span class="note-t">如果只回答一个问题</span>
+  请回答 <b>#8</b>。其余七项都可以先用默认假设推进，
+  而里程碑顺序一旦选错，前两个月的产出可能不是你最需要的。
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

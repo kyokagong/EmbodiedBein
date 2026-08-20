@@ -1,0 +1,12 @@
+.git
+**/.venv
+**/node_modules
+**/target
+**/__pycache__
+**/.pytest_cache
+backend/web/dist
+frontend/dist
+docs
+backup
+deploy/.env
+*.log

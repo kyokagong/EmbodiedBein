@@ -1,0 +1,126 @@
+name: eb
+
+x-bridge-env: &bridge-env
+  EB_DB_URL: postgresql+asyncpg://eb:${EB_DB_PASSWORD}@postgres:5432/eb
+  EB_REDIS_URL: redis://redis:6380/0
+  EB_S3_ENDPOINT: http://minio:9000
+  EB_S3_ACCESS_KEY: ${EB_S3_ACCESS_KEY:-ebadmin}
+  EB_S3_SECRET_KEY: ${EB_S3_PASSWORD}
+  EB_DATA_ROOT: /var/lib/eb
+  EB_EBD_UDS: /run/eb/ebd.sock
+  EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
+  EB_SECRET_KEY: ${EB_SECRET_KEY}
+  EB_ADMIN_USER: ${EB_ADMIN_USER:-kk}
+  EB_ADMIN_PASSWORD: ${EB_ADMIN_PASSWORD:-embodied}
+  EB_CONTRACTS_DIR: /app/contracts
+  TZ: Asia/Shanghai
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: eb
+      POSTGRES_PASSWORD: ${EB_DB_PASSWORD}
+      POSTGRES_DB: eb
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data", "../backup:/backup"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eb -d eb"]
+      interval: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --port 6380 --appendonly yes --appendfsync everysec
+    ports: ["127.0.0.1:6380:6380"]
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 5s
+      retries: 12
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${EB_S3_ACCESS_KEY:-ebadmin}
+      MINIO_ROOT_PASSWORD: ${EB_S3_PASSWORD:-eb-minio-change-me}
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: ["miniodata:/data"]
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    working_dir: /app/backend
+    environment: *bridge-env
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ebd:
+    build:
+      context: ..
+      dockerfile: deploy/ebd.Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    environment:
+      EB_REDIS_URL: redis://127.0.0.1:6380/0
+      EB_DATA_ROOT: /var/lib/eb
+      EB_EBD_UDS: /run/eb/ebd.sock
+      EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
+      TZ: Asia/Shanghai
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/eb:/var/lib/eb
+      - /run/eb:/run/eb
+      - /data/kk:/data/kk:ro
+    healthcheck:
+      test: ["CMD", "ebctl", "health"]
+      interval: 10s
+      retries: 8
+      start_period: 8s
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    ports: ["8000:8000"]
+    environment: *bridge-env
+    volumes:
+      - /var/lib/eb:/var/lib/eb
+      - /run/eb:/run/eb
+      - /data/kk:/data/kk:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      ebd:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 10s
+      retries: 8
+      start_period: 10s
+
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddydata:/data"]
+    depends_on: [api]
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+  miniodata: {}
+  caddydata: {}

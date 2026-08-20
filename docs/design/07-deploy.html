@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 部署：策略包规范、导出→sim2sim→真机三段流水线、分级放行、安全边界、机器人实例与遥测。">
+<title>07 · 部署与真机遥测｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">07 · Deployment</p>
+  <h1>部署与真机遥测</h1>
+  <p class="hero-copy">
+    从「训练出一个 checkpoint」到「机器人在地上走起来」之间，有一段最容易出事、
+    却最少被工具支持的路。这一章定义这段路的<b>产物规范、放行流程与安全边界</b>——
+    以及一条必须守住的红线：<b>平台不参与实时控制</b>。
+  </p>
+</header>
+
+<h2 id="boundary">7.1 先划红线：平台不做什么</h2>
+
+<div class="note danger">
+  <span class="note-t">这是本章最重要的一条设计决策</span>
+  <b>平台永远不进入实时控制回路。</b>
+  它不发送关节指令、不读取实时状态用于闭环、不成为控制链路上的任何一环。
+  平台只做三件事：<b>把策略包交付到机器人端、把遥测收回来、把这两件事记录下来。</b>
+</div>
+
+<div class="grid g2">
+<div>
+<div class="card">
+  <p class="card-title">为什么必须这样</p>
+  <ul class="small mb0">
+    <li><b>延迟不可控</b>：本体控制环在 25–1000 Hz，任何经过 Web 服务、Python GIL、
+        TCP 重传的路径都无法保证时序。一次 50 ms 的抖动就可能让机器人摔倒。</li>
+    <li><b>故障域隔离</b>：如果平台崩了、Postgres 连接池满了、有人在浏览器里点了个大查询，
+        <b>机器人不应该有任何感知</b>。把平台放进控制回路等于把 Web 服务的可用性
+        变成机器人的安全前提。</li>
+    <li><b>本体本来就是自洽的</b>：仓库里的低层控制已经通过 UDP/CAN/串口 自成闭环，
+        它不需要平台。硬塞进去只会增加失效点。</li>
+    <li><b>责任清晰</b>：出事时能立刻分清是策略问题、控制器问题还是平台问题。</li>
+  </ul>
+</div>
+</div>
+<div>
+<figure class="mb0">
+<div class="diagram">
+<svg viewBox="0 0 560 300" role="img" aria-label="平台与机器人的职责边界">
+  <defs>
+    <marker id="a7" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,1 L7,4.5 L0,8 z" fill="#3d5f78"/></marker>
+  </defs>
+  <rect x="14" y="14" width="250" height="128" rx="9" class="svg-box"/>
+  <text x="26" y="36" class="svg-t">EmbodiedBein 平台（非实时）</text>
+  <rect x="28" y="48" width="104" height="30" rx="6" class="svg-box-2"/>
+  <text x="80" y="67" class="svg-t-sm" text-anchor="middle">策略包仓库</text>
+  <rect x="144" y="48" width="104" height="30" rx="6" class="svg-box-2"/>
+  <text x="196" y="67" class="svg-t-sm" text-anchor="middle">遥测归档</text>
+  <rect x="28" y="86" width="104" height="30" rx="6" class="svg-box-2"/>
+  <text x="80" y="105" class="svg-t-sm" text-anchor="middle">放行审计</text>
+  <rect x="144" y="86" width="104" height="30" rx="6" class="svg-box-2"/>
+  <text x="196" y="105" class="svg-t-sm" text-anchor="middle">Fleet 台账</text>
+  <text x="26" y="133" class="svg-t-mono">可用性要求：普通 Web 服务级别</text>
+
+  <rect x="14" y="172" width="250" height="112" rx="9" fill="#1d1416" stroke="#5a2a30"/>
+  <text x="26" y="194" class="svg-t" fill="#ff9aa2">机器人端（实时，自洽）</text>
+  <rect x="28" y="206" width="104" height="30" rx="6" fill="#2a181c" stroke="#6b333a"/>
+  <text x="80" y="225" class="svg-t-sm" text-anchor="middle">上位机 runtime</text>
+  <rect x="144" y="206" width="104" height="30" rx="6" fill="#2a181c" stroke="#6b333a"/>
+  <text x="196" y="225" class="svg-t-sm" text-anchor="middle">低层 MCU / CAN</text>
+  <text x="26" y="256" class="svg-t-sm" fill="#c98d95">策略推理 25 Hz · 关节控制 1 kHz</text>
+  <text x="26" y="272" class="svg-t-sm" fill="#c98d95">E-stop 为硬件级，不经过任何软件</text>
+
+  <path d="M92,145 L92,203" class="svg-edge-dash" marker-end="url(#a7)"/>
+  <text x="100" y="166" class="svg-t-sm">① 包下发</text>
+  <text x="100" y="180" class="svg-t-mono">离线 · 人工确认</text>
+  <path d="M210,203 L210,145" class="svg-edge-dash" marker-end="url(#a7)"/>
+  <text x="218" y="176" class="svg-t-sm">② 遥测上报</text>
+  <text x="218" y="190" class="svg-t-mono">批量 · 可丢 · 可延迟</text>
+
+  <rect x="292" y="14" width="254" height="270" rx="9" class="svg-box-2"/>
+  <text x="304" y="36" class="svg-t">两条链路的性质完全不同</text>
+  <text x="304" y="62" class="svg-t-sm" fill="#8fd8ff">① 包下发</text>
+  <text x="304" y="80" class="svg-t-mono">离线 · 人工触发 · 幂等 · 可重试</text>
+  <text x="304" y="96" class="svg-t-mono">失败后果：这次没升级，照旧运行</text>
+  <text x="304" y="126" class="svg-t-sm" fill="#8fd8ff">② 遥测上报</text>
+  <text x="304" y="144" class="svg-t-mono">异步 · 批量 · 允许丢包与乱序</text>
+  <text x="304" y="160" class="svg-t-mono">失败后果：少了几段观测数据</text>
+  <line x1="304" y1="182" x2="534" y2="182" stroke="#24384a"/>
+  <text x="304" y="204" class="svg-t-sm" fill="#ff9aa2">被明确排除的链路</text>
+  <text x="304" y="222" class="svg-t-mono" fill="#c98d95">✕ 平台 → 关节目标位置</text>
+  <text x="304" y="238" class="svg-t-mono" fill="#c98d95">✕ 平台 → 实时状态订阅用于闭环</text>
+  <text x="304" y="254" class="svg-t-mono" fill="#c98d95">✕ 平台 → 远程遥操作</text>
+  <text x="304" y="272" class="svg-t-mono">遥操作应由仓库既有工具直连完成</text>
+</svg>
+</div>
+<figcaption>图 7-1　职责边界。平台的失效不应传导到机器人；机器人的实时性不依赖平台。</figcaption>
+</figure>
+</div>
+</div>
+
+<div class="note info">
+  <span class="note-t">这条红线的代价与收益</span>
+  <b>代价</b>：不能在 Web 上「一键让机器人走两步」，演示性稍弱。<br>
+  <b>收益</b>：平台可以随意重启、升级、改架构，机器人不受影响；
+  也不需要为平台做实时性保证（这会波及整个技术栈选型）。
+  <b>结论</b>：收益远大于代价。如果将来确实需要 Web 遥操作，
+  应该做成一个<b>独立的、旁路的</b>轻量服务，而不是塞进这个平台。
+</div>
+
+<h2 id="bundle">7.2 策略包（PolicyBundle）</h2>
+
+<p>
+  策略包是训练与真机之间的<b>唯一交付物</b>。它必须自包含、可校验、可追溯——
+  拿到一个包就能知道它是什么、从哪来、能装在哪台机器上、是否通过了门禁。
+</p>
+
+<div class="grid g-2-1">
+<div>
+<pre><code><span class="c"># bundle 目录结构（打包为单个 .ebp = tar.zst）</span>
+pb_01JB9F2K7X/
+├── manifest.yaml          <span class="c"># 唯一必读入口</span>
+├── policy.onnx            <span class="c"># 或 policy.pt（TorchScript）</span>
+├── policy_meta.yaml       <span class="c"># 沿用仓库 policy_latest.yaml 格式，向后兼容</span>
+├── normalization.npz      <span class="c"># obs 均值/方差（若训练时用了归一化）</span>
+├── gate_report.json       <span class="c"># 放行证据：过了哪些门禁、实测值</span>
+└── SIGNATURE              <span class="c"># 对上述文件的 sha256 清单 + 签名</span>
+
+<span class="c"># manifest.yaml</span>
+<span class="y">api_version</span>: eb/v1
+<span class="y">kind</span>: PolicyBundle
+<span class="y">metadata</span>:
+  <span class="y">id</span>: pb_01JB9F2K7X
+  <span class="y">name</span>: biped_walk_25hz
+  <span class="y">version</span>: <span class="s">"0.3.1"</span>
+  <span class="y">created_at</span>: <span class="s">"2026-08-20T09:14:02Z"</span>
+<span class="y">spec</span>:
+  <span class="y">contract_id</span>: ec_bhl_biped_12dof_v1     <span class="c"># 决定能装在哪台机器上</span>
+  <span class="y">runtime</span>:
+    <span class="y">format</span>: onnx
+    <span class="y">opset</span>: <span class="n">17</span>
+    <span class="y">providers</span>: [CPUExecutionProvider]     <span class="c"># 上位机可能无 GPU</span>
+    <span class="y">policy_hz</span>: <span class="n">25</span>
+    <span class="y">measured_latency_ms</span>: { p50: <span class="n">2.9</span>, p95: <span class="n">4.1</span>, p99: <span class="n">6.8</span> }
+  <span class="y">io_signature</span>:                        <span class="c"># 冗余存一份，便于装机前离线校验</span>
+    <span class="y">obs_dim</span>: <span class="n">45</span>
+    <span class="y">act_dim</span>: <span class="n">12</span>
+    <span class="y">obs_layout</span>: [velocity_commands:<span class="n">3</span>, base_ang_vel:<span class="n">3</span>, projected_gravity:<span class="n">3</span>,
+                 joint_pos_rel:<span class="n">12</span>, joint_vel_rel:<span class="n">12</span>, last_action:<span class="n">12</span>]
+    <span class="y">action_type</span>: joint_position_offset
+    <span class="y">action_scale</span>: <span class="n">0.25</span>
+  <span class="y">provenance</span>:
+    <span class="y">run_id</span>: run_01JB6R1M9P
+    <span class="y">model_version</span>: mv_01JB6R4T2C
+    <span class="y">code_ref</span>: <span class="s">"bhl@a1b2c3d"</span>
+    <span class="y">image_digest</span>: <span class="s">"sha256:4e9c…"</span>
+    <span class="y">data_version</span>: <span class="s">"—（纯 RL，无外部数据）"</span>
+    <span class="y">asset_version</span>: bhl-hw-v1.2
+    <span class="y">seed</span>: <span class="n">1</span>
+  <span class="y">requires</span>:
+    <span class="y">calibration</span>: { min_version: <span class="n">4</span>, max_age_days: <span class="n">30</span> }
+    <span class="y">firmware</span>: <span class="s">"&gt;=0.9.2"</span>
+  <span class="y">safety</span>:
+    <span class="y">action_clip</span>: <span class="n">0.30</span>                    <span class="c"># rad，运行时硬限幅</span>
+    <span class="y">max_cmd_vel</span>: { lin: <span class="n">0.6</span>, ang: <span class="n">0.8</span> }
+    <span class="y">watchdog_ms</span>: <span class="n">80</span>                     <span class="c"># 推理超时则回落到保持姿态</span>
+    <span class="y">fallback</span>: hold_pose
+  <span class="y">gates_passed</span>: [g_export_signature, g_sim2sim_consistency, g_latency_budget]
+</code></pre>
+</div>
+<div>
+<div class="note good">
+  <span class="note-t">manifest 的三段结构</span>
+  <b>能不能装</b>（contract_id / requires / io_signature）、
+  <b>从哪来</b>（provenance 五元组）、
+  <b>怎么安全地跑</b>（safety）。
+  三段齐全才允许打包，缺任一段直接拒绝——
+  这样就不可能出现「不知道来源的策略被装上机器人」。
+</div>
+<div class="note warn mt2">
+  <span class="note-t">safety 字段不是建议值</span>
+  <code>action_clip</code>、<code>max_cmd_vel</code>、<code>watchdog_ms</code>
+  由<b>机器人端 runtime 强制执行</b>，而非平台。平台只负责把它们写进包里。
+  如果 runtime 忽略这些字段，那么整套安全设计就形同虚设——
+  所以 runtime 侧的实现是必要配套（见 <a href="#impl">7.6</a>）。
+</div>
+<div class="note info mt2">
+  <span class="note-t">为什么保留 policy_meta.yaml</span>
+  仓库里已有 <code>policy_latest.yaml</code> 的消费方（低层控制侧读它拿关节顺序等）。
+  策略包<b>原样保留这个文件</b>，使得现有 runtime 不改也能用包里的策略，
+  <code>manifest.yaml</code> 是增量的元信息层。
+  这样迁移成本接近零，也不会出现「两份真相」——manifest 的 io_signature
+  在打包时会与 policy_meta 交叉校验，不一致就打不出包。
+</div>
+<div class="note mt2">
+  <span class="note-t">签名的现实定位</span>
+  单机内网环境下签名不是为了防攻击，而是为了<b>防意外</b>：
+  防止有人手工把一个 <code>.onnx</code> 拷进包里、防止传输截断、
+  防止「我以为装的是 v0.3.1」。用本地密钥做 HMAC 即可，无需 PKI。
+</div>
+</div>
+</div>
+
+<h2 id="pipeline">7.3 三段放行流水线</h2>
+
+<figure>
+<div class="diagram diagram-wide">
+<svg viewBox="0 0 980 300" role="img" aria-label="导出到真机的三段流水线">
+  <defs>
+    <marker id="ap" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,1 L8,5 L0,9 z" fill="#3d5f78"/></marker>
+  </defs>
+
+  <rect x="12" y="52" width="200" height="196" rx="10" class="svg-box"/>
+  <text x="112" y="40" class="svg-t" text-anchor="middle">① 导出与自检</text>
+  <text x="24" y="78" class="svg-t-mono" fill="#8fd8ff">export.policy</text>
+  <text x="24" y="100" class="svg-t-sm">checkpoint → ONNX / TorchScript</text>
+  <text x="24" y="118" class="svg-t-sm">读回权重反查 I/O 签名（G3）</text>
+  <text x="24" y="136" class="svg-t-sm">与契约逐维比对（G4）</text>
+  <text x="24" y="154" class="svg-t-sm">CPU 上实测延迟 × 1000 次</text>
+  <text x="24" y="172" class="svg-t-sm">数值一致性 ONNX vs PyTorch</text>
+  <text x="24" y="190" class="svg-t-sm">　最大绝对误差 ≤ 1e-4</text>
+  <rect x="24" y="204" width="176" height="30" rx="6" class="svg-box-2"/>
+  <text x="112" y="223" class="svg-t-sm" text-anchor="middle" fill="#8fd8ff">产出：未放行的策略包</text>
+
+  <path d="M216,150 L246,150" class="svg-edge" marker-end="url(#ap)"/>
+
+  <rect x="250" y="52" width="220" height="196" rx="10" class="svg-box"/>
+  <text x="360" y="40" class="svg-t" text-anchor="middle">② sim2sim 门禁</text>
+  <text x="262" y="78" class="svg-t-mono" fill="#8fd8ff">eval.sim2sim</text>
+  <text x="262" y="100" class="svg-t-sm">用同一个 ONNX 文件在 MuJoCo 跑</text>
+  <text x="262" y="118" class="svg-t-sm">而非训练时的 PyTorch 模型</text>
+  <text x="262" y="140" class="svg-t-sm">→ 轨迹发散步数 ≥ 100</text>
+  <text x="262" y="158" class="svg-t-sm">→ 观测漂移 max ≤ 0.6σ</text>
+  <text x="262" y="176" class="svg-t-sm">→ 无越限 / 无自碰撞</text>
+  <text x="262" y="194" class="svg-t-sm">→ 资产一致性报告为绿</text>
+  <rect x="262" y="204" width="196" height="30" rx="6" class="svg-box-2"/>
+  <text x="360" y="223" class="svg-t-sm" text-anchor="middle" fill="#8fd8ff">产出：已签名的策略包</text>
+
+  <path d="M474,150 L504,150" class="svg-edge" marker-end="url(#ap)"/>
+
+  <rect x="508" y="14" width="462" height="272" rx="10" class="svg-box"/>
+  <text x="739" y="34" class="svg-t" text-anchor="middle">③ 真机分级放行（每级需人工确认）</text>
+
+  <rect x="522" y="48" width="434" height="66" rx="8" class="svg-box-2"/>
+  <text x="534" y="68" class="svg-t" fill="#8fd8ff">S0 · 悬挂测试　机器人吊起，足不触地</text>
+  <text x="534" y="86" class="svg-t-sm">验证：关节能否跟随、CAN 无错误、jitter p99 &lt; 2 ms、E-stop 有效</text>
+  <text x="534" y="103" class="svg-t-mono">动作限幅 10%　时长 60 s　失败后果：几乎为零</text>
+
+  <rect x="522" y="122" width="434" height="66" rx="8" class="svg-box-2"/>
+  <text x="534" y="142" class="svg-t" fill="#ffd98a">S1 · 保护下低速　挂保护绳，限速 0.3 m/s</text>
+  <text x="534" y="160" class="svg-t-sm">验证：能站立、能小步走、无异常振动、电机温度稳定</text>
+  <text x="534" y="177" class="svg-t-mono">动作限幅 30%　时长 3 min　失败后果：可控</text>
+
+  <rect x="522" y="196" width="434" height="76" rx="8" class="svg-box-2"/>
+  <text x="534" y="216" class="svg-t" fill="#a8f0c8">S2 · 正常运行　解除限幅，按包内 safety 上限</text>
+  <text x="534" y="234" class="svg-t-sm">验证：连续运行 ≥ 10 min 无 E-stop、遥测指标在阈值内</text>
+  <text x="534" y="251" class="svg-t-sm">通过后标记为 active；旧策略保留为一键回滚目标</text>
+  <text x="534" y="268" class="svg-t-mono" fill="#c98d95">任一级失败 → 自动回滚到上一 active 包 + 生成诊断包</text>
+</svg>
+</div>
+<figcaption>图 7-2　三段放行。第 ③ 段的分级是本设计的核心：每一级的失败代价都被刻意限制在可承受范围内。</figcaption>
+</figure>
+
+<div class="grid g3">
+<div class="card">
+  <p class="card-title">导出段的关键细节</p>
+  <p class="small mb0">
+    <b>必须做 ONNX vs PyTorch 数值比对。</b>
+    导出过程中的算子替换、动态形状处理、精度差异都可能引入偏差，
+    而这种偏差在训练日志里完全看不到。
+    做法：随机采样 256 组合法观测，两边各跑一遍，比最大绝对误差。
+    这一步成本几秒，能拦住一类非常难查的 bug。
+  </p>
+</div>
+<div class="card">
+  <p class="card-title">sim2sim 段为什么用 ONNX 而非 checkpoint</p>
+  <p class="small mb0">
+    仓库里的 <code>play_mujoco.py</code> 可以加载策略，但如果它加载的是 PyTorch 模型，
+    那么<b>验证的就不是将要上机的那个东西</b>。
+    强制用导出后的 ONNX 跑 MuJoCo，才能让这道门禁真正覆盖导出环节。
+    这是一个小改动、大收益的约束。
+  </p>
+</div>
+<div class="card">
+  <p class="card-title">分级放行为什么必须人工确认</p>
+  <p class="small mb0">
+    S0→S1→S2 的每次晋级都需要现场有人按下确认——
+    因为「机器人是否被吊起」「保护绳是否挂好」这些前提<b>平台无法验证</b>。
+    平台的作用是：把检查项列清楚、把每级的遥测记录下来、
+    不让人跳级（S1 未通过则 S2 按钮不可点）。
+  </p>
+</div>
+</div>
+
+<h2 id="fleet">7.4 机器人实例与 Fleet 台账</h2>
+
+<p>
+  即使只有一台机器人，也需要台账。因为「这台机器现在跑的是哪个策略、上次标定是什么时候、
+  哪个电机换过」这些信息，在出问题时是排查的起点，而<b>靠记忆一定会出错</b>。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:16%">字段</th><th style="width:26%">示例</th><th>用途与检查</th></tr></thead>
+<tbody>
+<tr><td class="mono xs">robot_id</td><td class="mono xs">rb_bhl_001</td><td class="xs">物理机器人的稳定标识，贴在机身上</td></tr>
+<tr><td class="mono xs">contract_id</td><td class="mono xs">ec_bhl_biped_12dof_v1</td><td class="xs">这台机器当前的形态。改装（如装上手臂）需切换契约并重新标定</td></tr>
+<tr><td class="mono xs">asset_version</td><td class="mono xs">bhl-hw-v1.2</td><td class="xs">对应的 URDF/MJCF 版本。与包内 asset_version 不符时给出警告</td></tr>
+<tr><td class="mono xs">calibration</td><td class="mono xs">cal_v4 · 2026-07-28 · 23 天</td><td class="xs c-amber">超过 30 天则 G5 门禁拒绝放行，必须重标</td></tr>
+<tr><td class="mono xs">firmware</td><td class="mono xs">0.9.3</td><td class="xs">与包内 <code>requires.firmware</code> 做版本区间校验</td></tr>
+<tr><td class="mono xs">active_bundle</td><td class="mono xs">pb_…F2K7X v0.3.1</td><td class="xs">当前运行的策略。回滚目标为上一个 active</td></tr>
+<tr><td class="mono xs">stage</td><td class="mono xs">S2 · normal</td><td class="xs">分级放行的当前档位</td></tr>
+<tr><td class="mono xs">maintenance_log</td><td class="xs">2026-06-11 更换 knee_l 电机</td><td class="xs">硬件变更历史。换件后应强制重标定并重跑 S0</td></tr>
+<tr><td class="mono xs">cumulative</td><td class="xs">运行 41.2 h · E-stop 7 次 · 摔倒 3 次</td><td class="xs">健康趋势与 MTBF 代理指标</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note decide">
+  <span class="note-t">硬件变更是被低估的坑</span>
+  更换一个电机后，零位、减速比标定、甚至质量分布都可能变，
+  而策略是在旧参数上训练的。<b>平台把「维护记录」变成强制门禁的输入</b>：
+  <code>maintenance_log</code> 有新条目但 <code>calibration</code> 未更新时，
+  所有放行请求直接被拒。这条规则听起来烦人，但它防的正是那种
+  「机器人突然表现变差，查了三天发现是上周换过电机」的情况。
+</div>
+
+<h2 id="telemetry">7.5 原型：部署与遥测面板</h2>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/deploy/robots/rb_bhl_001</div>
+    <span class="proto-tag">原型 · 占位数据</span>
+  </div>
+  <div class="proto-body">
+    <aside class="app-side">
+      <p class="app-side-t">部署</p>
+      <nav class="app-nav">
+        <a href="#telemetry"><span class="ico">◨</span>策略包<span class="cnt">14</span></a>
+        <a class="on" href="#telemetry"><span class="ico">⬢</span>机器人<span class="cnt">1</span></a>
+        <a href="#telemetry"><span class="ico">◫</span>放行记录<span class="cnt">23</span></a>
+        <a href="#telemetry"><span class="ico">⚠</span>事件<span class="cnt">7</span></a>
+      </nav>
+      <p class="app-side-t">rb_bhl_001</p>
+      <nav class="app-nav">
+        <a class="on" href="#telemetry"><span class="ico">·</span>概览</a>
+        <a href="#telemetry"><span class="ico">·</span>放行流程</a>
+        <a href="#telemetry"><span class="ico">·</span>遥测</a>
+        <a href="#telemetry"><span class="ico">·</span>标定</a>
+        <a href="#telemetry"><span class="ico">·</span>维护记录</a>
+      </nav>
+      <div class="panel-sm mt2">
+        <p class="panel-sm-t">硬件档案</p>
+        <p class="xs muted-2 mb0">
+          Berkeley-Humanoid-Lite<br>
+          12 DoF biped · bhl-hw-v1.2<br>
+          firmware 0.9.3<br>
+          标定 cal_v4（23 天前）
+        </p>
+      </div>
+    </aside>
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">机器人 / rb_bhl_001 · ec_bhl_biped_12dof_v1</p>
+          <h3 class="app-h">rb_bhl_001　<span class="badge b-green">S2 正常运行</span> <span class="badge b-gray">离线 3 min</span></h3>
+        </div>
+        <div class="app-actions">
+          <button class="btn sm">下载诊断包</button>
+          <button class="btn sm">重新标定</button>
+          <button class="btn sm danger">回滚到 v0.3.0</button>
+          <button class="btn sm primary">放行新包 v0.4.0</button>
+        </div>
+      </div>
+
+      <div class="grid g5 mb2">
+        <div class="kpi accent-cyan"><p class="kpi-label">当前策略</p><p class="kpi-value mono" style="font-size:1.1rem">v0.3.1</p><p class="kpi-foot">pb_…F2K7X · 放行 6 天前</p></div>
+        <div class="kpi"><p class="kpi-label">累计运行</p><p class="kpi-value">41.2<small>h</small></p><p class="kpi-foot">本周 +5.8 h</p></div>
+        <div class="kpi accent-green"><p class="kpi-label">控制环 jitter p99</p><p class="kpi-value">1.4<small>ms</small></p><p class="kpi-foot">阈值 2.0 ms</p></div>
+        <div class="kpi accent-green"><p class="kpi-label">推理延迟 p95</p><p class="kpi-value">4.3<small>ms</small></p><p class="kpi-foot">预算 40 ms（25 Hz）</p></div>
+        <div class="kpi accent-amber"><p class="kpi-label">CAN 错误率</p><p class="kpi-value">0.021<small>%</small></p><p class="kpi-foot">较上周 ↑ 0.014 · E-stop 累计 7 次</p></div>
+      </div>
+
+      <div class="note warn mb2" style="font-size:.84rem">
+        <span class="note-t">平台注意到一个趋势</span>
+        CAN 错误率一周内从 0.007% 升到 0.021%，且集中在 <code>knee_l</code> 节点（占 78%）。
+        虽仍远低于告警阈值 0.5%，但<b>趋势方向</b>值得关注——
+        该节点正是 2026-06-11 更换过电机的位置。建议检查线束与接插件。
+        <span class="badge b-cyan">Agent 已建议：下次运行前做 S0 悬挂自检</span>
+      </div>
+
+      <div class="mb2">
+        <p class="panel-sm-t">放行流程　<span class="more">v0.4.0 · 待人工确认 S1</span></p>
+        <ol class="steps">
+          <li><b>导出与自检　<span class="st st-ok">通过</span></b>
+            <span class="xs muted-2">ONNX opset 17 · 数值误差 3.1e-5 · CPU p95 4.1 ms</span></li>
+          <li><b>sim2sim 门禁　<span class="st st-ok">通过</span></b>
+            <span class="xs muted-2">发散 168 步 · 观测漂移 max 0.31σ · 资产一致性绿</span></li>
+          <li><b>S0 悬挂测试　<span class="st st-ok">通过</span></b>
+            <span class="xs muted-2">60 s · jitter p99 1.2 ms · CAN 0 错误 · E-stop 验证有效</span></li>
+          <li><b>S1 保护下低速　<span class="st st-warn">等待现场确认</span>　<button class="btn sm primary">现场已就绪，开始</button></b>
+            <span class="xs muted-2">需人工勾选：保护绳已挂好 · 场地已清空 · 有人守在 E-stop 旁</span></li>
+          <li><b>S2 正常运行　<span class="st st-idle">未解锁</span></b>
+            <span class="xs muted-2">S1 通过后才可点击，平台不允许跳级</span></li>
+        </ol>
+      </div>
+
+      <div class="grid g2 mb2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">控制环周期抖动　<span class="more">最近 10 min · 采样 1 kHz 聚合</span></p>
+          <div class="chart" data-chart='{"type":"line","w":470,"h":180,"xmax":600,"ymin":0,"ymax":3,"xlabel":"s","series":[
+            {"name":"p50","color":"#53e5a3","gen":{"kind":"noise","from":0.38,"to":0.44,"n":90,"seed":91,"noise":0.10}},
+            {"name":"p99","color":"#ffc857","gen":{"kind":"noise","from":1.25,"to":1.55,"n":90,"seed":92,"noise":0.18}}],
+            "hlines":[{"v":2.0,"label":"告警阈值","color":"#ff5d68"}]}'></div>
+          <p class="xs muted-2 mb0">p99 稳定在 1.4 ms 附近。若出现周期性尖峰，通常是上位机上有别的进程在抢 CPU。</p>
+        </div>
+        <div class="panel-sm">
+          <p class="panel-sm-t">电机温度　<span class="more">12 个关节 · 最近 40 min</span></p>
+          <div class="chart" data-chart='{"type":"line","w":470,"h":180,"xmax":40,"ymin":25,"ymax":75,"xlabel":"min","series":[
+            {"name":"knee_l（最热）","color":"#ff5d68","gen":{"kind":"plateau","from":28,"to":61,"n":80,"seed":93,"noise":0.04}},
+            {"name":"knee_r","color":"#ff884d","gen":{"kind":"plateau","from":28,"to":54,"n":80,"seed":94,"noise":0.04}},
+            {"name":"12 关节均值","color":"#53d4ff","gen":{"kind":"plateau","from":27,"to":44,"n":80,"seed":95,"noise":0.03}}],
+            "hlines":[{"v":70,"label":"降额阈值","color":"#ff5d68"}]}'></div>
+          <p class="xs muted-2 mb0">
+            <code>knee_l</code> 比对侧高 7 °C。左右不对称是有意义的信号——
+            可能是机械阻力、标定偏差或策略步态不对称。
+          </p>
+        </div>
+      </div>
+
+      <div class="grid g-3-2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">运行事件时间线</p>
+          <ul class="tl">
+            <li class="ok"><p class="tl-t mb0">S2 放行 v0.3.1</p><p class="tl-m mb0">6 天前 · 操作者确认 · 门禁全绿</p></li>
+            <li class="warn"><p class="tl-t mb0">E-stop 触发</p><p class="tl-m mb0">2 天前 · 运行 4 min 时人工按下（姿态异常前兆）· 未摔倒</p></li>
+            <li class="ok"><p class="tl-t mb0">恢复运行</p><p class="tl-m mb0">2 天前 · 继续 12 min 无异常</p></li>
+            <li class="err"><p class="tl-t mb0">摔倒</p><p class="tl-m mb0">5 天前 · 转向指令 ang=0.9（超出训练分布 0.8）· 无硬件损伤</p></li>
+            <li><p class="tl-t mb0">标定 cal_v4</p><p class="tl-m mb0">23 天前 · 7 天后到期</p></li>
+          </ul>
+          <p class="xs muted-2 mb0 mt1">
+            5 天前那次摔倒的根因很有价值：<b>指令超出训练分布</b>。
+            平台把它反向关联到策略包的 <code>safety.max_cmd_vel.ang = 0.8</code>——
+            说明限幅设置是对的，但上位机没有裁剪指令。这类闭环反馈是遥测存在的意义。
+          </p>
+        </div>
+        <div>
+          <div class="panel-sm mb1">
+            <p class="panel-sm-t">放行前检查（G1–G5）</p>
+            <div class="gate pass"><span class="g-ico">✓</span><span>契约匹配</span><span class="g-val">12 DoF</span></div>
+            <div class="gate pass"><span class="g-ico">✓</span><span>I/O 签名</span><span class="g-val">45→12</span></div>
+            <div class="gate pass"><span class="g-ico">✓</span><span>固件版本</span><span class="g-val">0.9.3</span></div>
+            <div class="gate warn"><span class="g-ico">!</span><span>标定新鲜度</span><span class="g-val">23/30 天</span></div>
+            <div class="gate pass"><span class="g-ico">✓</span><span>无未处理维护项</span><span class="g-val">—</span></div>
+          </div>
+          <div class="panel-sm">
+            <p class="panel-sm-t">遥测上报健康</p>
+            <div class="bar-row"><span>上报成功率</span><span class="bar-track"><i class="bar-fill good" style="width:99.2%"></i></span><span class="bar-val">99.2%</span></div>
+            <div class="bar-row"><span>缓冲区占用</span><span class="bar-track"><i class="bar-fill" style="width:12%"></i></span><span class="bar-val">12%</span></div>
+            <div class="bar-row"><span>端上磁盘</span><span class="bar-track"><i class="bar-fill" style="width:34%"></i></span><span class="bar-val">34%</span></div>
+            <p class="xs muted-2 mb0 mt1">
+              离线时遥测落盘缓存，联网后补传。丢失 0.8% 属正常，
+              因为遥测<b>允许丢</b>——它不能成为机器人运行的阻塞条件。
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 id="impl">7.6 实现要点与必要的端侧配套</h2>
+
+<div class="grid g2">
+<div>
+<div class="card">
+  <p class="card-title">机器人端需要一个薄 agent</p>
+  <p class="small">
+    平台侧设计再完整，也需要端上有个东西来接包、执行限幅、上报遥测。
+    这个 <code>eb-robot-agent</code>（仓库目录 <code>robot-agent/</code>） 应当极简：
+  </p>
+  <ul class="small mb0">
+    <li>拉取/接收 <code>.ebp</code> 包，校验签名与 manifest，落到本地目录</li>
+    <li>把 <code>safety.*</code> 转成运行时约束交给控制进程（限幅、看门狗、fallback）</li>
+    <li>采集控制环统计与硬件状态，<b>本地聚合后批量上报</b>（不做逐帧上传）</li>
+    <li>维护 <code>active</code> 与 <code>previous</code> 两个包，支持本地一键回滚</li>
+  </ul>
+  <p class="xs muted-2 mb0 mt1">
+    <b>关键约束</b>：这个 agent 与控制进程<b>不在同一个实时线程</b>，
+    它崩溃不能影响控制。用独立进程 + 共享内存/文件交换即可。
+    代码量估计几百行，用 Rust 写以避免 GC 与依赖问题。
+  </p>
+</div>
+<div class="note warn mt2">
+  <span class="note-t">诚实说明：这部分依赖上游改动</span>
+  策略包的 <code>safety</code> 字段要真正生效，需要低层控制侧读取并执行。
+  如果暂时不改，那么 <code>action_clip</code> 等字段就只是<b>记录用途</b>，
+  安全性仍完全依赖现有的硬件 E-stop 与人工看护。
+  平台设计上不假装这个问题不存在，而是在 UI 上显式标注
+  <span class="badge b-amber">safety 字段未被端侧强制</span>，
+  避免给人虚假的安全感。
+</div>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">遥测的存储与降采样</p>
+  <table class="compact">
+  <thead><tr><th>数据</th><th>频率</th><th>保留</th></tr></thead>
+  <tbody>
+  <tr><td class="xs">控制环统计（p50/p99/丢帧）</td><td class="xs">1 Hz 聚合</td><td class="xs">原始 30 天，之后 1 min 聚合永久</td></tr>
+  <tr><td class="xs">关节温度/电流</td><td class="xs">1 Hz</td><td class="xs">同上</td></tr>
+  <tr><td class="xs">事件（E-stop / 摔倒 / 回滚）</td><td class="xs">事件驱动</td><td class="xs">永久（PG 行）</td></tr>
+  <tr><td class="xs">异常前后状态快照</td><td class="xs">触发式 ±5 s</td><td class="xs">CAS，永久</td></tr>
+  <tr><td class="xs">逐帧全状态</td><td class="xs c-red">不常态采集</td><td class="xs">仅调试期开启，7 天 TTL</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    <b>触发式快照是性价比最高的一项</b>：平时不存，出事时能拿到前 5 秒的完整状态。
+    实现上端侧维护一个环形缓冲区，检测到异常就落盘。
+    这比「全都存下来然后从没人看」实用得多。
+  </p>
+</div>
+<div class="note good mt2">
+  <span class="note-t">回滚必须是本地能力</span>
+  回滚按钮在平台 UI 上，但<b>实际回滚由端侧完成</b>——
+  端上一直保留 <code>previous</code> 包，回滚不需要网络。
+  这样即使平台不可达、网络断了，现场的人也能通过端侧命令回滚。
+  <b>任何安全相关的操作都不能依赖网络。</b>
+</div>
+<div class="note info mt2">
+  <span class="note-t">与现有工具的关系</span>
+  仓库里的遥操作、<code>play_mujoco</code>、低层控制脚本继续直连使用，
+  平台不取代它们。平台的定位是<b>记录与治理</b>：
+  你用什么工具跑都行，但产物与结果要进台账。
+  这个定位让平台不会成为你干活时的障碍。
+</div>
+</div>
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

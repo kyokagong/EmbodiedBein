@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 前端：信息架构、页面清单、设计系统、图表规范、实时更新策略、Showcase 只读分享页与工程结构。">
+<title>09 · UI 体系与协作｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">09 · UI System</p>
+  <h1>UI 体系与协作</h1>
+  <p class="hero-copy">
+    这一章面向三类读者：<b>你</b>（每天用它干活）、<b>同事</b>（想知道你做到哪了）、
+    <b>未来的实现者</b>（要照着这个搭前端）。
+    因此内容分成两部分：先把三类视角的信息架构定清楚，再给出可直接落地的设计系统与工程约定。
+  </p>
+</header>
+
+<h2 id="personas">9.1 三类视角，两套界面</h2>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:13%">视角</th><th style="width:22%">核心问题</th><th style="width:30%">需要的界面</th><th>设计要点</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>你</b><br><span class="xs muted-2">操作者</span></td>
+  <td class="xs">现在该做什么？刚才那个为什么失败？这两个配置哪个好？</td>
+  <td class="xs">完整工作台：数据/模型/训练/评估/部署/Agent 六大区 + 队列 + 命令面板</td>
+  <td class="xs">信息密度优先、键盘可达、深链可分享、状态在 URL 里</td>
+</tr>
+<tr>
+  <td><b>同事</b><br><span class="xs muted-2">观察者</span></td>
+  <td class="xs">这个项目进展如何？现在能做到什么程度？有视频吗？</td>
+  <td class="xs"><b>Showcase 只读页</b>：里程碑时间线 + 最新成果 + 演示视频 + 关键指标趋势</td>
+  <td class="xs">解释性优先、无需登录（或只需链接）、不暴露内部细节与失败噪音</td>
+</tr>
+<tr>
+  <td><b>Agent</b><br><span class="xs muted-2">程序</span></td>
+  <td class="xs">系统当前状态是什么？我能做什么？</td>
+  <td class="xs">无界面，走 REST；但其行为必须在 UI 中<b>完全可见</b></td>
+  <td class="xs">Agent 的动作与人的动作在同一时间线上呈现，不分栏隐藏</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="note decide">
+  <span class="note-t">为什么 Showcase 要单独做一套而不是「给同事一个只读账号」</span>
+  只读账号看到的还是<b>你的工作台</b>——满屏的失败 run、队列、报错、
+  半成品配置。同事看了只会得到「一团乱」的印象，而不是「进展不错」。
+  <b>Showcase 是主动策展的结果</b>：你决定展示什么、配上一句人话解释。
+  它把「让同事看到产出」这个诉求从「给权限」变成「讲故事」，
+  而这两件事的效果完全不同。
+</div>
+
+<h2 id="ia">9.2 信息架构</h2>
+
+<figure>
+<div class="diagram diagram-wide">
+<svg viewBox="0 0 980 300" role="img" aria-label="信息架构导航树">
+  <rect x="12" y="14" width="956" height="40" rx="8" class="svg-box"/>
+  <text x="26" y="39" class="svg-t">顶栏</text>
+  <text x="88" y="39" class="svg-t-sm">全局搜索（⌘K 命令面板：跳转 / 提任务 / 问 Agent）　·　队列徽标　·　通知　·　当前本体切换器　·　我的配额</text>
+
+  <rect x="12" y="66" width="152" height="222" rx="8" class="svg-box-2"/>
+  <text x="26" y="88" class="svg-t-lane">主导航</text>
+  <text x="26" y="112" class="svg-t-sm">◉ 总览</text>
+  <text x="26" y="134" class="svg-t-sm">◧ 数据</text>
+  <text x="26" y="156" class="svg-t-sm">◨ 模型与资产</text>
+  <text x="26" y="178" class="svg-t-sm">▸ 训练</text>
+  <text x="26" y="200" class="svg-t-sm">▤ 评估</text>
+  <text x="26" y="222" class="svg-t-sm">⬢ 部署</text>
+  <text x="26" y="244" class="svg-t-sm">◍ Agent</text>
+  <text x="26" y="266" class="svg-t-sm">⚙ 设置</text>
+
+  <rect x="176" y="66" width="792" height="222" rx="8" class="svg-lane"/>
+  <text x="190" y="88" class="svg-t-lane">二级结构：每个模块统一为「列表 → 详情 → 子标签」三层</text>
+
+  <rect x="190" y="100" width="184" height="80" rx="7" class="svg-box"/>
+  <text x="202" y="120" class="svg-t-sm">列表页</text>
+  <text x="202" y="138" class="svg-t-mono">筛选 · 排序 · 批量操作</text>
+  <text x="202" y="154" class="svg-t-mono">状态徽标 · 快速预览</text>
+  <text x="202" y="170" class="svg-t-mono">URL 携带筛选条件</text>
+
+  <rect x="386" y="100" width="184" height="80" rx="7" class="svg-box"/>
+  <text x="398" y="120" class="svg-t-sm">详情页</text>
+  <text x="398" y="138" class="svg-t-mono">KPI 条 · 主图表区</text>
+  <text x="398" y="154" class="svg-t-mono">门禁 / 契约校验状态</text>
+  <text x="398" y="170" class="svg-t-mono">血缘 · 产物 · 复现信息</text>
+
+  <rect x="582" y="100" width="184" height="80" rx="7" class="svg-box"/>
+  <text x="594" y="120" class="svg-t-sm">子标签</text>
+  <text x="594" y="138" class="svg-t-mono">全部指标 / 日志 / 视频</text>
+  <text x="594" y="154" class="svg-t-mono">配置与命令行</text>
+  <text x="594" y="170" class="svg-t-mono">审计与事件</text>
+
+  <rect x="778" y="100" width="176" height="80" rx="7" class="svg-box-2"/>
+  <text x="790" y="120" class="svg-t-sm">横切能力</text>
+  <text x="790" y="138" class="svg-t-mono">对比（勾选 → 对比）</text>
+  <text x="790" y="154" class="svg-t-mono">血缘图（任意节点进入）</text>
+  <text x="790" y="170" class="svg-t-mono">分享（生成只读链接）</text>
+
+  <rect x="190" y="196" width="764" height="76" rx="7" class="svg-box-2"/>
+  <text x="202" y="216" class="svg-t-sm">贯穿全站的三个不变量</text>
+  <text x="202" y="236" class="svg-t-mono">① 任何实体页都能一键看到「它从哪来、被谁用」——血缘入口无处不在</text>
+  <text x="202" y="252" class="svg-t-mono">② 任何图表上的点都能下钻到产生它的 run / episode / 样本</text>
+  <text x="202" y="268" class="svg-t-mono">③ 任何列表选中 2–4 项后都出现「对比」按钮，行为一致</text>
+</svg>
+</div>
+<figcaption>图 9-1　信息架构。六大模块结构完全同构，学会一个就会用全部。</figcaption>
+</figure>
+
+<h2 id="pages">9.3 页面清单</h2>
+
+<p>
+  共 <b>31 个页面</b>。P0 是没有它平台就不成立的，P1 是第二阶段，P2 是锦上添花。
+  <span class="xs muted-2">（优先级与 <a href="10-roadmap.html">10 章</a>的里程碑对应）</span>
+</p>
+
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr>
+  <th style="width:24%">路由</th><th style="width:19%">页面</th>
+  <th style="width:7%">优先</th><th style="width:22%">关键组件</th><th>数据来源</th>
+</tr></thead>
+<tbody>
+<tr><td class="mono xs">/</td><td class="xs">总览仪表盘</td><td><span class="badge b-green">P0</span></td><td class="xs">KPI 条、活动流、队列摘要、资源环</td><td class="xs">聚合 API + WS</td></tr>
+<tr><td class="mono xs">/data</td><td class="xs">数据集列表</td><td><span class="badge b-green">P0</span></td><td class="xs">虚拟表格、格式徽标、许可徽标</td><td class="xs">REST 分页</td></tr>
+<tr><td class="mono xs">/data/:id</td><td class="xs">数据集详情</td><td><span class="badge b-green">P0</span></td><td class="xs">统计图、校验结果、版本树</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/data/:id/funnel</td><td class="xs">数据漏斗审计</td><td><span class="badge b-green">P0</span></td><td class="xs">漏斗图、拒绝原因表、敏感性滑块</td><td class="xs">funnel_reports</td></tr>
+<tr><td class="mono xs">/data/:id/episodes/:ep</td><td class="xs">Episode 预览器</td><td><span class="badge b-green">P0</span></td><td class="xs">视频播放器、动作曲线、时间轴联动</td><td class="xs">CAS 代理流</td></tr>
+<tr><td class="mono xs">/data/:id/slices</td><td class="xs">切片管理</td><td><span class="badge b-cyan">P1</span></td><td class="xs">查询构造器、命中预览</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/data/convert</td><td class="xs">转换任务向导</td><td><span class="badge b-cyan">P1</span></td><td class="xs">分步表单、参数校验、预演</td><td class="xs">JobSpec 提交</td></tr>
+<tr><td class="mono xs">/models</td><td class="xs">模型列表</td><td><span class="badge b-green">P0</span></td><td class="xs">表格、族群筛选、契约徽标</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/models/:id</td><td class="xs">模型版本详情</td><td><span class="badge b-green">P0</span></td><td class="xs">Model Card、契约校验、产物表</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/models/:id/lineage</td><td class="xs">血缘图</td><td><span class="badge b-cyan">P1</span></td><td class="xs">Vue Flow DAG、节点下钻</td><td class="xs">lineage API</td></tr>
+<tr><td class="mono xs">/contracts</td><td class="xs">本体契约列表</td><td><span class="badge b-green">P0</span></td><td class="xs">契约卡片、维度摘要</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/contracts/:id</td><td class="xs">契约详情与校验矩阵</td><td><span class="badge b-green">P0</span></td><td class="xs">观测布局图、G1–G5 状态、引用方列表</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/assets</td><td class="xs">机器人资产（URDF/MJCF/USD）</td><td><span class="badge b-cyan">P1</span></td><td class="xs">一致性报告表、差异高亮</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/assets/:id/viewer</td><td class="xs">3D 资产查看器</td><td><span class="badge b-violet">P2</span></td><td class="xs">three.js、关节树、限位可视化</td><td class="xs">静态资产</td></tr>
+<tr><td class="mono xs">/train/experiments</td><td class="xs">实验列表</td><td><span class="badge b-green">P0</span></td><td class="xs">分组表格、指标列可配置</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/train/runs/:id</td><td class="xs">Run 详情（训练可视化）</td><td><span class="badge b-green">P0</span></td><td class="xs">多图表网格、日志流、产物预览、终止原因堆叠</td><td class="xs">WS + TSDB</td></tr>
+<tr><td class="mono xs">/train/runs/compare</td><td class="xs">Run 对比</td><td><span class="badge b-green">P0</span></td><td class="xs">曲线叠加、参数 diff、Pareto、显著性标注</td><td class="xs">TSDB 批量</td></tr>
+<tr><td class="mono xs">/train/submit</td><td class="xs">提交任务</td><td><span class="badge b-green">P0</span></td><td class="xs">JobSpec 表单、契约预检、命令行预览</td><td class="xs">校验 API</td></tr>
+<tr><td class="mono xs">/train/queue</td><td class="xs">队列与资源</td><td><span class="badge b-green">P0</span></td><td class="xs">GPU 甘特图、队列列表、显存条</td><td class="xs">WS</td></tr>
+<tr><td class="mono xs">/train/pipelines</td><td class="xs">流水线列表与 DAG</td><td><span class="badge b-cyan">P1</span></td><td class="xs">Vue Flow、步骤状态、重跑入口</td><td class="xs">REST + WS</td></tr>
+<tr><td class="mono xs">/eval/suites</td><td class="xs">评估套件</td><td><span class="badge b-green">P0</span></td><td class="xs">套件定义、seed 注册表、冻结标记</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/eval/reports/:id</td><td class="xs">评估报告</td><td><span class="badge b-green">P0</span></td><td class="xs">门禁面板、成功率矩阵、失败视频墙</td><td class="xs">REST + Parquet</td></tr>
+<tr><td class="mono xs">/eval/compare</td><td class="xs">评估对比</td><td><span class="badge b-cyan">P1</span></td><td class="xs">配对比较、逐 seed 差异</td><td class="xs">Parquet join</td></tr>
+<tr><td class="mono xs">/eval/failures</td><td class="xs">失败库</td><td><span class="badge b-cyan">P1</span></td><td class="xs">聚类视图、标签、视频墙</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/eval/leaderboard</td><td class="xs">排行榜</td><td><span class="badge b-cyan">P1</span></td><td class="xs">可排序表、基线标记</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/deploy/bundles</td><td class="xs">策略包列表</td><td><span class="badge b-cyan">P1</span></td><td class="xs">签名状态、契约匹配、门禁徽标</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/deploy/robots/:id</td><td class="xs">机器人详情与遥测</td><td><span class="badge b-cyan">P1</span></td><td class="xs">分级放行步骤、jitter/温度曲线、事件时间线</td><td class="xs">TSDB + REST</td></tr>
+<tr><td class="mono xs">/agent</td><td class="xs">Agent 控制台</td><td><span class="badge b-cyan">P1</span></td><td class="xs">对话流、工具调用轨迹、待审批、预算条</td><td class="xs">WS 流式</td></tr>
+<tr><td class="mono xs">/agent/audit</td><td class="xs">Agent 审计</td><td><span class="badge b-cyan">P1</span></td><td class="xs">可筛选日志表、护栏结果</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/showcase/:token</td><td class="xs"><b>Showcase 只读分享页</b></td><td><span class="badge b-green">P0</span></td><td class="xs">里程碑时间线、成果卡、视频、趋势图</td><td class="xs">快照 JSON</td></tr>
+<tr><td class="mono xs">/settings/*</td><td class="xs">设置（配额、镜像、通知、密钥）</td><td><span class="badge b-violet">P2</span></td><td class="xs">表单、镜像能力矩阵</td><td class="xs">REST</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note info">
+  <span class="note-t">Showcase 定为 P0 是刻意的</span>
+  它在功能上最简单（只读渲染一份快照 JSON），但在<b>你的核心诉求</b>上权重最高——
+  「让同事看到我的产出」。而且它有个副作用：
+  为了让 Showcase 有内容可展示，你会更倾向于把成果整理清楚，
+  这本身就改善了工作习惯。
+</div>
+
+<h2 id="showcase">9.4 原型：Showcase 分享页</h2>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/showcase/bhl-progress-aug</div>
+    <span class="proto-tag">原型 · 占位数据</span>
+  </div>
+  <div class="proto-body no-side">
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">只读分享 · 快照于 2026-08-20 09:00 · 无需登录</p>
+          <h3 class="app-h">Berkeley-Humanoid-Lite 项目进展</h3>
+        </div>
+        <div class="app-actions">
+          <span class="badge b-gray">链接 30 天后过期</span>
+          <button class="btn sm">复制链接</button>
+        </div>
+      </div>
+
+      <div class="panel-sm mb2">
+        <p class="mb0" style="font-size:.9rem">
+          <b>一句话现状</b>：双足运控策略已能在真机上连续行走 10 分钟以上（累计 41 小时）；
+          机械臂 reach 任务在仿真中成功率 <b>82%</b>，push 任务 <b>61%</b>；
+          当前主要瓶颈是<b>数据量</b>——真实场景泛化（换物体、换措辞）成功率仅 39%，
+          正在补充采集。
+        </p>
+      </div>
+
+      <div class="grid g4 mb2">
+        <div class="kpi accent-green"><p class="kpi-label">真机累计运行</p><p class="kpi-value">41.2<small>h</small></p><p class="kpi-foot">最长单次 18 min</p></div>
+        <div class="kpi accent-cyan"><p class="kpi-label">reach 成功率</p><p class="kpi-value">82<small>%</small></p><p class="kpi-foot">suite_reach_push_v2 · id · n=64</p></div>
+        <div class="kpi accent-amber"><p class="kpi-label">push 成功率</p><p class="kpi-value">61<small>%</small></p><p class="kpi-foot">同套件 · id · n=32</p></div>
+        <div class="kpi accent-violet"><p class="kpi-label">已发布策略</p><p class="kpi-value">6</p><p class="kpi-foot">3 个上过真机</p></div>
+      </div>
+
+      <div class="grid g-3-2 mb2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">能力演进　<span class="more">按月</span></p>
+          <div class="chart" data-chart='{"type":"line","w":600,"h":210,"xmax":8,"ymin":0,"ymax":1,"xlabel":"月份","series":[
+            {"name":"双足行走稳定性","color":"#53e5a3","gen":{"kind":"step","from":0.12,"to":0.88,"n":40,"seed":11,"noise":0.05}},
+            {"name":"reach 成功率","color":"#53d4ff","gen":{"kind":"rise","from":0.05,"to":0.82,"n":40,"seed":12,"noise":0.06}},
+            {"name":"push 成功率","color":"#ffc857","gen":{"kind":"rise","from":0.02,"to":0.61,"n":40,"seed":13,"noise":0.08}},
+            {"name":"泛化（OOD）","color":"#ff884d","dash":"5 3","gen":{"kind":"linear","from":0.0,"to":0.39,"n":40,"seed":14,"noise":0.09}}]}'></div>
+          <p class="xs muted-2 mb0 mt1">
+            橙色虚线（泛化能力）明显落后于实线——<b>这张图就是「为什么需要更多数据」的论证</b>。
+            对同事解释工作重点时，一张图胜过一段话。
+          </p>
+        </div>
+        <div class="panel-sm">
+          <p class="panel-sm-t">里程碑</p>
+          <ul class="tl mb0">
+            <li class="ok"><p class="tl-t mb0">真机连续行走 10 min</p><p class="tl-m mb0">8 月 · 策略 v0.3.1 · 无 E-stop</p></li>
+            <li class="ok"><p class="tl-t mb0">sim2sim 门禁上线</p><p class="tl-m mb0">7 月 · 拦下 2 次资产不一致</p></li>
+            <li class="ok"><p class="tl-t mb0">首个 VLA 策略跑通 reach</p><p class="tl-m mb0">7 月 · π₀.₅ SFT · 当时 reach id 成功率 61%</p></li>
+            <li class="warn"><p class="tl-t mb0">人类 ego 数据管线</p><p class="tl-m mb0">6 月 · 产出 35 场景，产率低于预期</p></li>
+            <li class="ok"><p class="tl-t mb0">首次真机站立</p><p class="tl-m mb0">5 月</p></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="panel-sm mb2">
+        <p class="panel-sm-t">演示视频　<span class="more">策展后的 6 段，非全部</span></p>
+        <div class="mediagrid">
+          <div class="media"><span class="flag ok">真机</span><span class="tagline">连续行走 10 min</span></div>
+          <div class="media"><span class="flag ok">真机</span><span class="tagline">原地转向</span></div>
+          <div class="media"><span class="flag ok">仿真</span><span class="tagline">reach 成功案例</span></div>
+          <div class="media"><span class="flag ok">仿真</span><span class="tagline">push 成功案例</span></div>
+          <div class="media"><span class="flag bad">失败</span><span class="tagline">OOD 物体：方向错误</span></div>
+          <div class="media"><span class="flag ok">sim2sim</span><span class="tagline">MuJoCo 一致性验证</span></div>
+        </div>
+        <p class="xs muted-2 mb0 mt1">
+          <b>刻意包含一个失败案例。</b>只放成功视频会让人怀疑真实性，
+          而主动展示失败并解释原因，反而更能建立信任——也让「还需要做什么」不言自明。
+        </p>
+      </div>
+
+      <div class="grid g2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">系统组成　<span class="more">给不了解细节的人看</span></p>
+          <ul class="small mb0">
+            <li><b>本体</b>：Berkeley-Humanoid-Lite，12 自由度双足（可扩展至 22 自由度含双臂）</li>
+            <li><b>低层控制</b>：1 kHz 关节控制，CAN 总线，硬件级急停</li>
+            <li><b>运控策略</b>：Isaac Lab 中强化学习训练，导出 ONNX 后 25 Hz 推理</li>
+            <li><b>操作策略</b>：VLA 模型（π₀.₅），视觉 + 语言指令 → 动作</li>
+            <li><b>训练算力</b>：4 × RTX 4090（本地单机）</li>
+          </ul>
+        </div>
+        <div class="panel-sm">
+          <p class="panel-sm-t">下一阶段计划</p>
+          <ol class="steps mb0">
+            <li><b>补充操作数据</b><span class="xs muted-2">目标：物体外观从 2 种扩到 12 种，验证泛化拐点</span></li>
+            <li><b>全身协调（WBC）</b><span class="xs muted-2">行走同时操作，22 自由度契约已就绪 · <b>仅仿真</b></span></li>
+            <li><b>真机 VLA 闭环</b><span class="xs muted-2"><b>尚未上机</b>：先在仿真达到 85% 并通过 sim2sim 门禁</span></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 id="ds">9.5 设计系统</h2>
+
+<div class="grid g2">
+<div>
+<div class="card">
+  <p class="card-title">模块语义色</p>
+  <p class="small">
+    六大模块各有固定色，<b>全站一致</b>：徽标、图表主色、导航高亮、血缘图节点都用它。
+    这样看一眼颜色就知道在哪个域。
+  </p>
+  <div class="chips">
+    <span class="chip"><i class="chip-dot" style="background:var(--c-data)"></i>数据</span>
+    <span class="chip"><i class="chip-dot" style="background:var(--c-model)"></i>模型</span>
+    <span class="chip"><i class="chip-dot" style="background:var(--c-train)"></i>训练</span>
+    <span class="chip"><i class="chip-dot" style="background:var(--c-eval)"></i>评估</span>
+    <span class="chip"><i class="chip-dot" style="background:var(--c-deploy)"></i>部署</span>
+    <span class="chip"><i class="chip-dot" style="background:var(--c-agent)"></i>Agent</span>
+    <span class="chip"><i class="chip-dot" style="background:var(--c-infra)"></i>基础设施</span>
+  </div>
+</div>
+<div class="card mt2">
+  <p class="card-title">状态色（跨全站唯一语义）</p>
+  <p class="small mb1">
+    <span class="st st-run">运行中</span>　<span class="st st-ok">成功 / 通过</span>　
+    <span class="st st-warn">警告 / 待确认</span>　<span class="st st-err">失败 / 阻断</span>　
+    <span class="st st-queue">排队</span>　<span class="st st-idle">空闲 / 未开始</span>
+  </p>
+  <p class="xs muted-2 mb0">
+    <b>关键约定</b>：绿色<b>只</b>表示「通过了检查」，不表示「数值高」。
+    这避免出现「倾倒率是绿色」这种荒谬情况——
+    高倾倒率必须是红的，即使它是个「上升的数字」。
+  </p>
+</div>
+<div class="card mt2">
+  <p class="card-title">排版与密度</p>
+  <table class="compact">
+  <tbody>
+  <tr><td class="xs">正文</td><td class="mono xs">15px / 1.75</td><td class="xs">系统无衬线</td></tr>
+  <tr><td class="xs">数值与 ID</td><td class="mono xs">等宽字体</td><td class="xs">所有数字右对齐、定宽</td></tr>
+  <tr><td class="xs">表格行高</td><td class="mono xs">32px（紧凑 26px）</td><td class="xs">列表页默认紧凑</td></tr>
+  <tr><td class="xs">主色调</td><td class="mono xs">深色 #070e14</td><td class="xs">长时间看曲线不刺眼</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    <b>数字必须等宽且右对齐</b>。这是个小细节，但当你在表格里比较
+    <code>0.821</code> 和 <code>0.61</code> 时，对齐能让差异一眼可见。
+  </p>
+</div>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">图表规范</p>
+  <table class="compact">
+  <thead><tr><th>场景</th><th>图型</th><th>约定</th></tr></thead>
+  <tbody>
+  <tr><td class="xs">训练曲线</td><td class="xs">折线</td><td class="xs">默认 EMA 0.9 平滑 + 原始半透明；多 seed 显示 ±std 带</td></tr>
+  <tr><td class="xs">终止原因</td><td class="xs">堆叠面积/柱</td><td class="xs">比例而非绝对值；颜色固定绑定原因</td></tr>
+  <tr><td class="xs">成功率矩阵</td><td class="xs">热力图</td><td class="xs">红绿色阶固定 0–1，不自适应（否则无法跨报告对比）</td></tr>
+  <tr><td class="xs">成本 vs 效果</td><td class="xs">散点 + 前沿</td><td class="xs">被支配点降低不透明度</td></tr>
+  <tr><td class="xs">资源占用</td><td class="xs">甘特 / 条形</td><td class="xs">时间轴统一为本地时区</td></tr>
+  <tr><td class="xs">数据流转</td><td class="xs">漏斗</td><td class="xs">每级标注绝对数与留存率</td></tr>
+  <tr><td class="xs">血缘 / DAG</td><td class="xs">节点图</td><td class="xs">节点色 = 模块色；边方向恒为左→右</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    <b>最重要的一条</b>：同一个 run 在全站<b>任何图表里都是同一个颜色</b>。
+    颜色由 run_id 哈希决定并缓存。这样跨页面看图时不需要每次重新对照图例。
+  </p>
+</div>
+<div class="note warn mt2">
+  <span class="note-t">y 轴不要默认从 0 开始，但要标注</span>
+  reward 从 18.4 涨到 18.7 时，从 0 起的 y 轴让曲线看起来是直线；
+  自适应轴又会把噪声放大成「重大突破」。
+  折中：<b>自适应 + 在轴上明确标注范围 + 提供一键切回 0 基线</b>。
+  这类小决定累积起来决定了图表是帮人理解还是误导人。
+</div>
+<div class="card mt2">
+  <p class="card-title">实时更新策略</p>
+  <table class="compact">
+  <thead><tr><th>数据</th><th>方式</th><th>频率</th></tr></thead>
+  <tbody>
+  <tr><td class="xs">run 状态、队列</td><td class="xs">WebSocket</td><td class="xs">事件驱动，即时</td></tr>
+  <tr><td class="xs">训练指标曲线</td><td class="xs">WS 增量追加</td><td class="xs">1–2 s 批量</td></tr>
+  <tr><td class="xs">日志流</td><td class="xs">WS + 虚拟滚动</td><td class="xs">背压丢弃中间帧</td></tr>
+  <tr><td class="xs">GPU/资源</td><td class="xs">WS</td><td class="xs">2 s</td></tr>
+  <tr><td class="xs">列表页</td><td class="xs">轮询</td><td class="xs">15 s（页面可见时）</td></tr>
+  <tr><td class="xs">Agent 回复</td><td class="xs">WS 流式</td><td class="xs">逐 token</td></tr>
+  <tr><td class="xs">遥测</td><td class="xs">轮询</td><td class="xs">10 s</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    <b>页面不可见时全部暂停</b>（<code>visibilitychange</code>）。
+    否则开着十个标签页会白白产生大量无人看的流量与 CPU 占用。
+  </p>
+</div>
+</div>
+</div>
+
+<h2 id="fe">9.6 前端工程与性能预算</h2>
+
+<div class="grid g-2-1">
+<div>
+<pre><code>frontend/
+├── src/
+│   ├── api/              <span class="c"># 由 OpenAPI 生成的类型化客户端（不手写）</span>
+│   │   ├── generated/    <span class="c">#   后端 schema 变更后重新生成，编译期发现断裂</span>
+│   │   └── ws.ts         <span class="c">#   WS 连接管理：重连、订阅、背压</span>
+│   ├── stores/           <span class="c"># Pinia：session / queue / runs / contracts / agent</span>
+│   ├── charts/           <span class="c"># ECharts 封装：统一主题、统一交互、统一配色</span>
+│   │   ├── theme.ts      <span class="c">#   与设计 token 同源，不重复定义颜色</span>
+│   │   └── useSeriesColor.ts  <span class="c"># run_id → 稳定颜色</span>
+│   ├── components/
+│   │   ├── base/         <span class="c"># Button / Table / Badge / Panel …</span>
+│   │   ├── domain/       <span class="c"># ContractBadge / GatePanel / LineageGraph / VideoScrubber</span>
+│   │   └── layout/
+│   ├── views/            <span class="c"># 与 9.3 的 31 个页面一一对应</span>
+│   ├── composables/      <span class="c"># useLiveMetrics / useJobSubmit / useCompare</span>
+│   └── router/
+├── vite.config.ts        <span class="c"># build.outDir = ../backend/web/dist（见 ADR-10）</span>
+└── package.json
+
+<span class="c"># FastAPI 侧一行挂载</span>
+app.mount(<span class="s">"/"</span>, StaticFiles(directory=DIST, html=<span class="k">True</span>), name=<span class="s">"ui"</span>)
+<span class="c"># 注意：需在所有 /api 路由注册之后挂载，否则会吞掉 API 路径</span>
+<span class="c"># 且需处理 SPA 回退：未匹配路径返回 index.html</span>
+
+<span class="c"># ── 构建发生在镜像里，不在宿主上 ──────────────────────────</span>
+<span class="c"># deploy/api.Dockerfile 第一阶段：</span>
+<span class="k">FROM</span> node:20-alpine <span class="k">AS</span> web
+COPY frontend/package*.json ./
+<span class="k">RUN</span> npm ci
+COPY frontend/ ./
+<span class="k">RUN</span> npm run build                       <span class="c"># → /app/dist</span>
+<span class="c"># ...最后阶段：</span>
+COPY --from=web /app/dist ./web/dist   <span class="c"># 前端随 api 镜像一起发布</span>
+</code></pre>
+
+<div class="note info">
+  <span class="note-t">前端不是独立部署单元</span>
+  它没有自己的容器、没有自己的端口、也不经 Nginx——
+  <code>npm run build</code> 在 api 镜像构建时执行，产物直接躺在 api 镜像里。
+  部署时<b>只有 <code>docker compose up -d</code> 一条命令</b>（见
+  <a href="01-architecture.html#deployform">01.8</a>）。
+  <br><b>推论</b>：改一行前端代码需要重建 api 镜像（约 1–2 min），
+  所以开发期一定要用 <code>make dev-web</code> 的 Vite 热更新，
+  把 <code>/api</code> 与 <code>/ws</code> 代理到 compose 里跑着的 <code>:8000</code>——
+  <b>前端热更新与后端容器化并不冲突</b>，这是最舒服的开发姿势。
+</div>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">性能预算</p>
+  <table class="compact">
+  <tbody>
+  <tr><td class="xs">首屏可交互</td><td class="mono xs">&lt; 1.5 s</td></tr>
+  <tr><td class="xs">主 bundle（gzip）</td><td class="mono xs">&lt; 400 KB</td></tr>
+  <tr><td class="xs">曲线渲染 10k 点</td><td class="mono xs">&lt; 120 ms</td></tr>
+  <tr><td class="xs">列表 5k 行滚动</td><td class="mono xs">60 fps</td></tr>
+  <tr><td class="xs">日志 100k 行</td><td class="mono xs">虚拟滚动，内存 &lt; 60 MB</td></tr>
+  <tr><td class="xs">WS 重连</td><td class="mono xs">指数退避，上限 30 s</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    three.js（3D 资产查看器）与 Vue Flow（血缘图）<b>必须懒加载</b>，
+    否则主 bundle 预算立刻超标。
+  </p>
+</div>
+<div class="note good mt2">
+  <span class="note-t">曲线降采样在后端做</span>
+  一次训练 6000 iter × 31 个指标 = 18 万点。全传给浏览器再抽稀是浪费。
+  <b>TSDB 查询接口直接支持 <code>?points=200</code></b>，
+  服务端按时间桶做 min/max/avg 聚合返回——
+  既保留了尖峰（min/max）又控制了体积。这是 Rust 侧 <code>eb-tsdb</code>
+  存在的主要理由之一。
+</div>
+<div class="note info mt2">
+  <span class="note-t">URL 即状态</span>
+  筛选条件、选中的 run、图表的 x 范围、展开的标签页——全部编码进 URL query。
+  这样「把这个视图发给同事」等于「复制地址栏」，
+  也让浏览器前进/后退符合直觉。
+  <b>这是协作类工具最划算的一个设计投入。</b>
+</div>
+<div class="note mt2">
+  <span class="note-t">空状态与错误状态要认真做</span>
+  平台刚上线时<b>所有列表都是空的</b>。空状态如果只显示「暂无数据」，
+  用户不知道下一步该干什么。每个空列表都应该给出
+  <b>一句解释 + 一个具体动作按钮</b>（如「注册第一个数据集」）。
+  同理，错误提示必须包含「发生了什么 / 可能原因 / 我能做什么」三段。
+</div>
+</div>
+</div>
+
+<h2 id="a11y">9.7 可用性细节</h2>
+
+<div class="grid g3">
+<div class="card">
+  <p class="card-title">键盘优先</p>
+  <ul class="small mb0">
+    <li><code>⌘K</code> 命令面板：跳转任意实体、提交任务、问 Agent</li>
+    <li><code>j/k</code> 列表上下移动，<code>Enter</code> 进入</li>
+    <li><code>c</code> 对比选中项，<code>r</code> 重跑，<code>/</code> 搜索</li>
+    <li>所有对话框 <code>Esc</code> 关闭，焦点归还触发元素</li>
+  </ul>
+  <p class="xs muted-2 mb0 mt1">你是主要用户且每天用它，键盘效率的收益会被放倍。</p>
+</div>
+<div class="card">
+  <p class="card-title">长任务的反馈</p>
+  <ul class="small mb0">
+    <li>提交后<b>立刻</b>返回 job_id 并跳转到详情页，不做转圈等待</li>
+    <li>详情页显示当前阶段（拉镜像 / 准备工作区 / 运行中），而非笼统的「处理中」</li>
+    <li>预计剩余时间基于历史同类任务的中位数，而非线性外推</li>
+    <li>可关闭页面，完成后通知</li>
+  </ul>
+</div>
+<div class="card">
+  <p class="card-title">可访问性底线</p>
+  <ul class="small mb0">
+    <li>颜色不作为唯一信息载体（状态同时有图标与文字）</li>
+    <li>对比度满足 WCAG AA（深色主题尤其要检查次要文字）</li>
+    <li>所有图表提供数据表切换视图</li>
+    <li>焦点可见环、跳到正文链接、语义化标签</li>
+  </ul>
+  <p class="xs muted-2 mb0 mt1">
+    「颜色不唯一」这条对色觉障碍者是必需，对所有人则意味着截图分享时信息不丢失。
+  </p>
+</div>
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

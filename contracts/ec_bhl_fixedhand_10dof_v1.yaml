@@ -1,0 +1,42 @@
+id: ec_bhl_fixedhand_10dof_v1
+robot_family: berkeley_humanoid_lite
+morphology: fixed_hand
+interface_version: 1
+status: active
+dof: 10
+joint_groups:
+  arm: { count: 10 }
+joint_order:
+  - arm_left_shoulder_pitch_joint
+  - arm_left_shoulder_roll_joint
+  - arm_left_shoulder_yaw_joint
+  - arm_left_elbow_pitch_joint
+  - arm_left_elbow_roll_joint
+  - arm_right_shoulder_pitch_joint
+  - arm_right_shoulder_roll_joint
+  - arm_right_shoulder_yaw_joint
+  - arm_right_elbow_pitch_joint
+  - arm_right_elbow_roll_joint
+observation:
+  dim: 10
+  history_length: 1
+  concat: false
+  layout:
+    - { term: state, dim: 10, source: encoder }
+  modalities:
+    - { name: camera_top, shape: [224, 224, 3], dtype: uint8 }
+action:
+  dim: 10
+  type: joint_position
+  absolute: true
+control:
+  policy_hz: 20
+  control_hz: 200
+  sim_dt: 0.005
+  decimation: 10
+  max_policy_latency_ms: 15
+sim_bindings:
+  isaac_task: Isaac-Reach-Berkeley-Humanoid-Lite-v0
+  experiment_name: fixedhand
+real_bindings:
+  firmware_n_joints: 10

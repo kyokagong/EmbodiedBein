@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 领域模型：核心实体与 ER、Embodiment Contract 规范、JobSpec、状态机、血缘模型、REST 资源树、事件总线与数据库 schema。">
+<title>02 · 领域模型、契约与接口｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">02 · Domain Model</p>
+  <h1>领域模型、契约与接口</h1>
+  <p class="hero-copy">
+    这是全平台的<b>共享语言</b>。所有模块页都会引用这里定义的实体与状态机。
+    其中 <a href="#contract">Embodiment Contract</a> 是本设计最核心的原创机制，
+    它把具身领域最容易出错的「维度与频率」从散落的配置提升为受治理的一等实体。
+  </p>
+</header>
+
+<h2 id="er">2.1 实体总览</h2>
+
+<p>
+  24 个核心实体，分为六个域。域内高内聚，域间只通过少量明确的引用连接——
+  这个边界同时也是未来拆分服务的边界。
+</p>
+
+<figure class="diagram diagram-wide">
+<svg viewBox="0 0 1140 640" role="img" aria-label="实体关系图：本体域、数据域、模型域、执行域、评估域、发布域与平台域共 24 个核心实体及其关系">
+  <!-- 本体域 -->
+  <g transform="translate(10,10)">
+    <rect class="svg-lane" width="268" height="196" rx="12" style="stroke:#5b8cff"/>
+    <text class="svg-t-lane" x="12" y="20" style="fill:#5b8cff">本体域 Embodiment</text>
+    <g transform="translate(12,28)">
+      <rect class="svg-box" width="244" height="40" rx="7" style="stroke:#5b8cff;stroke-width:2"/>
+      <text class="svg-t" x="9" y="17">EmbodimentContract ★</text>
+      <text class="svg-t-mono" x="9" y="31">ec_* · obs/act/hz/joints 权威</text>
+    </g>
+    <g transform="translate(12,74)">
+      <rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Robot</text><text class="svg-t-mono" x="9" y="30">rbt_*</text>
+    </g>
+    <g transform="translate(140,74)">
+      <rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">RobotAsset</text><text class="svg-t-mono" x="9" y="30">urdf/mjcf/usd</text>
+    </g>
+    <g transform="translate(12,118)">
+      <rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Calibration</text><text class="svg-t-mono" x="9" y="30">关节零位</text>
+    </g>
+    <g transform="translate(140,118)">
+      <rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">RobotInstance</text><text class="svg-t-mono" x="9" y="30">实体机 · fleet</text>
+    </g>
+    <g transform="translate(12,162)">
+      <rect class="svg-box" width="244" height="26" rx="7"/><text class="svg-t-mono" x="9" y="17">Telemetry（时序，不入 PG）</text>
+    </g>
+  </g>
+
+  <!-- 数据域 -->
+  <g transform="translate(292,10)">
+    <rect class="svg-lane" width="268" height="196" rx="12" style="stroke:#55d6be"/>
+    <text class="svg-t-lane" x="12" y="20" style="fill:#55d6be">数据域 Data</text>
+    <g transform="translate(12,28)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">DataSource</text><text class="svg-t-mono" x="9" y="30">src_* · license</text></g>
+    <g transform="translate(140,28)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Dataset</text><text class="svg-t-mono" x="9" y="30">ds_*</text></g>
+    <g transform="translate(12,74)"><rect class="svg-box" width="244" height="38" rx="7" style="stroke:#55d6be;stroke-width:2"/><text class="svg-t" x="9" y="16">DatasetVersion ★</text><text class="svg-t-mono" x="9" y="30">dsv_* · 不可变 · content_hash</text></g>
+    <g transform="translate(12,120)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Scenario</text><text class="svg-t-mono" x="9" y="30">reach/push 场景</text></g>
+    <g transform="translate(140,120)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">FunnelReport</text><text class="svg-t-mono" x="9" y="30">拒绝原因分布</text></g>
+    <g transform="translate(12,166)"><rect class="svg-box" width="244" height="26" rx="7"/><text class="svg-t-mono" x="9" y="17">DataSlice（按条件物化的子集视图）</text></g>
+  </g>
+
+  <!-- 模型域 -->
+  <g transform="translate(574,10)">
+    <rect class="svg-lane" width="268" height="196" rx="12" style="stroke:#b28dff"/>
+    <text class="svg-t-lane" x="12" y="20" style="fill:#b28dff">模型域 Model</text>
+    <g transform="translate(12,28)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Model</text><text class="svg-t-mono" x="9" y="30">mdl_* · family</text></g>
+    <g transform="translate(140,28)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">ModelCard</text><text class="svg-t-mono" x="9" y="30">来源 · 许可</text></g>
+    <g transform="translate(12,74)"><rect class="svg-box" width="244" height="38" rx="7" style="stroke:#b28dff;stroke-width:2"/><text class="svg-t" x="9" y="16">ModelVersion ★</text><text class="svg-t-mono" x="9" y="30">mv_* · contract_id 必填 · 谱系</text></g>
+    <g transform="translate(12,120)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Checkpoint</text><text class="svg-t-mono" x="9" y="30">step · artifact</text></g>
+    <g transform="translate(140,120)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">MemProfile</text><text class="svg-t-mono" x="9" y="30">显存画像</text></g>
+    <g transform="translate(12,166)"><rect class="svg-box" width="244" height="26" rx="7"/><text class="svg-t-mono" x="9" y="17">ExportedPolicy（onnx / torchscript）</text></g>
+  </g>
+
+  <!-- 平台域 -->
+  <g transform="translate(856,10)">
+    <rect class="svg-lane" width="274" height="196" rx="12" style="stroke:#ff7ac0"/>
+    <text class="svg-t-lane" x="12" y="20" style="fill:#ff7ac0">平台域 Platform</text>
+    <g transform="translate(12,28)"><rect class="svg-box" width="120" height="38" rx="7"/><text class="svg-t" x="9" y="16">Principal</text><text class="svg-t-mono" x="9" y="30">user / agent</text></g>
+    <g transform="translate(142,28)"><rect class="svg-box" width="120" height="38" rx="7"/><text class="svg-t" x="9" y="16">AuditLog</text><text class="svg-t-mono" x="9" y="30">append-only</text></g>
+    <g transform="translate(12,74)"><rect class="svg-box" width="120" height="38" rx="7"/><text class="svg-t" x="9" y="16">AgentSession</text><text class="svg-t-mono" x="9" y="30">ag_*</text></g>
+    <g transform="translate(142,74)"><rect class="svg-box" width="120" height="38" rx="7"/><text class="svg-t" x="9" y="16">Budget</text><text class="svg-t-mono" x="9" y="30">GPU·h 账本</text></g>
+    <g transform="translate(12,120)"><rect class="svg-box" width="120" height="38" rx="7"/><text class="svg-t" x="9" y="16">Approval</text><text class="svg-t-mono" x="9" y="30">人工确认</text></g>
+    <g transform="translate(142,120)"><rect class="svg-box" width="120" height="38" rx="7"/><text class="svg-t" x="9" y="16">ShareLink</text><text class="svg-t-mono" x="9" y="30">只读 token</text></g>
+    <g transform="translate(12,166)"><rect class="svg-box" width="250" height="26" rx="7"/><text class="svg-t-mono" x="9" y="17">Notification · Secret · Quota</text></g>
+  </g>
+
+  <!-- 执行域（中央，最大） -->
+  <g transform="translate(10,222)">
+    <rect class="svg-lane" width="700" height="212" rx="12" style="stroke:#53d4ff"/>
+    <text class="svg-t-lane" x="12" y="20" style="fill:#53d4ff">执行域 Execution</text>
+    <g transform="translate(12,30)"><rect class="svg-box" width="160" height="42" rx="7"/><text class="svg-t" x="9" y="17">Experiment</text><text class="svg-t-mono" x="9" y="31">exp_* · 分组与假设</text></g>
+    <g transform="translate(184,30)"><rect class="svg-box" width="160" height="42" rx="7" style="stroke:#53d4ff;stroke-width:2"/><text class="svg-t" x="9" y="17">Job ★</text><text class="svg-t-mono" x="9" y="31">job_* · 意图 + spec</text></g>
+    <g transform="translate(356,30)"><rect class="svg-box" width="160" height="42" rx="7" style="stroke:#53d4ff;stroke-width:2"/><text class="svg-t" x="9" y="17">Run ★</text><text class="svg-t-mono" x="9" y="31">run_* · 一次容器尝试</text></g>
+    <g transform="translate(528,30)"><rect class="svg-box" width="160" height="42" rx="7"/><text class="svg-t" x="9" y="17">Artifact</text><text class="svg-t-mono" x="9" y="31">art_* · sha256 寻址</text></g>
+
+    <g transform="translate(12,82)"><rect class="svg-box" width="160" height="42" rx="7"/><text class="svg-t" x="9" y="17">Pipeline</text><text class="svg-t-mono" x="9" y="31">pl_* · DAG 模板</text></g>
+    <g transform="translate(184,82)"><rect class="svg-box" width="160" height="42" rx="7"/><text class="svg-t" x="9" y="17">PipelineRun</text><text class="svg-t-mono" x="9" y="31">plr_* · 一次执行</text></g>
+    <g transform="translate(356,82)"><rect class="svg-box" width="160" height="42" rx="7"/><text class="svg-t" x="9" y="17">Image</text><text class="svg-t-mono" x="9" y="31">digest + 能力矩阵</text></g>
+    <g transform="translate(528,82)"><rect class="svg-box" width="160" height="42" rx="7"/><text class="svg-t" x="9" y="17">ResourceLease</text><text class="svg-t-mono" x="9" y="31">GPU 占用凭据</text></g>
+
+    <g transform="translate(12,134)"><rect class="svg-box" width="676" height="30" rx="7" style="stroke:#ffc857"/>
+      <text class="svg-t" x="9" y="20">LineageEdge ★</text>
+      <text class="svg-t-mono" x="120" y="20">(src_type,src_id) —relation→ (dst_type,dst_id)　·　通用图边，支撑血缘视图与影响分析</text>
+    </g>
+    <g transform="translate(12,170)"><rect class="svg-box" width="676" height="30" rx="7"/>
+      <text class="svg-t-mono" x="9" y="20">MetricSeries（run × metric × step → value；存于 eb-tsdb，PG 只存索引与摘要）</text>
+    </g>
+  </g>
+
+  <!-- 评估与发布域 -->
+  <g transform="translate(724,222)">
+    <rect class="svg-lane" width="406" height="212" rx="12" style="stroke:#ffc857"/>
+    <text class="svg-t-lane" x="12" y="20" style="fill:#ffc857">评估域 / 发布域</text>
+    <g transform="translate(12,30)"><rect class="svg-box" width="184" height="42" rx="7"/><text class="svg-t" x="9" y="17">EvalSuite</text><text class="svg-t-mono" x="9" y="31">场景集 + seed 注册表</text></g>
+    <g transform="translate(208,30)"><rect class="svg-box" width="184" height="42" rx="7"/><text class="svg-t" x="9" y="17">EvalReport</text><text class="svg-t-mono" x="9" y="31">ev_* · 指标 + 视频索引</text></g>
+    <g transform="translate(12,82)"><rect class="svg-box" width="184" height="42" rx="7" style="stroke:#ffc857;stroke-width:2"/><text class="svg-t" x="9" y="17">Gate ★</text><text class="svg-t-mono" x="9" y="31">断言集合 + 判定结果</text></g>
+    <g transform="translate(208,82)"><rect class="svg-box" width="184" height="42" rx="7" style="stroke:#ff884d;stroke-width:2"/><text class="svg-t" x="9" y="17">PolicyBundle ★</text><text class="svg-t-mono" x="9" y="31">bdl_* · 签名上机包</text></g>
+    <g transform="translate(12,134)"><rect class="svg-box" width="184" height="42" rx="7"/><text class="svg-t" x="9" y="17">Release</text><text class="svg-t-mono" x="9" y="31">rel_* · 语义化版本</text></g>
+    <g transform="translate(208,134)"><rect class="svg-box" width="184" height="42" rx="7"/><text class="svg-t" x="9" y="17">Deployment</text><text class="svg-t-mono" x="9" y="31">bundle → 实体机</text></g>
+    <g transform="translate(12,186)"><rect class="svg-box" width="380" height="18" rx="5"/><text class="svg-t-mono" x="9" y="13">FailureCase（失败样本，可回流为数据）</text></g>
+  </g>
+
+  <!-- 跨域关系 -->
+  <g>
+    <path class="svg-edge-hot" d="M 134 68 L 134 216" marker-end="url(#a3)"/>
+    <text class="svg-t-mono" x="138" y="120">契约约束一切</text>
+    <path class="svg-edge" d="M 260 130 L 260 216" marker-end="url(#a3)"/>
+    <path class="svg-edge" d="M 420 130 L 420 216" marker-end="url(#a3)"/>
+    <path class="svg-edge" d="M 700 130 L 660 216" marker-end="url(#a3)"/>
+    <path class="svg-edge" d="M 700 250 L 720 250" marker-end="url(#a3)"/>
+    <path class="svg-edge-dash" d="M 900 434 L 900 470 L 300 470 L 300 434" marker-end="url(#a3)"/>
+    <text class="svg-t-mono" x="380" y="466">失败样本回流 → DatasetVersion（DAgger）</text>
+    <path class="svg-edge-hot" d="M 140 206 L 140 216"/>
+  </g>
+
+  <!-- 关键约束说明 -->
+  <g transform="translate(10,486)">
+    <rect width="1120" height="142" rx="12" fill="rgba(83,212,255,.05)" stroke="#284052"/>
+    <text class="svg-t" x="16" y="24">五条不可违反的引用约束（数据库外键 + 应用层双重保证）</text>
+    <text class="svg-t-sm" x="16" y="46">① 任何 <tspan class="svg-t-mono">Job</tspan> 必须引用恰好一个 <tspan class="svg-t-mono">EmbodimentContract</tspan>；训练/评估/导出/部署共用同一个契约 id，跨契约的引用一律拒绝。</text>
+    <text class="svg-t-sm" x="16" y="66">② <tspan class="svg-t-mono">ModelVersion.contract_id</tspan> 必填。没有契约的权重不允许进入注册表——这类「野权重」只能作为 <tspan class="svg-t-mono">Artifact</tspan> 存在。</text>
+    <text class="svg-t-sm" x="16" y="86">③ <tspan class="svg-t-mono">DatasetVersion</tspan> 一旦创建即不可变；任何修改都产生新版本。删除只是打 <tspan class="svg-t-mono">archived</tspan> 标记，血缘边永久保留。</text>
+    <text class="svg-t-sm" x="16" y="106">④ <tspan class="svg-t-mono">PolicyBundle</tspan> 必须由通过 Gate A/B/C 的 <tspan class="svg-t-mono">Run</tspan> 产出，且引用的所有 Artifact 校验和必须与 manifest 一致，否则拒绝签名。</text>
+    <text class="svg-t-sm" x="16" y="126">⑤ <tspan class="svg-t-mono">Deployment</tspan> 必须引用已签名的 Bundle、已标定的 <tspan class="svg-t-mono">RobotInstance</tspan>，以及一条有效的 <tspan class="svg-t-mono">Approval</tspan>。</text>
+  </g>
+  <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#53d4ff"/></marker></defs>
+</svg>
+<figcaption>图 2-1　实体关系全图。★ 标记的六个实体是设计的承重墙，改动它们会波及全平台。</figcaption>
+</figure>
+
+<h3 id="idrule">ID 与命名规范</h3>
+
+<div class="grid g-3-2">
+<div>
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>前缀</th><th>实体</th><th>示例</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td class="mono">ec_</td><td>EmbodimentContract</td><td class="mono xs">ec_bhl_humanoid_22dof_v1</td><td><b>人工命名</b>，语义化、稳定，可读性优先</td></tr>
+<tr><td class="mono">ds_ / dsv_</td><td>Dataset / Version</td><td class="mono xs">ds_ego4d_fho · dsv_01JB3K…</td><td>Dataset 语义命名，Version 用 ULID</td></tr>
+<tr><td class="mono">mdl_ / mv_</td><td>Model / Version</td><td class="mono xs">mdl_pi05_reach · mv_01JB…</td><td>同上</td></tr>
+<tr><td class="mono">exp_ / job_ / run_</td><td>实验 / 任务 / 执行</td><td class="mono xs">job_01JB3KQ8…</td><td>ULID（26 字符，时间有序，可直接按 id 排序）</td></tr>
+<tr><td class="mono">art_</td><td>Artifact 登记</td><td class="mono xs">art_01JB… → sha256:7f3a…</td><td>登记 id 与内容 id 分离，同内容可被多次登记</td></tr>
+<tr><td class="mono">bdl_ / rel_</td><td>Bundle / Release</td><td class="mono xs">rel_biped_v1.4.0</td><td>Release 用语义化版本</td></tr>
+<tr><td class="mono">rbt_</td><td>RobotInstance</td><td class="mono xs">rbt_biped_01</td><td>与实体机贴标一致</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="card">
+  <p class="card-title">为什么用 ULID 而不是自增或 UUIDv4</p>
+  <ul class="small mb0">
+    <li>时间有序 → 主键索引局部性好，且「按 id 排序」等于「按创建时间排序」，省一个索引</li>
+    <li>无需数据库往返即可在应用层生成 → 幂等提交时客户端可预生成</li>
+    <li>不泄露总量（自增会）</li>
+    <li>Base32 无易混字符，口头/截图传达不易出错</li>
+  </ul>
+  <p class="xs muted-2 mb0 mt1">契约与 Dataset 例外，采用人工语义命名——它们数量少、生命周期长、需要人反复引用。</p>
+</div>
+</div>
+
+<h2 id="contract">2.2 Embodiment Contract 规范</h2>
+
+<div class="note info">
+  <span class="note-t">这个机制解决什么</span>
+  Berkeley Humanoid Lite 现有四套并行的接口：humanoid <code>75/22</code>、biped <code>45/12</code>、
+  WBC <code>85/22</code>、fixed-hand <code>10(+图像)/10</code>，控制频率分别是 25/25/50/20 Hz。
+  这些数字目前分散在 <code>env_cfg.py</code> 的观测项列表、<code>rsl_rl_ppo_cfg.py</code>、导出的部署 YAML、
+  以及 C++ 侧的 <code>N_JOINTS</code> 常量里。<b>任何一处不一致，症状都是「机器人抽搐」或「策略输出全零」，
+  而排查要花几小时</b>。Contract 把这些数字收敛到单一真源，并在五个卡口自动比对。
+</div>
+
+<h3 id="contract-schema">契约结构</h3>
+
+<pre><code><span class="c"># contracts/ec_bhl_humanoid_22dof_v1.yaml —— 单一真源，人工维护，纳入 git</span>
+<span class="y">id</span>: ec_bhl_humanoid_22dof_v1
+<span class="y">robot_family</span>: berkeley_humanoid_lite
+<span class="y">morphology</span>: humanoid            <span class="c"># humanoid | biped | fixed_hand</span>
+<span class="y">interface_version</span>: <span class="n">1</span>
+<span class="y">status</span>: active                    <span class="c"># draft | active | deprecated</span>
+
+<span class="y">dof</span>: <span class="n">22</span>
+<span class="y">joint_groups</span>:
+  <span class="y">arm</span>:  { count: <span class="n">10</span>, order: [shoulder_pitch_l, shoulder_roll_l, ...] }
+  <span class="y">leg</span>:  { count: <span class="n">12</span>, order: [hip_roll_l, hip_yaw_l, hip_pitch_l, knee_l, ankle_pitch_l, ankle_roll_l, ...] }
+<span class="y">joint_order</span>: <span class="c"># ← 权威顺序：仿真张量索引、真机 CAN ID 映射、标定文件三者同源</span>
+  [ ...22 个关节名，与 URDF 一致... ]
+
+<span class="y">observation</span>:
+  <span class="y">dim</span>: <span class="n">75</span>
+  <span class="y">history_length</span>: <span class="n">1</span>
+  <span class="y">layout</span>:                       <span class="c"># 顺序即拼接顺序，不可重排</span>
+    - { term: velocity_commands, dim: <span class="n">3</span>,  source: command }
+    - { term: base_ang_vel,      dim: <span class="n">3</span>,  source: imu,   noise: gaussian }
+    - { term: projected_gravity, dim: <span class="n">3</span>,  source: imu }
+    - { term: joint_pos_rel,     dim: <span class="n">22</span>, source: encoder, ref: default_joint_pos }
+    - { term: joint_vel_rel,     dim: <span class="n">22</span>, source: encoder }
+    - { term: last_action,       dim: <span class="n">22</span>, source: policy }
+
+<span class="y">action</span>:
+  <span class="y">dim</span>: <span class="n">22</span>
+  <span class="y">type</span>: joint_position           <span class="c"># joint_position | joint_position_to_limits | torque</span>
+  <span class="y">scale</span>: <span class="n">0.25</span>
+  <span class="y">offset</span>: default_joint_pos
+  <span class="y">indices</span>: [<span class="n">0</span>..<span class="n">21</span>]                <span class="c"># 映射到 joint_order 的下标</span>
+
+<span class="y">control</span>:
+  <span class="y">policy_hz</span>: <span class="n">25</span>
+  <span class="y">control_hz</span>: <span class="n">200</span>
+  <span class="y">sim_dt</span>: <span class="n">0.005</span>
+  <span class="y">decimation</span>: <span class="n">8</span>                  <span class="c"># 断言：1/sim_dt/decimation == policy_hz</span>
+  <span class="y">max_policy_latency_ms</span>: <span class="n">12</span>      <span class="c"># 上机门禁用：25 Hz 周期 40 ms，留 30% 余量</span>
+
+<span class="y">gains</span>:  { kp: {...}, kd: {...} }
+<span class="y">limits</span>: { joint_pos: [...], joint_vel: [...], torque: [...] }
+
+<span class="y">sim_bindings</span>:
+  <span class="y">isaac_task</span>: Velocity-Berkeley-Humanoid-Lite-v0
+  <span class="y">experiment_name</span>: humanoid           <span class="c"># 对应 logs/rsl_rl/humanoid/</span>
+  <span class="y">mjcf</span>: robots/.../berkeley_humanoid_lite.xml
+  <span class="y">usd</span>:  robots/.../berkeley_humanoid_lite.usd
+
+<span class="y">real_bindings</span>:
+  <span class="y">udp</span>: { obs_port: <span class="n">10000</span>, action_port: <span class="n">10001</span>, viz_port: <span class="n">10002</span>, joystick_port: <span class="n">10011</span> }
+  <span class="y">motor_bus</span>: socketcan
+  <span class="y">imu</span>: { transport: serial, baud: <span class="n">1000000</span> }
+  <span class="y">firmware_n_joints</span>: <span class="n">22</span>
+
+<span class="y">assertions</span>:                     <span class="c"># 由契约校验器逐条执行，全部通过才算兼容</span>
+  - observation.dim == sum(observation.layout[*].dim) * observation.history_length
+  - action.dim == dof
+  - round(1 / (control.sim_dt * control.decimation)) == control.policy_hz
+  - len(joint_order) == dof
+  - onnx.inputs[0].shape[-1]  == observation.dim
+  - onnx.outputs[0].shape[-1] == action.dim
+  - deploy_yaml.num_observations == observation.dim
+  - deploy_yaml.num_actions     == action.dim
+  - deploy_yaml.action_scale     == action.scale
+  - firmware.reported_n_joints  == real_bindings.firmware_n_joints
+</code></pre>
+
+<h3 id="contract-instances">四个契约实例</h3>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>契约 id</th><th class="t-num">DOF</th><th class="t-num">obs</th><th class="t-num">act</th><th class="t-num">Hz</th><th>特殊之处</th><th>关联任务</th></tr></thead>
+<tbody>
+<tr>
+  <td class="mono xs">ec_bhl_humanoid_22dof_v1</td>
+  <td class="t-num">22</td><td class="t-num">75</td><td class="t-num">22</td><td class="t-num">25</td>
+  <td>标准运控，单 action term</td>
+  <td class="mono xs">Velocity-…-v0</td>
+</tr>
+<tr>
+  <td class="mono xs">ec_bhl_biped_12dof_v1</td>
+  <td class="t-num">12</td><td class="t-num">45</td><td class="t-num">12</td><td class="t-num">25</td>
+  <td>真机 C++ 默认目标（<code>N_JOINTS=12</code>）</td>
+  <td class="mono xs">Velocity-…-Biped-v0</td>
+</tr>
+<tr>
+  <td class="mono xs">ec_bhl_wbc_22dof_v1</td>
+  <td class="t-num">22</td><td class="t-num">85</td><td class="t-num">22</td><td class="t-num">50</td>
+  <td><span class="badge b-amber">复杂</span> 多 <code>+10</code> 维臂参考观测；<b>双 action term</b>（臂 <code>to_limits</code> 10 + 腿 <code>position</code> 12）；额外 <code>command_dim=13</code></td>
+  <td class="mono xs">Tracking-…-WholeBody-v0</td>
+</tr>
+<tr>
+  <td class="mono xs">ec_bhl_fixedhand_10dof_v1</td>
+  <td class="t-num">10</td><td class="t-num">10&nbsp;+&nbsp;img</td><td class="t-num">10</td><td class="t-num">20</td>
+  <td><span class="badge b-violet">多模态</span> 观测<b>不拼接</b>：<code>state[10]</code> 与 <code>camera_top[224,224,3]</code> 分离；动作为<b>绝对</b>关节位置</td>
+  <td class="mono xs">Isaac-…-Reach/Push-v0</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="note warn">
+  <span class="note-t">WBC 与 fixed-hand 是契约模型必须能表达的两个「不规则」案例</span>
+  如果 schema 只支持「单一动作向量 + 拼接观测」，这两个就会被迫塞进注释里，机制立刻失效。
+  因此 <code>action</code> 允许是 <b>term 列表</b>（每个 term 有独立 type/scale/indices），
+  <code>observation</code> 允许声明 <code>concat: false</code> 并携带非向量模态（图像、点云）的形状与 dtype。
+</div>
+
+<h3 id="gates5">五个校验卡口</h3>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:58px">卡口</th><th style="width:15%">触发时机</th><th style="width:34%">校验内容</th><th style="width:14%">失败行为</th><th>典型拦下的错误</th></tr></thead>
+<tbody>
+<tr><td><b class="c-cyan">G1</b></td><td>提交任务时<br><span class="xs muted">同步，&lt; 50 ms</span></td>
+  <td>Job 的 <code>task</code> ↔ <code>contract.sim_bindings.isaac_task</code>；数据集契约 ↔ Job 契约；基座模型契约 ↔ Job 契约；<code>experiment_name</code> 是否指向正确目录</td>
+  <td><span class="badge b-red">400 拒绝</span><br>返回字段级 diff</td>
+  <td>拿 biped 的数据训 humanoid；用 WBC 契约跑 Velocity 任务</td></tr>
+<tr><td><b class="c-teal">G2</b></td><td>数据集登记/发版</td>
+  <td>样本 <code>action</code> 维度、<code>state</code> 维度、fps 与契约一致；关节顺序（若数据带关节名）逐一比对</td>
+  <td><span class="badge b-amber">标记不兼容</span><br>仍可存在但不可用于该契约训练</td>
+  <td>MANO 48 维人手数据未重定向就当作 22 维动作</td></tr>
+<tr><td><b class="c-violet">G3</b></td><td>模型注册时</td>
+  <td>从 <code>.onnx</code> / <code>.pt</code> 直接读输入输出形状与契约比对；<code>params/env.yaml</code> 反查观测项列表</td>
+  <td><span class="badge b-red">拒绝注册</span></td>
+  <td>拿 45 维策略当 75 维注册；导出时 <code>--task</code> 写错</td></tr>
+<tr><td><b class="c-orange">G4</b></td><td>导出/签名时</td>
+  <td>部署 YAML 的 <code>num_observations</code> / <code>num_actions</code> / <code>action_scale</code> / <code>joints</code> / <code>control_dt</code> 全字段比对；所有 artifact 的 sha256 与 manifest 一致</td>
+  <td><span class="badge b-red">拒绝签名</span></td>
+  <td>手改过 YAML 后忘记同步；ONNX 与 YAML 来自不同 run</td></tr>
+<tr><td><b class="c-red">G5</b></td><td>上机部署前</td>
+  <td>机器人固件上报的关节数与总线扫描结果 ↔ 契约；标定文件存在且未过期；实测策略推理延迟 &lt; <code>max_policy_latency_ms</code></td>
+  <td><span class="badge b-red">阻断部署</span><br>需人工覆写并留档</td>
+  <td>把 22 DOF 策略推给 12 DOF 的 biped 实体机</td></tr>
+</tbody>
+</table>
+</div>
+
+<pre><code><span class="c"># backend/eb/contracts/validator.py（核心逻辑示意）</span>
+<span class="f">@dataclass</span>
+<span class="k">class</span> <span class="f">CheckResult</span>:
+    passed: bool
+    violations: list[Violation]          <span class="c"># 每条含 path / expected / actual / hint</span>
+
+<span class="k">def</span> <span class="f">validate_job</span>(spec: JobSpec, ctr: Contract, ctx: Context) -&gt; CheckResult:
+    v = []
+    <span class="c"># ① 任务名必须在契约声明的绑定里</span>
+    <span class="k">if</span> spec.task <span class="k">and</span> spec.task != ctr.sim_bindings.isaac_task:
+        v.append(Violation(<span class="s">"task"</span>, ctr.sim_bindings.isaac_task, spec.task,
+                           hint=<span class="s">"契约与任务不匹配，可能选错了 contract_id"</span>))
+    <span class="c"># ② 数据集兼容性（G2 时已算好，此处只查缓存标记）</span>
+    <span class="k">for</span> dsv <span class="k">in</span> ctx.dataset_versions:
+        <span class="k">if</span> ctr.id <span class="k">not in</span> dsv.compatible_contracts:
+            v.append(Violation(<span class="s">f"datasets[{dsv.id}]"</span>, ctr.id, dsv.compatible_contracts,
+                               hint=<span class="s">"该数据集动作维度与本契约不符，需先做重定向"</span>))
+    <span class="c"># ③ 基座模型</span>
+    <span class="k">if</span> ctx.base_model <span class="k">and</span> ctx.base_model.contract_id != ctr.id:
+        v.append(...)
+    <span class="c"># ④ 契约自洽（频率、维度求和）——启动时已校验，此处兜底</span>
+    v += ctr.self_assertions()
+    <span class="k">return</span> CheckResult(<span class="k">not</span> v, v)
+</code></pre>
+
+<div class="note good">
+  <span class="note-t">预期收益（可度量）</span>
+  设立这个机制的目标是把「维度类错误」的平均发现时间从<b>数十分钟（要等仿真起来）</b>压到<b>秒级</b>，
+  并让此类错误在提交阶段就<b>不可能</b>入队。平台应统计「G1–G5 拦截次数」作为核心价值指标之一，
+  在 <a href="09-ui-system.html#showcase">Showcase</a> 里展示。
+</div>
+
+<h2 id="jobspec">2.3 JobSpec：统一的任务描述</h2>
+
+<p>
+  <code>JobSpec</code> 是控制面与执行层之间的唯一契约。它<b>只描述意图</b>，不含任何某个训练栈的命令行细节——
+  翻译工作由 Adapter 完成（见 <a href="05-training.html#adapters">05 · 适配器</a>）。
+</p>
+
+<div class="tabs">
+  <div class="tabbar">
+    <button>schema</button>
+    <button>示例：Isaac RL 训练</button>
+    <button>示例：RLinf VLA SFT</button>
+    <button>示例：sim2sim 回归</button>
+  </div>
+
+  <div class="tabpanel">
+<pre><code><span class="y">api_version</span>: eb/v1
+<span class="y">kind</span>: Job
+<span class="y">metadata</span>:
+  <span class="y">name</span>: humanoid-vel-baseline-s0        <span class="c"># 人类可读，用于 UI 与 run_name</span>
+  <span class="y">experiment</span>: exp_01JB3K…                <span class="c"># 归属实验（可选，缺省自动创建）</span>
+  <span class="y">labels</span>: { owner: kk, purpose: baseline, agent_generated: <span class="s">"false"</span> }
+<span class="y">spec</span>:
+  <span class="y">kind</span>: train.rl                        <span class="c"># ← 决定用哪个 Adapter，见下表</span>
+  <span class="y">contract_id</span>: ec_bhl_humanoid_22dof_v1  <span class="c"># 必填</span>
+  <span class="y">code_ref</span>:                             <span class="c"># 复现五元组之一</span>
+    <span class="y">repo</span>: bhl
+    <span class="y">commit</span>: <span class="s">"a1b2c3d"</span>                    <span class="c"># 或 branch，提交时解析为 commit 并冻结</span>
+  <span class="y">image</span>: eb/isaac-lab:2.3.2@sha256:…    <span class="c"># 必须带 digest</span>
+  <span class="y">params</span>:                               <span class="c"># 语义化参数，由 Adapter 翻译</span>
+    <span class="y">task</span>: Velocity-Berkeley-Humanoid-Lite-v0
+    <span class="y">num_envs</span>: <span class="n">4096</span>
+    <span class="y">max_iterations</span>: <span class="n">6000</span>
+    <span class="y">seed</span>: <span class="n">0</span>
+  <span class="y">overrides</span>:                            <span class="c"># 逃生舱：直接透传给底层（Hydra / argparse）</span>
+    - <span class="s">"agent.algorithm.entropy_coef=0.006"</span>
+  <span class="y">inputs</span>:                               <span class="c"># 血缘的上游</span>
+    <span class="y">datasets</span>: []
+    <span class="y">base_model</span>: null
+    <span class="y">resume_from</span>: null                    <span class="c"># run_id 或 checkpoint artifact</span>
+  <span class="y">resources</span>:
+    <span class="y">gpus</span>: <span class="n">1</span>
+    <span class="y">gpu_mode</span>: exclusive                  <span class="c"># exclusive | shared</span>
+    <span class="y">cpus</span>: <span class="n">12</span>
+    <span class="y">memory_gb</span>: <span class="n">32</span>
+    <span class="y">shm_gb</span>: <span class="n">8</span>
+    <span class="y">devices</span>: [<span class="s">"/dev/dri"</span>]                <span class="c"># Isaac 渲染需要</span>
+  <span class="y">policy</span>:
+    <span class="y">priority</span>: <span class="n">50</span>                         <span class="c"># 0-100，越大越优先</span>
+    <span class="y">preemptible</span>: <span class="k">false</span>
+    <span class="y">timeout_h</span>: <span class="n">36</span>
+    <span class="y">max_retries</span>: <span class="n">1</span>
+    <span class="y">retry_on</span>: [infra_failed, oom]
+  <span class="y">outputs</span>:                              <span class="c"># 采集器据此认领产物</span>
+    <span class="y">metrics</span>: { source: tfevents, path: <span class="s">"logs/**/events.out.tfevents.*"</span> }
+    <span class="y">checkpoints</span>: { path: <span class="s">"logs/**/model_*.pt"</span>, keep: top_k, k: <span class="n">5</span>, metric: <span class="s">"Train/mean_reward"</span> }
+    <span class="y">videos</span>: { path: <span class="s">"logs/**/videos/**/*.mp4"</span>, keep: <span class="n">10</span> }
+    <span class="y">config_snapshot</span>: { path: <span class="s">"logs/**/params/*.yaml"</span> }
+  <span class="y">gates</span>: [gate_contract_basic]           <span class="c"># 完成后自动评估的门禁</span>
+</code></pre>
+  </div>
+
+  <div class="tabpanel">
+<pre><code><span class="c"># Adapter 输出的等价命令（Run 详情页可一键复制）</span>
+docker run --rm -d \
+  --name eb-run-01JB3KQ8W2 --label eb.run_id=run_01JB3KQ8W2 \
+  --gpus <span class="s">'"device=0"'</span> --device /dev/dri --shm-size 8g --cpus 12 -m 32g \
+  -v /var/lib/eb/repos/bhl/a1b2c3d:/workspace/isaaclab_extension_template:<span class="s">ro</span> \
+  -v /var/lib/eb/runs/run_01JB3KQ8W2/workspace:/workspace/isaaclab_extension_template/logs:<span class="s">rw</span> \
+  -v /var/lib/eb/cache/torch:/root/.cache/torch \
+  -e ACCEPT_EULA=Y -e OMNI_KIT_ACCEPT_EULA=YES \
+  -w /workspace/isaaclab_extension_template \
+  eb/isaac-lab:2.3.2@sha256:… \
+  python scripts/rsl_rl/train.py \
+    --task Velocity-Berkeley-Humanoid-Lite-v0 \
+    --headless --device cuda:0 \
+    --num_envs 4096 --max_iterations 6000 --seed 0 \
+    --run_name humanoid-vel-baseline-s0 \
+    --logger tensorboard \
+    agent.algorithm.entropy_coef=0.006
+</code></pre>
+<div class="note warn">
+  <span class="note-t">这里有个必须处理的细节</span>
+  Isaac 侧脚本把日志根目录硬编码为相对路径 <code>logs/rsl_rl/&lt;experiment_name&gt;/</code>。
+  由于仓库是<b>只读</b>挂载，直接跑会失败。解决方式是把 <code>logs</code> 这一个子路径单独用 rw 卷覆盖上去
+  （如上第二个 <code>-v</code>），其余仍只读。<code>configs/</code> 同理——<code>play.py</code> 会写它，所以也要覆盖。
+  这类「需要打洞的路径」由每个 Adapter 显式声明，形成 <code>writable_paths</code> 白名单。
+</div>
+  </div>
+
+  <div class="tabpanel">
+<pre><code><span class="y">spec</span>:
+  <span class="y">kind</span>: train.sft
+  <span class="y">contract_id</span>: ec_bhl_fixedhand_10dof_v1
+  <span class="y">code_ref</span>: { repo: rlinf, commit: <span class="s">"9f8e7d6"</span> }
+  <span class="y">image</span>: eb/rlinf:0.4.0-emb@sha256:…
+  <span class="y">params</span>:
+    <span class="y">config_name</span>: maniskill_rlt_stage1_sft_openpi_pi05
+    <span class="y">config_path</span>: examples/sft/config/
+    <span class="y">max_epochs</span>: <span class="n">40</span>
+    <span class="y">save_interval</span>: <span class="n">10</span>
+  <span class="y">inputs</span>:
+    <span class="y">datasets</span>: [ { id: dsv_01JB…, mount: /mnt/data/reach_push_v3, role: train } ]
+    <span class="y">base_model</span>: mv_01JAZ…                <span class="c"># π₀.₅ base，平台解析为本地路径</span>
+  <span class="y">resources</span>: { gpus: <span class="n">2</span>, gpu_mode: exclusive, cpus: <span class="n">24</span>, memory_gb: <span class="n">64</span>, shm_gb: <span class="n">32</span> }
+  <span class="y">runtime</span>:                              <span class="c"># RLinf 专属：Ray 与渲染环境</span>
+    <span class="y">ray</span>: { mode: local, port: <span class="n">6390</span> }     <span class="c"># 显式避让平台 Redis 与默认 6379</span>
+    <span class="y">env</span>: { MUJOCO_GL: egl, PYOPENGL_PLATFORM: egl }
+  <span class="y">outputs</span>:
+    <span class="y">metrics</span>: { source: tfevents, path: <span class="s">"**/tensorboard/**"</span> }
+    <span class="y">checkpoints</span>: { path: <span class="s">"**/checkpoints/global_step_*/"</span>, keep: last_and_best, k: <span class="n">3</span> }
+</code></pre>
+<pre><code><span class="c"># 等价命令（节选，Adapter 生成的 Hydra overrides）</span>
+python examples/sft/train_vla_sft.py \
+  --config-path /workspace/rlinf/examples/sft/config/ \
+  --config-name maniskill_rlt_stage1_sft_openpi_pi05 \
+  runner.logger.log_path=/mnt/run/outputs \
+  runner.logger.logger_backends=[tensorboard] \
+  runner.max_epochs=40 runner.save_interval=10 \
+  actor.model.model_path=/mnt/models/pi05_base \
+  data.train_data_paths.0.dataset_path=/mnt/data/reach_push_v3 \
+  cluster.num_nodes=1 cluster.component_placement.actor=0-1
+</code></pre>
+  </div>
+
+  <div class="tabpanel">
+<pre><code><span class="y">spec</span>:
+  <span class="y">kind</span>: eval.sim2sim
+  <span class="y">contract_id</span>: ec_bhl_biped_12dof_v1
+  <span class="y">image</span>: eb/mujoco:latest@sha256:…
+  <span class="y">params</span>:
+    <span class="y">policy_artifact</span>: art_01JB…              <span class="c"># 指向 policy.onnx</span>
+    <span class="y">deploy_config_artifact</span>: art_01JB…       <span class="c"># 指向 policy_biped.yaml</span>
+    <span class="y">seeds</span>: [<span class="n">0</span>,<span class="n">1</span>,<span class="n">2</span>,<span class="n">3</span>,<span class="n">4</span>,<span class="n">5</span>,<span class="n">6</span>,<span class="n">7</span>]
+    <span class="y">steps_per_seed</span>: <span class="n">2000</span>
+  <span class="y">resources</span>: { gpus: <span class="n">0</span>, cpus: <span class="n">16</span>, memory_gb: <span class="n">8</span> }   <span class="c"># ← 纯 CPU，可与 GPU 训练并发</span>
+  <span class="y">policy</span>: { priority: <span class="n">70</span>, timeout_h: <span class="n">1</span> }             <span class="c"># 门禁任务优先级高、耗时短</span>
+  <span class="y">fanout</span>: { by: seeds, max_parallel: <span class="n">8</span> }           <span class="c"># 自动展开为 8 个并行子 Run</span>
+  <span class="y">gates</span>: [gate_sim2sim_regression]
+</code></pre>
+<p class="small">
+  <code>fanout</code> 是一个重要的便利机制：seed 扫描、消融网格、多 checkpoint 评估都通过它展开，
+  产生一组共享 <code>parent_job_id</code> 的子 Run，UI 里天然聚合为一张 seed 聚合曲线。
+</p>
+  </div>
+</div>
+
+<h3 id="jobkinds">JobKind 全集</h3>
+
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th>kind</th><th>Adapter</th><th>镜像</th><th class="t-nowrap">GPU</th><th>典型时长</th><th>主要产物</th></tr></thead>
+<tbody>
+<tr><td class="mono">data.scan</td><td>native(Rust)</td><td>—</td><td>0</td><td>分钟</td><td>ScanReport · 校验和 · 缩略图</td></tr>
+<tr><td class="mono">data.compile</td><td>tools</td><td class="mono xs">eb/tools</td><td>0</td><td>分钟</td><td>Scenario 目录 · FunnelReport</td></tr>
+<tr><td class="mono">data.collect</td><td>isaaclab</td><td class="mono xs">eb/isaac-lab</td><td>1</td><td>小时</td><td>raw episodes → LeRobot 数据集</td></tr>
+<tr><td class="mono">data.convert</td><td>lerobot</td><td class="mono xs">eb/tools</td><td>0</td><td>分钟</td><td>格式转换 · norm stats</td></tr>
+<tr><td class="mono">train.rl</td><td>isaaclab_rslrl</td><td class="mono xs">eb/isaac-lab</td><td>1</td><td class="c-amber">6–20 h</td><td>model_*.pt · tfevents · videos</td></tr>
+<tr><td class="mono">train.sft</td><td>rlinf</td><td class="mono xs">eb/rlinf</td><td>2–4</td><td class="c-amber">4–24 h</td><td>global_step_* checkpoint</td></tr>
+<tr><td class="mono">train.rlft</td><td>rlinf</td><td class="mono xs">eb/rlinf</td><td>4</td><td class="c-red">12–48 h</td><td>actor checkpoint · rollout 统计</td></tr>
+<tr><td class="mono">eval.sim</td><td>isaaclab / rlinf</td><td class="mono xs">按栈</td><td>1</td><td>分钟–小时</td><td>EvalReport · 失败视频</td></tr>
+<tr><td class="mono">eval.sim2sim</td><td>mujoco</td><td class="mono xs">eb/mujoco</td><td class="c-green">0</td><td>分钟</td><td>轨迹 · 一致性指标</td></tr>
+<tr><td class="mono">export.policy</td><td>isaaclab_rslrl</td><td class="mono xs">eb/isaac-lab</td><td>1</td><td>&lt; 5 min</td><td>policy.onnx · policy.pt · deploy yaml</td></tr>
+<tr><td class="mono">bundle.build</td><td>native</td><td class="mono xs">eb/tools</td><td>0</td><td>秒</td><td>PolicyBundle + 签名 manifest</td></tr>
+<tr><td class="mono">serve.policy</td><td>rlinf</td><td class="mono xs">eb/rlinf</td><td class="c-cyan">共享</td><td>常驻</td><td>HTTP 推理端点（闭环评估用）</td></tr>
+<tr><td class="mono">report.render</td><td>tools</td><td class="mono xs">eb/tools</td><td>0</td><td>秒</td><td>HTML/PDF 报告快照</td></tr>
+<tr><td class="mono">data.canonicalize</td><td>tools</td><td class="mono xs">eb/tools</td><td>0</td><td>分钟</td><td>CanonicalEvent 表（统一事件层）</td></tr>
+<tr><td class="mono">data.slice</td><td>native(Rust)</td><td>—</td><td>0</td><td>秒</td><td>DataSlice 定义 + 命中清单（不复制数据）</td></tr>
+<tr><td class="mono">data.retarget</td><td>tools</td><td class="mono xs">eb/tools</td><td class="c-green">0</td><td>分钟–小时</td><td class="c-amber">人类 ego → 机器人关节轨迹（M3 规划，见 <a href="03-data.html#retarget">03.6</a>）</td></tr>
+<tr><td class="mono">asset.validate</td><td>tools</td><td class="mono xs">eb/mujoco</td><td>0</td><td>秒</td><td>URDF/MJCF/USD 一致性报告</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note info">
+  <span class="note-t">JobKind 与 Pipeline 节点 kind 是两套命名空间</span>
+  上表 18 项是<b>可下发的容器化任务</b>。而
+  <a href="05-training.html#dag">Pipeline</a> 里还会出现
+  <code>select</code>（按规则挑选上游产物）与 <code>gate</code>（门禁判定）两类节点——
+  它们<b>不起容器</b>，由编排器在控制面内直接求值，因此不占 GPU、不进队列、不产生 Run。
+  实现上二者共用 DAG 数据结构但走不同的执行路径，
+  <b>不要把它们混进 JobKind 枚举</b>，否则调度器会试图为它们分配资源。
+</div>
+
+<h2 id="fsm">2.4 状态机</h2>
+
+<p>
+  <b>Job 是意图，Run 是尝试。</b>一个 Job 可以产生多个 Run（重试、抢占后重跑），
+  但 Job 只有一个最终结论。这个区分让「重试 3 次终于成功」既能如实记录，
+  又不会污染实验成功率统计。
+</p>
+
+<figure class="diagram diagram-wide">
+<svg viewBox="0 0 1140 330" role="img" aria-label="Job 与 Run 的状态机转移图">
+  <text class="svg-t-lane" x="12" y="18">Job 状态机</text>
+  <g>
+    <g transform="translate(12,32)"><rect class="svg-box" width="96" height="38" rx="19"/><text class="svg-t" x="30" y="24">draft</text></g>
+    <g transform="translate(136,32)"><rect class="svg-box" width="96" height="38" rx="19" style="stroke:#b28dff"/><text class="svg-t" x="24" y="24">blocked</text></g>
+    <g transform="translate(260,32)"><rect class="svg-box" width="96" height="38" rx="19" style="stroke:#b28dff"/><text class="svg-t" x="26" y="24">queued</text></g>
+    <g transform="translate(384,32)"><rect class="svg-box" width="106" height="38" rx="19" style="stroke:#53d4ff"/><text class="svg-t" x="22" y="24">admitted</text></g>
+    <g transform="translate(518,32)"><rect class="svg-box" width="106" height="38" rx="19" style="stroke:#53d4ff"/><text class="svg-t" x="18" y="24">preparing</text></g>
+    <g transform="translate(652,32)"><rect class="svg-box" width="106" height="38" rx="19" style="stroke:#53d4ff;stroke-width:2"/><text class="svg-t" x="28" y="24">running</text></g>
+
+    <g transform="translate(816,10)"><rect class="svg-box" width="130" height="34" rx="17" style="stroke:#53e5a3"/><text class="svg-t" x="24" y="22">succeeded</text></g>
+    <g transform="translate(816,52)"><rect class="svg-box" width="130" height="34" rx="17" style="stroke:#ff5d68"/><text class="svg-t" x="42" y="22">failed</text></g>
+    <g transform="translate(816,94)"><rect class="svg-box" width="130" height="34" rx="17" style="stroke:#ffc857"/><text class="svg-t" x="26" y="22">timeout</text></g>
+    <g transform="translate(816,136)"><rect class="svg-box" width="130" height="34" rx="17" style="stroke:#9fb4c2"/><text class="svg-t" x="22" y="22">cancelled</text></g>
+    <g transform="translate(816,178)"><rect class="svg-box" width="130" height="34" rx="17" style="stroke:#ff884d"/><text class="svg-t" x="8" y="22">infra_failed</text></g>
+    <g transform="translate(982,94)"><rect class="svg-box" width="146" height="34" rx="17" style="stroke:#b28dff"/><text class="svg-t" x="16" y="22">preempted</text></g>
+
+    <path class="svg-edge" d="M 108 51 L 134 51" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 232 51 L 258 51" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 356 51 L 382 51" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 490 51 L 516 51" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 624 51 L 650 51" marker-end="url(#a4)"/>
+    <path class="svg-edge-hot" d="M 758 42 L 790 27 L 814 27" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 758 60 L 790 69 L 814 69" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 758 66 L 790 111 L 814 111" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 758 68 L 790 195 L 814 195" marker-end="url(#a4)"/>
+    <path class="svg-edge-dash" d="M 946 195 L 1000 195 L 1000 128" marker-end="url(#a4)"/>
+    <path class="svg-edge-dash" d="M 1055 94 L 1055 20 L 320 20 L 312 30" marker-end="url(#a4)"/>
+    <text class="svg-t-mono" x="600" y="16">重试 / 抢占后重新入队（attempt+1）</text>
+    <path class="svg-edge-dash" d="M 312 70 L 312 96 L 862 96" marker-end="url(#a4)" style="opacity:.5"/>
+    <text class="svg-t-mono" x="330" y="110">用户取消可在任意非终态发生</text>
+  </g>
+
+  <line x1="12" y1="238" x2="1128" y2="238" stroke="#1d3243"/>
+  <text class="svg-t-lane" x="12" y="256">Run 状态机（每次 attempt 一条）</text>
+  <g transform="translate(0,266)">
+    <g transform="translate(12,0)"><rect class="svg-box-2" width="112" height="34" rx="8"/><text class="svg-t-sm" x="14" y="22">pulling_image</text></g>
+    <g transform="translate(148,0)"><rect class="svg-box-2" width="112" height="34" rx="8"/><text class="svg-t-sm" x="18" y="22">preparing_fs</text></g>
+    <g transform="translate(284,0)"><rect class="svg-box-2" width="112" height="34" rx="8"/><text class="svg-t-sm" x="30" y="22">created</text></g>
+    <g transform="translate(420,0)"><rect class="svg-box-2" width="112" height="34" rx="8" style="stroke:#53d4ff"/><text class="svg-t-sm" x="32" y="22">running</text></g>
+    <g transform="translate(556,0)"><rect class="svg-box-2" width="132" height="34" rx="8"/><text class="svg-t-sm" x="16" y="22">collecting_out</text></g>
+    <g transform="translate(712,0)"><rect class="svg-box-2" width="112" height="34" rx="8"/><text class="svg-t-sm" x="30" y="22">gating</text></g>
+    <g transform="translate(848,0)"><rect class="svg-box-2" width="112" height="34" rx="8" style="stroke:#53e5a3"/><text class="svg-t-sm" x="32" y="22">finished</text></g>
+    <g transform="translate(984,0)"><rect class="svg-box-2" width="144" height="34" rx="8" style="stroke:#ff5d68"/><text class="svg-t-sm" x="10" y="22">aborted(原因码)</text></g>
+    <path class="svg-edge" d="M 124 17 L 146 17" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 260 17 L 282 17" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 396 17 L 418 17" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 532 17 L 554 17" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 688 17 L 710 17" marker-end="url(#a4)"/>
+    <path class="svg-edge" d="M 824 17 L 846 17" marker-end="url(#a4)"/>
+  </g>
+  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3d5f78"/></marker></defs>
+</svg>
+<figcaption>图 2-2　Job / Run 双层状态机。<code>infra_failed</code> 与 <code>failed</code> 分离是关键——前者不计入实验统计，且默认自动重试。</figcaption>
+</figure>
+
+<div class="grid g2">
+<div class="note info">
+  <span class="note-t">失败原因码（写入 Run.abort_reason）</span>
+  <code>oom</code> · <code>cuda_error</code> · <code>gpu_lost</code> · <code>image_pull_failed</code> ·
+  <code>submodule_missing</code> · <code>contract_mismatch</code> · <code>dataset_unavailable</code> ·
+  <code>disk_full</code> · <code>timeout</code> · <code>user_cancelled</code> · <code>preempted</code> ·
+  <code>exit_nonzero</code> · <code>ray_bootstrap_failed</code> · <code>vulkan_unavailable</code>。
+  <b>每个原因码在失败知识库里对应一条诊断卡片与建议动作</b>，供 Agent 直接消费。
+</div>
+<div class="note warn">
+  <span class="note-t">幂等与并发控制</span>
+  提交携带 <code>Idempotency-Key</code>（默认取 spec 规范化后的 hash）：相同 key 在 24 h 内重复提交返回原 Job。
+  状态变更使用乐观锁（<code>version</code> 列 + <code>UPDATE … WHERE version = ?</code>），
+  避免调度循环与事件消费者同时改写造成状态回退。
+</div>
+</div>
+
+<h2 id="lineage">2.5 血缘模型</h2>
+
+<p>
+  血缘用<b>单张通用边表</b>而不是每对实体一张关联表。理由：查询模式是「从任意节点出发做 N 跳遍历」，
+  通用边表配合递归 CTE 就能一次查完，而多表 join 会随实体类型增长而爆炸。
+</p>
+
+<pre><code><span class="c">-- 通用血缘边（PostgreSQL）</span>
+<span class="k">CREATE TABLE</span> lineage_edges (
+  id            bigserial <span class="k">PRIMARY KEY</span>,
+  src_type      text <span class="k">NOT NULL</span>,          <span class="c">-- dataset_version | model_version | run | artifact | bundle …</span>
+  src_id        text <span class="k">NOT NULL</span>,
+  dst_type      text <span class="k">NOT NULL</span>,
+  dst_id        text <span class="k">NOT NULL</span>,
+  relation      text <span class="k">NOT NULL</span>,          <span class="c">-- consumed_by | produced | derived_from | evaluated_by | signed_into | deployed_to</span>
+  run_id        text,                      <span class="c">-- 产生这条边的执行（可空：人工登记）</span>
+  created_at    timestamptz <span class="k">NOT NULL DEFAULT</span> now(),
+  <span class="k">UNIQUE</span> (src_type, src_id, dst_type, dst_id, relation)
+);
+<span class="k">CREATE INDEX</span> ON lineage_edges (src_type, src_id);
+<span class="k">CREATE INDEX</span> ON lineage_edges (dst_type, dst_id);
+
+<span class="c">-- 「这个上机策略的全部来源」：反向 N 跳遍历</span>
+<span class="k">WITH RECURSIVE</span> up(t, i, depth, rel) <span class="k">AS</span> (
+  <span class="k">SELECT</span> src_type, src_id, <span class="n">1</span>, relation <span class="k">FROM</span> lineage_edges
+    <span class="k">WHERE</span> dst_type = <span class="s">'bundle'</span> <span class="k">AND</span> dst_id = <span class="s">'bdl_01JB…'</span>
+  <span class="k">UNION ALL</span>
+  <span class="k">SELECT</span> e.src_type, e.src_id, up.depth + <span class="n">1</span>, e.relation
+    <span class="k">FROM</span> lineage_edges e <span class="k">JOIN</span> up <span class="k">ON</span> e.dst_type = up.t <span class="k">AND</span> e.dst_id = up.i
+    <span class="k">WHERE</span> up.depth &lt; <span class="n">12</span>
+)
+<span class="k">SELECT DISTINCT</span> * <span class="k">FROM</span> up <span class="k">ORDER BY</span> depth;
+</code></pre>
+
+<div class="note good">
+  <span class="note-t">血缘的三个高价值用途</span>
+  <b>① 影响分析</b>：某数据集发现标注错误 → 一次查询列出所有受影响的模型、评估与已发布 Bundle，逐个打标。
+  <b>② 叙事展示</b>：<a href="09-ui-system.html#showcase">Showcase</a> 的核心视图就是这张图的可视化，
+  同事顺着看一遍就知道产出是怎么来的。
+  <b>③ 复现</b>：给定任意产物，反向遍历即可重建完整的重跑脚本。
+</div>
+
+<h2 id="api">2.6 REST 资源树与约定</h2>
+
+<div class="grid g-3-2">
+<div>
+<pre class="tree"><code><span class="d">/api/v1</span>
+├── auth/           login · refresh · me
+├── <span class="d">contracts/</span>              <span class="cm"># 本体契约（读多写少）</span>
+│   └── {id}/ · {id}/validate
+├── <span class="d">robots/</span>
+│   ├── {id}/calibrations
+│   └── {id}/telemetry            <span class="cm"># 时序代理</span>
+├── <span class="d">sources/</span>  {id}/scan
+├── <span class="d">datasets/</span>
+│   └── {id}/versions/{v}/
+│       ├── stats · funnel · files
+│       ├── preview?path=&amp;t=      <span class="cm"># 视频/图像/位姿</span>
+│       └── slices
+├── <span class="d">models/</span>
+│   └── {id}/versions/{v}/
+│       ├── card · lineage
+│       └── export                <span class="cm"># 触发 export.policy</span>
+├── <span class="d">experiments/</span> {id}/compare
+├── <span class="d">jobs/</span>                    <span class="cm"># POST = 提交</span>
+│   └── {id}/
+│       ├── cancel · retry · clone
+│       ├── runs · logs · metrics
+│       ├── artifacts
+│       └── equivalent-command    <span class="cm"># 可复制的 docker run</span>
+├── <span class="d">runs/</span> {id}/{events,resources}
+├── <span class="d">pipelines/</span> {id}/runs/{rid}
+├── <span class="d">evals/</span>
+│   ├── suites/{id}
+│   └── reports/{id}/{compare,failures}
+├── <span class="d">gates/</span> {id}/evaluations
+├── <span class="d">bundles/</span> {id}/{sign,download,verify}
+├── <span class="d">releases/</span> {id}/{promote,rollback}
+├── <span class="d">deployments/</span> {id}/{ack,telemetry}
+├── <span class="d">agent/</span>
+│   ├── sessions/{id}/messages
+│   ├── plans/{id}/{approve,reject}
+│   ├── actions · budget
+│   └── knowledge/failures
+├── <span class="d">resources/</span> gpus · queue · quota · disk
+├── <span class="d">shares/</span>                  <span class="cm"># 只读分享链接</span>
+├── search?q=                     <span class="cm"># 跨实体全局搜索</span>
+└── system/ health · version · images
+</code></pre>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">通用约定</p>
+  <table class="compact">
+  <tbody>
+  <tr><td>分页</td><td class="mono xs">?cursor=&amp;limit=50</td></tr>
+  <tr><td>过滤</td><td class="mono xs">?filter[status]=running&amp;filter[kind]=train.rl</td></tr>
+  <tr><td>排序</td><td class="mono xs">?sort=-created_at</td></tr>
+  <tr><td>稀疏字段</td><td class="mono xs">?fields=id,status,metrics.reward</td></tr>
+  <tr><td>幂等</td><td class="mono xs">Idempotency-Key: &lt;hash&gt;</td></tr>
+  <tr><td>并发</td><td class="mono xs">If-Match: &lt;etag&gt;</td></tr>
+  <tr><td>错误</td><td class="mono xs">RFC 9457 application/problem+json</td></tr>
+  <tr><td>版本</td><td class="mono xs">路径版本 /v1；破坏性变更才升 v2</td></tr>
+  </tbody>
+  </table>
+</div>
+<div class="card mt2">
+  <p class="card-title">WebSocket 通道</p>
+  <table class="compact">
+  <tbody>
+  <tr><td class="mono xs">/ws/runs/{id}/logs</td><td class="xs">日志尾随，支持 <code>?from=offset</code></td></tr>
+  <tr><td class="mono xs">/ws/runs/{id}/metrics</td><td class="xs">指标增量，服务端已降采样</td></tr>
+  <tr><td class="mono xs">/ws/queue</td><td class="xs">队列与 GPU 占用变化</td></tr>
+  <tr><td class="mono xs">/ws/agent/{sid}</td><td class="xs">Agent 流式输出与工具调用</td></tr>
+  <tr><td class="mono xs">/ws/notifications</td><td class="xs">全局通知</td></tr>
+  </tbody>
+  </table>
+  <p class="xs muted-2 mb0 mt1">
+    统一消息包封：<code>{ v, type, ts, seq, payload }</code>。<code>seq</code> 单调递增，
+    断线重连时客户端上报 last seq，服务端补发缺口（缺口过大则要求全量刷新）。
+  </p>
+</div>
+<div class="note danger mt2">
+  <span class="note-t">危险操作需二次确认</span>
+  <code>DELETE /datasets/*</code>、<code>POST /deployments</code>、<code>POST /releases/*/promote</code>、
+  <code>DELETE /bundles/*</code> 必须携带 <code>X-Confirm: &lt;资源名&gt;</code> 头，
+  值与目标资源名完全一致才执行。Agent 调用这些端点时一律先走 <code>Approval</code> 流程。
+</div>
+</div>
+</div>
+
+<h2 id="events">2.7 事件总线</h2>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:20%">Stream</th><th style="width:12%">生产者</th><th style="width:14%">消费者</th><th>Payload 要点</th><th class="t-nowrap">量级</th></tr></thead>
+<tbody>
+<tr><td class="mono">eb.job.lifecycle</td><td>控制面 / ebd</td><td>控制面 · Agent · 通知</td><td class="xs"><code>{job_id, run_id, attempt, from, to, reason_code, at}</code></td><td class="xs">低</td></tr>
+<tr><td class="mono">eb.run.metrics</td><td>eb-collector</td><td>控制面（门禁触发）· WS 广播</td><td class="xs"><code>{run_id, batch:[{metric, step, value, wall}], flushed_to_tsdb}</code>，1 s 聚合一批</td><td class="xs c-amber">高</td></tr>
+<tr><td class="mono">eb.run.logs</td><td>eb-collector</td><td>WS 广播（不入 PG）</td><td class="xs"><code>{run_id, offset, lines:[…]}</code>，仅保留最近 N MB 供尾随</td><td class="xs c-amber">高</td></tr>
+<tr><td class="mono">eb.artifact.registered</td><td>ebd</td><td>控制面 · 血缘 · 门禁</td><td class="xs"><code>{artifact_id, sha256, kind, size, run_id, path}</code></td><td class="xs">中</td></tr>
+<tr><td class="mono">eb.gate.evaluated</td><td>控制面</td><td>Agent · 通知 · 发布流程</td><td class="xs"><code>{gate_id, subject, passed, assertions:[{name, expected, actual}]}</code></td><td class="xs">低</td></tr>
+<tr><td class="mono">eb.resource.changed</td><td>ebd</td><td>调度器 · WS</td><td class="xs"><code>{gpus:[{idx, state, run_id, mem_used, util, temp}], disk_pct}</code>，1 Hz</td><td class="xs">中</td></tr>
+<tr><td class="mono">eb.agent.action</td><td>Agent</td><td>审计 · WS · 预算账本</td><td class="xs"><code>{session_id, tool, args_digest, decision, cost_estimate, approval_id?}</code></td><td class="xs">低</td></tr>
+<tr><td class="mono">eb.alert</td><td>任意</td><td>通知 · Webhook</td><td class="xs"><code>{severity, code, subject, message, dedup_key}</code></td><td class="xs">低</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note info">
+  <span class="note-t">保留策略</span>
+  <code>eb.run.metrics</code> 与 <code>eb.run.logs</code> 是<b>传输通道而非存储</b>：
+  设 <code>MAXLEN ~ 100000</code> 自动裁剪，真正的持久化在 eb-tsdb 与日志文件。
+  其余 stream 保留 7 天用于故障回溯；审计的持久化真源始终是 PG 的 <code>audit_log</code> 表。
+</div>
+
+<h2 id="schema">2.8 数据库 schema 要点</h2>
+
+<pre><code><span class="c">-- 只列出体现设计意图的部分；完整 DDL 由 Alembic 管理</span>
+
+<span class="k">CREATE TABLE</span> embodiment_contracts (
+  id           text <span class="k">PRIMARY KEY</span>,                 <span class="c">-- ec_bhl_humanoid_22dof_v1</span>
+  spec         jsonb <span class="k">NOT NULL</span>,                    <span class="c">-- 整份 YAML 解析结果</span>
+  spec_hash    text  <span class="k">NOT NULL</span>,                    <span class="c">-- 变更检测；已被引用的契约禁止原地修改</span>
+  status       text  <span class="k">NOT NULL DEFAULT</span> <span class="s">'draft'</span>,
+  obs_dim      int <span class="k">GENERATED ALWAYS AS</span> ((spec-&gt;<span class="s">'observation'</span>-&gt;&gt;<span class="s">'dim'</span>)::int) <span class="k">STORED</span>,
+  action_dim   int <span class="k">GENERATED ALWAYS AS</span> ((spec-&gt;<span class="s">'action'</span>-&gt;&gt;<span class="s">'dim'</span>)::int) <span class="k">STORED</span>,
+  policy_hz    int <span class="k">GENERATED ALWAYS AS</span> ((spec-&gt;<span class="s">'control'</span>-&gt;&gt;<span class="s">'policy_hz'</span>)::int) <span class="k">STORED</span>
+  <span class="c">-- ↑ 生成列让「按维度筛选契约」无需展开 jsonb，同时避免冗余字段不同步</span>
+);
+
+<span class="k">CREATE TABLE</span> jobs (
+  id            text <span class="k">PRIMARY KEY</span>,
+  experiment_id text <span class="k">REFERENCES</span> experiments(id),
+  contract_id   text <span class="k">NOT NULL REFERENCES</span> embodiment_contracts(id),   <span class="c">-- 约束①</span>
+  kind          text <span class="k">NOT NULL</span>,
+  spec          jsonb <span class="k">NOT NULL</span>,
+  spec_hash     text <span class="k">NOT NULL</span>,
+  idem_key      text,
+  status        text <span class="k">NOT NULL</span>,
+  priority      int  <span class="k">NOT NULL DEFAULT</span> <span class="n">50</span>,
+  version       int  <span class="k">NOT NULL DEFAULT</span> <span class="n">1</span>,        <span class="c">-- 乐观锁</span>
+  attempts      int  <span class="k">NOT NULL DEFAULT</span> <span class="n">0</span>,
+  created_by    text <span class="k">NOT NULL</span>,                     <span class="c">-- principal：user:kk 或 agent:autopilot</span>
+  gpu_seconds   bigint <span class="k">NOT NULL DEFAULT</span> <span class="n">0</span>,      <span class="c">-- 预算账本累计</span>
+  created_at    timestamptz <span class="k">NOT NULL DEFAULT</span> now(),
+  <span class="k">UNIQUE</span> (idem_key)
+);
+<span class="k">CREATE INDEX</span> ON jobs (status, priority <span class="k">DESC</span>, created_at);   <span class="c">-- 调度出队热查询</span>
+<span class="k">CREATE INDEX</span> ON jobs <span class="k">USING</span> gin (spec jsonb_path_ops);
+
+<span class="k">CREATE TABLE</span> artifacts (
+  id         text <span class="k">PRIMARY KEY</span>,
+  sha256     text <span class="k">NOT NULL</span>,                       <span class="c">-- 内容 id；同内容可多次登记</span>
+  kind       text <span class="k">NOT NULL</span>,                       <span class="c">-- checkpoint | onnx | video | metrics | dataset | bundle</span>
+  size_bytes bigint <span class="k">NOT NULL</span>,
+  storage    text <span class="k">NOT NULL</span>,                       <span class="c">-- cas://… 或 s3://…</span>
+  run_id     text <span class="k">REFERENCES</span> runs(id),
+  meta       jsonb,                                <span class="c">-- onnx 的输入输出形状就存这里，供 G3 使用</span>
+  refcount   int <span class="k">NOT NULL DEFAULT</span> <span class="n">0</span>,             <span class="c">-- GC 安全</span>
+  pinned     bool <span class="k">NOT NULL DEFAULT</span> false          <span class="c">-- 已发布产物永不回收</span>
+);
+<span class="k">CREATE INDEX</span> ON artifacts (sha256);
+
+<span class="k">CREATE TABLE</span> audit_log (                          <span class="c">-- append-only，无 UPDATE/DELETE 权限</span>
+  id         bigserial <span class="k">PRIMARY KEY</span>,
+  at         timestamptz <span class="k">NOT NULL DEFAULT</span> now(),
+  principal  text <span class="k">NOT NULL</span>,
+  action     text <span class="k">NOT NULL</span>,
+  subject    text,
+  before     jsonb, after jsonb,
+  trace_id   text,
+  approval_id text
+);
+</code></pre>
+
+<div class="grid g2">
+<div class="note decide">
+  <span class="note-t">为什么 spec 用 jsonb 而不是拆成列</span>
+  JobSpec 的字段会随 Adapter 增加而频繁扩展。拆列意味着每加一个参数就要一次迁移。
+  折中方案：<b>需要索引/约束的少数字段提升为生成列或独立列</b>（contract_id、kind、status、priority），
+  其余留在 jsonb 里并建 GIN 索引。这样既能查 <code>spec @&gt; '{"params":{"num_envs":4096}}'</code>，又不牺牲关键约束。
+</div>
+<div class="note warn">
+  <span class="note-t">指标为什么不进 PG</span>
+  一次 6000 iteration 的训练，20 条曲线 = 12 万点；十几个并行实验就是百万级行。
+  PG 能存但查询与前端对比会很慢，而且这些数据是<b>只追加、按 run 分区、可丢弃</b>的——
+  正是段文件时序的理想场景。PG 里只保留每个 run 的<b>指标索引</b>（有哪些 metric、step 范围）
+  与<b>终值摘要</b>（final/best 值），供列表页排序与筛选。
+</div>
+</div>
+
+<h2 id="compat">2.9 版本与兼容策略</h2>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>对象</th><th>版本策略</th><th>破坏性变更如何处理</th></tr></thead>
+<tbody>
+<tr><td>REST API</td><td>路径版本 <code>/api/v1</code></td><td>新增字段与可选参数不升版本；删除/改语义则并行提供 <code>/v2</code>，<code>/v1</code> 保留一个大版本周期</td></tr>
+<tr><td>EmbodimentContract</td><td>id 内嵌版本号 <code>…_v1</code>，<b>已被引用后不可原地修改</b></td><td>建新契约 <code>_v2</code>，旧契约标 <code>deprecated</code>；两者可长期共存，历史 Run 永远指向创建时的契约</td></tr>
+<tr><td>JobSpec</td><td><code>api_version: eb/v1</code></td><td>Adapter 按 api_version 分派；老 spec 永远能被重放（复现要求）</td></tr>
+<tr><td>DatasetVersion</td><td>不可变，单调递增</td><td>不存在破坏性变更，只有新版本</td></tr>
+<tr><td>Release</td><td>语义化版本 <code>major.minor.patch</code></td><td>major 表示契约变更（不能直接替换上机包），minor 表示能力提升，patch 表示同契约下的策略改进</td></tr>
+<tr><td>事件 schema</td><td>payload 内含 <code>v</code></td><td>只允许加字段；消费者必须容忍未知字段</td></tr>
+<tr><td>数据库</td><td>Alembic 线性迁移</td><td>先加列（可空）→ 双写 → 回填 → 切读 → 删旧列，四步走，不停机</td></tr>
+</tbody>
+</table>
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

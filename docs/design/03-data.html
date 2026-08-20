@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 数据管理模块：六层数据模型、格式嗅探、漏斗审计、人手到机器人重定向管线、版本与切片、预览器、许可门禁与质量校验。">
+<title>03 · 数据管理模块｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">03 · Data</p>
+  <h1>数据管理模块</h1>
+  <p class="hero-copy">
+    你现在的数据现状是：<b>44 GB 原始素材，最终只有 35 个可用场景，且没有一条机器人关节轨迹</b>。
+    所以这个模块的第一使命不是「浏览数据」，而是<b>让数据变得可用</b>——
+    把漏斗讲清楚，把人手轨迹重定向成机器人动作。
+  </p>
+  <div class="chips">
+    <span class="chip is-data"><span class="chip-dot"></span>原始 <b>44 GB / 18,974 文件</b></span>
+    <span class="chip is-data"><span class="chip-dot"></span>可用场景 <b>35</b>（reach 29 / push 6）</span>
+    <span class="chip is-data"><span class="chip-dot"></span>标准数据集格式 <b>0 个</b></span>
+    <span class="chip is-eval"><span class="chip-dot"></span>三种许可，两种含 NC 限制</span>
+  </div>
+</header>
+
+<h2 id="layers">3.1 六层数据模型</h2>
+
+<p>
+  当前 <code>/data/kk/berkeley_ego_data/</code> 的目录结构（<code>raw/ → derived/ → manifests/</code>）
+  已经隐含了一套分层，但层与层之间的转换逻辑埋在脚本里。平台把它显式化为六层，
+  每层都有明确的<b>准入标准</b>与<b>可查询产物</b>。
+</p>
+
+<figure class="diagram diagram-wide">
+<svg viewBox="0 0 1140 400" role="img" aria-label="六层数据模型：从外部源到可训练切片，逐层收敛并伴随准入检查">
+  <g>
+    <!-- L0 -->
+    <g transform="translate(10,34)">
+      <rect class="svg-box" width="168" height="120" rx="10" style="stroke:#3d5f78"/>
+      <text class="svg-t-lane" x="10" y="-8">L0 外部源</text>
+      <text class="svg-t" x="10" y="20">DataSource</text>
+      <text class="svg-t-sm" x="10" y="38">Ego4D v2.1</text>
+      <text class="svg-t-sm" x="10" y="54">TACO v1</text>
+      <text class="svg-t-sm" x="10" y="70">HOI4D（403）</text>
+      <text class="svg-t-sm" x="10" y="86">Isaac 自采</text>
+      <text class="svg-t-mono" x="10" y="106">许可 · 门禁 · 凭证</text>
+    </g>
+    <!-- L1 -->
+    <g transform="translate(200,34)">
+      <rect class="svg-box" width="168" height="120" rx="10" style="stroke:#55d6be"/>
+      <text class="svg-t-lane" x="10" y="-8">L1 原始</text>
+      <text class="svg-t" x="10" y="20">RawArchive</text>
+      <text class="svg-t-sm" x="10" y="38">annotations JSON</text>
+      <text class="svg-t-sm" x="10" y="54">clips mp4（VP9）</text>
+      <text class="svg-t-sm" x="10" y="70">pkl / npy 位姿</text>
+      <text class="svg-t-mono" x="10" y="90">校验和对账</text>
+      <text class="svg-t-mono" x="10" y="106">只读 · 不可变</text>
+    </g>
+    <!-- L2 -->
+    <g transform="translate(390,34)">
+      <rect class="svg-box" width="168" height="120" rx="10" style="stroke:#55d6be"/>
+      <text class="svg-t-lane" x="10" y="-8">L2 规范事件</text>
+      <text class="svg-t" x="10" y="20">CanonicalEvent</text>
+      <text class="svg-t-sm" x="10" y="38">统一 event schema</text>
+      <text class="svg-t-sm" x="10" y="54">verb / goal_text</text>
+      <text class="svg-t-sm" x="10" y="70">[start_s, end_s]</text>
+      <text class="svg-t-mono" x="10" y="90">跨源统一</text>
+      <text class="svg-t-mono" x="10" y="106">192k 条（实测）</text>
+    </g>
+    <!-- L3 -->
+    <g transform="translate(580,34)">
+      <rect class="svg-box" width="168" height="120" rx="10" style="stroke:#ffc857"/>
+      <text class="svg-t-lane" x="10" y="-8">L3 场景</text>
+      <text class="svg-t" x="10" y="20">Scenario</text>
+      <text class="svg-t-sm" x="10" y="38">objects + 初始区域</text>
+      <text class="svg-t-sm" x="10" y="54">instruction 模板</text>
+      <text class="svg-t-sm" x="10" y="70">success 判据</text>
+      <text class="svg-t-mono" x="10" y="90">可实例化为仿真</text>
+      <text class="svg-t-mono" x="10" y="106" style="fill:#ffc857">35 条 ← 瓶颈</text>
+    </g>
+    <!-- L4 -->
+    <g transform="translate(770,34)">
+      <rect class="svg-box" width="168" height="120" rx="10" style="stroke:#b28dff"/>
+      <text class="svg-t-lane" x="10" y="-8">L4 可训练</text>
+      <text class="svg-t" x="10" y="20">DatasetVersion</text>
+      <text class="svg-t-sm" x="10" y="38">LeRobot v2.1</text>
+      <text class="svg-t-sm" x="10" y="54">state/action + video</text>
+      <text class="svg-t-sm" x="10" y="70">contract 兼容标记</text>
+      <text class="svg-t-mono" x="10" y="90">不可变 + 内容哈希</text>
+      <text class="svg-t-mono" x="10" y="106">G2 校验通过</text>
+    </g>
+    <!-- L5 -->
+    <g transform="translate(960,34)">
+      <rect class="svg-box" width="170" height="120" rx="10" style="stroke:#53d4ff"/>
+      <text class="svg-t-lane" x="10" y="-8">L5 切片</text>
+      <text class="svg-t" x="10" y="20">DataSlice</text>
+      <text class="svg-t-sm" x="10" y="38">train / val / ood</text>
+      <text class="svg-t-sm" x="10" y="54">按任务 / 物体过滤</text>
+      <text class="svg-t-sm" x="10" y="70">seed 注册表绑定</text>
+      <text class="svg-t-mono" x="10" y="90">轻量视图</text>
+      <text class="svg-t-mono" x="10" y="106">训练直接消费</text>
+    </g>
+
+    <path class="svg-edge-hot" d="M 178 94 L 198 94" marker-end="url(#d1)"/>
+    <path class="svg-edge-hot" d="M 368 94 L 388 94" marker-end="url(#d1)"/>
+    <path class="svg-edge-hot" d="M 558 94 L 578 94" marker-end="url(#d1)"/>
+    <path class="svg-edge-hot" d="M 748 94 L 768 94" marker-end="url(#d1)"/>
+    <path class="svg-edge-hot" d="M 938 94 L 958 94" marker-end="url(#d1)"/>
+  </g>
+
+  <!-- 转换 Job -->
+  <g transform="translate(10,178)">
+    <rect class="svg-lane" width="1120" height="52" rx="10"/>
+    <text class="svg-t-lane" x="10" y="18">层间转换 = 可复现的容器化 Job</text>
+    <g transform="translate(190,24)"><rect class="svg-box-2" width="168" height="22" rx="6"/><text class="svg-t-mono" x="8" y="15">data.scan</text></g>
+    <g transform="translate(380,24)"><rect class="svg-box-2" width="168" height="22" rx="6"/><text class="svg-t-mono" x="8" y="15">data.canonicalize</text></g>
+    <g transform="translate(570,24)"><rect class="svg-box-2" width="168" height="22" rx="6"/><text class="svg-t-mono" x="8" y="15">data.compile（漏斗）</text></g>
+    <g transform="translate(760,24)"><rect class="svg-box-2" width="168" height="22" rx="6" style="stroke:#ff5d68"/><text class="svg-t-mono" x="8" y="15">data.retarget ← 新增</text></g>
+    <g transform="translate(950,24)"><rect class="svg-box-2" width="160" height="22" rx="6"/><text class="svg-t-mono" x="8" y="15">data.slice</text></g>
+  </g>
+
+  <!-- 另一条路径：仿真采集 -->
+  <g transform="translate(10,254)">
+    <rect class="svg-lane" width="1120" height="132" rx="10" style="stroke:#b28dff"/>
+    <text class="svg-t-lane" x="10" y="18" style="fill:#b28dff">并行路径：不依赖人类数据的三条数据来源（当前更可行）</text>
+    <g transform="translate(14,28)">
+      <rect class="svg-box" width="266" height="44" rx="8" style="stroke:#b28dff"/>
+      <text class="svg-t" x="9" y="18">① 脚本专家采集</text>
+      <text class="svg-t-mono" x="9" y="34">scripted_expert / collect_lerobot → LeRobot</text>
+    </g>
+    <g transform="translate(294,28)">
+      <rect class="svg-box" width="266" height="44" rx="8" style="stroke:#b28dff"/>
+      <text class="svg-t" x="9" y="18">② 遥操作示教</text>
+      <text class="svg-t-mono" x="9" y="34">run_teleop.py（Pinocchio IK）→ 真机/仿真</text>
+    </g>
+    <g transform="translate(574,28)">
+      <rect class="svg-box" width="266" height="44" rx="8" style="stroke:#b28dff"/>
+      <text class="svg-t" x="9" y="18">③ 在线 rollout 回流</text>
+      <text class="svg-t-mono" x="9" y="34">DAgger online_lerobot（RLinf 已支持）</text>
+    </g>
+    <g transform="translate(854,28)">
+      <rect class="svg-box" width="252" height="44" rx="8" style="stroke:#ff884d"/>
+      <text class="svg-t" x="9" y="18">④ 真机失败样本</text>
+      <text class="svg-t-mono" x="9" y="34">遥测回传 → FailureCase → 数据集</text>
+    </g>
+    <g transform="translate(14,82)">
+      <rect width="1092" height="38" rx="8" fill="rgba(178,141,255,.06)" stroke="#1d3243"/>
+      <text class="svg-t-sm" x="10" y="17">这四条路径产出的数据<tspan style="fill:#edf6fb;font-weight:700">天生带机器人关节轨迹</tspan>，无需重定向，直接满足 G2 契约校验。</text>
+      <text class="svg-t-sm" x="10" y="32">建议优先级：① 立即可做（Isaac 环境已就绪）＞ ③ 中期 ＞ ② 需硬件 ＞ 人类数据重定向（研究性质，不确定性最高）。</text>
+    </g>
+  </g>
+  <defs><marker id="d1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#53d4ff"/></marker></defs>
+</svg>
+<figcaption>图 3-1　六层数据模型与四条并行数据来源。红框标注的 <code>data.retarget</code> 是当前缺失的环节。</figcaption>
+</figure>
+
+<div class="note warn">
+  <span class="note-t">一个需要你决策的判断</span>
+  从探查结果看，人类 ego 路径的产出率是 <b>155,369 → 35（0.02%）</b>，而且产出的只是「场景描述」而非「动作轨迹」。
+  相比之下，脚本专家采集在 Isaac 里可以直接生成任意多条带真实 10 维动作的 LeRobot 数据。
+  <b>本设计因此把「脚本专家采集」列为数据模块的第一优先能力</b>，人类数据重定向作为研究性支线。
+  如果你的目标本来就是「验证人类视频到机器人的迁移」，那优先级要反过来——这一点请确认。
+</div>
+
+<h2 id="capability">3.2 能力矩阵</h2>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:14%">能力</th><th style="width:30%">具体做什么</th><th style="width:16%">实现位置</th><th>对当前数据的针对性</th></tr></thead>
+<tbody>
+<tr><td><b>登记</b></td><td>声明外部源：路径、许可、凭证、下载范围、门禁状态</td><td class="mono xs">Python</td><td>把 <code>manifests/sources/*.json</code> 的信息结构化入库，HOI4D 的 403 状态可见可跟踪</td></tr>
+<tr><td><b>扫描</b></td><td>遍历、sha256、格式嗅探、ffprobe、缩略图、统计聚合</td><td class="mono xs">eb-scanner (Rust)</td><td>18,974 文件全量校验；44 GB 在 96 核上并行哈希</td></tr>
+<tr><td><b>校验</b></td><td>结构 / 完整性 / 语义 / 契约 / 视频 / 统计 六类规则</td><td class="mono xs">Rust + Python</td><td>LeRobot 数据集最常见的坑：video 帧数与 parquet 行数不一致</td></tr>
+<tr><td><b>漏斗审计</b></td><td>每级留存率、拒绝原因分布、规则敏感度分析、样本下钻</td><td class="mono xs">Python + SQL</td><td><b>核心功能</b>：让 155k→35 可解释、可调</td></tr>
+<tr><td><b>预览</b></td><td>视频 Range 播放、叙述时间轴联动、位姿/动作曲线、3D 物体位姿</td><td class="mono xs">eb-artifact + Vue</td><td>Ego4D clip 是 316 s 的 VP9 长视频，必须支持 Range seek 而非全量下载</td></tr>
+<tr><td><b>版本</b></td><td>不可变版本、内容哈希、差异对比、归档</td><td class="mono xs">Python</td><td>四个 catalog 版本并存（fho / goalstep_train / goalstep_val / human）</td></tr>
+<tr><td><b>切片</b></td><td>按任务族/物体/来源/官方 split 过滤，物化为 DataSlice</td><td class="mono xs">Python + SQL</td><td>reach 29 与 push 6 的严重不平衡需要显式 balance 策略</td></tr>
+<tr><td><b>转换</b></td><td>→ LeRobot v2.1、→ RLDS、norm stats 计算、位姿格式统一</td><td class="mono xs">容器 Job</td><td>复用 RLinf 的 <code>toolkits/lerobot/calculate_norm_stats.py</code></td></tr>
+<tr><td><b>重定向</b></td><td>MANO 人手 → 10 DOF 机器人臂，含 IK、限幅、可行性筛选</td><td class="mono xs">容器 Job（新增）</td><td>见 <a href="#retarget">3.5</a>；复用仓库已有的 <code>pin</code> / <code>pin-pink</code> 与 teleop IK</td></tr>
+<tr><td><b>许可门禁</b></td><td>许可标签、传染性推导、导出/分享拦截</td><td class="mono xs">Python</td><td>Ego4D 与 HOI4D 均含 NC 限制，派生物必须继承</td></tr>
+<tr><td><b>治理</b></td><td>配额、水位、归档、GC 预演</td><td class="mono xs">Python + Rust</td><td>TACO 手部位姿单项 24 GB，是最大的存储与清理对象</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="sniff">3.3 格式嗅探</h2>
+
+<p>
+  扫描器不要求用户声明格式，而是按<b>特征文件优先级</b>自动判定。这样把任意一个目录丢进来都能得到结构化结论。
+</p>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>优先级</th><th>特征</th><th>判定</th><th>提取内容</th><th>本数据集实测</th></tr></thead>
+<tbody>
+<tr><td>1</td><td class="mono xs">meta/info.json + data/chunk-*/*.parquet</td><td>LeRobot v2.x</td><td>features、fps、episode/frame 数、video keys、state/action 维度</td><td><span class="badge b-red">未命中</span>（parquet 计数为 0）</td></tr>
+<tr><td>2</td><td class="mono xs">*.tfrecord + dataset_info.json</td><td>RLDS</td><td>feature spec、split</td><td><span class="badge b-red">未命中</span></td></tr>
+<tr><td>3</td><td class="mono xs">*.hdf5 / *.h5 含 <code>data/demo_*</code></td><td>robomimic / HDF5</td><td>obs/action 组结构</td><td><span class="badge b-red">未命中</span></td></tr>
+<tr><td>4</td><td class="mono xs">scenario_catalog.jsonl + canonical_events.jsonl</td><td><b>EB Scenario Catalog</b></td><td>场景数、task_family 分布、instruction 模板、success 判据</td><td><span class="badge b-green">命中</span>×4 个版本</td></tr>
+<tr><td>5</td><td class="mono xs">v2/annotations/fho_*.json、goalstep_*.json</td><td>Ego4D 标注</td><td>video/interval/narration 层级、事件计数</td><td><span class="badge b-green">命中</span></td></tr>
+<tr><td>6</td><td class="mono xs">hand_poses/**/*.pkl + object_poses/**/*.npy</td><td>TACO raw</td><td>序列数、fps、位姿 shape、(action,tool,target) 三元组</td><td><span class="badge b-green">命中</span> 2,317 序列</td></tr>
+<tr><td>7</td><td class="mono xs">*.mp4 + *.jsonl manifest</td><td>Clip 集合</td><td>分辨率、编码、时长、帧率、sha256</td><td><span class="badge b-green">命中</span> 35 段派生切片</td></tr>
+<tr><td>8</td><td>兜底</td><td>Generic 目录</td><td>扩展名分布、大小分布、目录树摘要</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+
+<pre><code><span class="c">// eb-scanner：嗅探与统计的并行结构（要点）</span>
+<span class="k">pub fn</span> <span class="f">scan</span>(root: &amp;Path, opts: &amp;ScanOpts) -&gt; Result&lt;ScanReport&gt; {
+    <span class="k">let</span> kind = detect_format(root)?;                  <span class="c">// 按上表优先级短路匹配，只读特征文件</span>
+
+    <span class="k">let</span> files: Vec&lt;FileEntry&gt; = WalkDir::new(root)
+        .into_iter().filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .collect::&lt;Vec&lt;_&gt;&gt;()
+        .<span class="f">into_par_iter</span>()                              <span class="c">// rayon：96 核并行</span>
+        .map(|e| {
+            <span class="k">let</span> h = <span class="k">if</span> opts.hash { hash_file(e.path())? } <span class="k">else</span> { <span class="k">None</span> };
+            <span class="c">// 视频只调用一次 ffprobe，元数据入缓存（按 path+mtime+size 命中）</span>
+            <span class="k">let</span> media = <span class="k">if</span> is_video(e.path()) { probe_cached(e.path())? } <span class="k">else</span> { <span class="k">None</span> };
+            Ok(FileEntry { rel: .., size: .., sha256: h, media })
+        })
+        .collect::&lt;Result&lt;_&gt;&gt;()?;
+
+    <span class="c">// 增量：与上次 ScanReport 比对 (path, size, mtime)，未变文件跳过哈希</span>
+    <span class="k">let</span> stats = aggregate(kind, &amp;files)?;             <span class="c">// 分组计数、分辨率直方图、时长分布</span>
+    Ok(ScanReport { kind, files, stats, scanned_at: now() })
+}
+</code></pre>
+
+<div class="note info">
+  <span class="note-t">性能预算（目标值，需实测校准）</span>
+  首次全量扫描 44 GB / 18,974 文件：<b>哈希是瓶颈</b>，按单盘顺序读 1 GB/s 估算约 45 s，
+  CPU 侧 blake3 远快于 IO，因此实际受磁盘带宽限制。增量扫描（仅 stat）应在 <b>2 s 内</b>完成。
+  若首次扫描超过 3 分钟，说明磁盘随机读成为瓶颈，需要调大并发度或改用顺序批读。
+</div>
+
+<h2 id="funnel">3.4 漏斗审计（核心能力）</h2>
+
+<p>
+  编译流水线目前是一个黑盒脚本，输入 15 万条事件、输出 35 个场景。
+  平台要做的是把每一级的<b>拒绝原因</b>显式化，并回答一个关键问题：
+  <b>如果放宽某条规则，能多出多少样本？</b>
+</p>
+
+<div class="grid g2">
+<div class="chart-box">
+  <div class="chart-head"><span class="chart-title">编译漏斗（ego4d_fho_v1）</span><span class="chart-meta">末端 35 为实测</span></div>
+  <div class="chart" data-chart='{"type":"funnel","w":540,"labelW":158,"stages":[
+    {"name":"候选事件","v":155369},
+    {"name":"通过时长/画质过滤","v":41200},
+    {"name":"动词可映射","v":8420},
+    {"name":"无需工具","v":2110},
+    {"name":"无需抓取","v":1160},
+    {"name":"物体可实例化","v":214},
+    {"name":"人工复核通过","v":35,"color":"#53e5a3"}]}'></div>
+</div>
+<div class="chart-box">
+  <div class="chart-head"><span class="chart-title">拒绝原因分布（TACO：2,212 全拒）</span><span class="chart-meta">实测值</span></div>
+  <div class="chart" data-chart='{"type":"bars","w":540,"h":210,"cats":["unknown_verb","requires_tool","unsupported_liquid","其他"],"series":[{"name":"样本数","color":"#ff5d68","data":[1795,260,157,0]}]}'></div>
+  <p class="xs muted-2 mb0">
+    <code>unknown_verb</code> 占 81%——这说明<b>瓶颈是动词映射表覆盖率</b>，而不是数据本身不可用。
+    扩充动词表是投入产出比最高的一步。
+  </p>
+</div>
+</div>
+
+<h3 id="proto-funnel">原型：数据集详情 · 漏斗视图</h3>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/data/datasets/ds_ego4d_fho/versions/dsv_01JB3K…/funnel</div>
+    <span class="proto-tag">原型 · 占位数据</span>
+  </div>
+  <div class="proto-body">
+    <aside class="app-side">
+      <p class="app-side-t">数据</p>
+      <nav class="app-nav">
+        <a href="#proto-funnel"><span class="ico">◈</span>源</a>
+        <a class="on" href="#proto-funnel"><span class="ico">▤</span>数据集<span class="cnt">7</span></a>
+        <a href="#proto-funnel"><span class="ico">◱</span>场景<span class="cnt">35</span></a>
+        <a href="#proto-funnel"><span class="ico">⇄</span>转换任务</a>
+        <a href="#proto-funnel"><span class="ico">◔</span>切片<span class="cnt">4</span></a>
+      </nav>
+      <p class="app-side-t">当前数据集</p>
+      <nav class="app-nav">
+        <a href="#proto-funnel"><span class="ico">·</span>概览</a>
+        <a class="on" href="#proto-funnel"><span class="ico">·</span>漏斗</a>
+        <a href="#proto-funnel"><span class="ico">·</span>样本</a>
+        <a href="#proto-funnel"><span class="ico">·</span>校验</a>
+        <a href="#proto-funnel"><span class="ico">·</span>血缘</a>
+      </nav>
+    </aside>
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">数据 / ds_ego4d_fho / dsv_01JB3K…</p>
+          <h3 class="app-h">Ego4D FHO → Reach·Push 场景编译</h3>
+        </div>
+        <div class="app-actions">
+          <button class="btn">导出报告</button>
+          <button class="btn">对比上一版本</button>
+          <button class="btn primary">调整规则重编译</button>
+        </div>
+      </div>
+
+      <div class="grid g4 mb2">
+        <div class="kpi accent-cyan"><p class="kpi-label">候选事件</p><p class="kpi-value">155,369</p></div>
+        <div class="kpi accent-green"><p class="kpi-label">接受</p><p class="kpi-value">35 <small>0.023%</small></p></div>
+        <div class="kpi accent-amber"><p class="kpi-label">任务不平衡</p><p class="kpi-value">29 : 6 <small>reach:push</small></p></div>
+        <div class="kpi accent-violet"><p class="kpi-label">指令模板</p><p class="kpi-value">14 <small>去重后</small></p></div>
+      </div>
+
+      <div class="grid g-3-2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">逐级留存　<span class="more">点击任一级下钻到被拒样本</span></p>
+          <div class="chart" data-chart='{"type":"funnel","w":600,"labelW":168,"rowH":32,"stages":[
+            {"name":"候选事件","v":155369},
+            {"name":"时长 4–10 s","v":41200},
+            {"name":"动词可映射","v":8420},
+            {"name":"无需工具","v":2110},
+            {"name":"无需抓取","v":1160},
+            {"name":"物体可实例化","v":214},
+            {"name":"人工复核","v":35,"color":"#53e5a3"}]}'></div>
+        </div>
+        <div>
+          <div class="panel-sm mb1">
+            <p class="panel-sm-t">规则敏感度：放宽后预计新增</p>
+            <div class="bar-row"><span>动词表 +50 词</span><span class="bar-track"><span class="bar-fill good" style="width:88%"></span></span><span class="bar-val">+142</span></div>
+            <div class="bar-row"><span>允许简单抓取</span><span class="bar-track"><span class="bar-fill" style="width:52%"></span></span><span class="bar-val">+61</span></div>
+            <div class="bar-row"><span>时长放到 3–14 s</span><span class="bar-track"><span class="bar-fill" style="width:31%"></span></span><span class="bar-val">+28</span></div>
+            <div class="bar-row"><span>新增 3 类物体资产</span><span class="bar-track"><span class="bar-fill warn" style="width:24%"></span></span><span class="bar-val">+19</span></div>
+            <div class="bar-row"><span>跳过人工复核</span><span class="bar-track"><span class="bar-fill bad" style="width:96%"></span></span><span class="bar-val">+179</span></div>
+            <p class="xs muted-2 mb0 mt1">敏感度由「单规则关闭重跑」得出，是真实重算而非估计；每行可一键生成对应的重编译 Job。</p>
+          </div>
+          <div class="panel-sm">
+            <p class="panel-sm-t">许可与合规</p>
+            <dl class="dl">
+              <dt>来源许可</dt><dd class="c-amber">Ego4D License（非商业）</dd>
+              <dt>传染性</dt><dd>派生物继承 NC</dd>
+              <dt>导出</dt><dd class="c-red">禁止对外分发</dd>
+              <dt>分享链接</dt><dd class="c-amber">允许，带水印与许可提示</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-sm mt2">
+        <p class="panel-sm-t">被拒样本下钻　<span class="more">当前筛选：stage=动词可映射 · reason=unknown_verb</span></p>
+        <div class="mediagrid" data-select>
+          <div class="media"><span class="flag bad">拒</span><span class="tagline">c opens the drawer</span></div>
+          <div class="media"><span class="flag bad">拒</span><span class="tagline">c wipes the counter</span></div>
+          <div class="media"><span class="flag bad">拒</span><span class="tagline">c stirs the pot</span></div>
+          <div class="media sel"><span class="flag bad">拒</span><span class="tagline">c reaches for cup</span></div>
+          <div class="media"><span class="flag ok">收</span><span class="tagline">reach_cylinder_f7aa</span></div>
+          <div class="media"><span class="flag bad">拒</span><span class="tagline">c screws the bolt</span></div>
+          <div class="media"><span class="flag bad">拒</span><span class="tagline">c folds the towel</span></div>
+        </div>
+        <div class="note warn mt1 mb0" style="font-size:.8rem">
+          <span class="note-t">选中样本的诊断</span>
+          <code>c reaches for cup</code> 语义上明显是 reach，但被 <code>unknown_verb</code> 拒绝——
+          因为动词表只匹配 <code>reach</code> 原形，未处理第三人称单数 <code>reaches</code>。
+          <b>建议动作</b>：动词匹配加词形还原（lemmatize）。预计单此一项 +142 样本。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note good">
+  <span class="note-t">这个原型的设计意图</span>
+  漏斗页不是报表，是<b>诊断工具</b>。三个关键交互：
+  <b>①</b> 点漏斗任一级 → 立刻看到被拒样本的视频缩略图与原文；
+  <b>②</b> 敏感度面板告诉你「改哪条规则最值」，且数字来自真实重算；
+  <b>③</b> 每条建议都能一键变成 Job。上面那个 <code>reaches</code> vs <code>reach</code> 的词形问题，
+  就是这种视图能在 30 秒内暴露、而看脚本要看半天的典型例子。
+</div>
+
+<h2 id="retarget">3.5 人手到机器人的重定向管线</h2>
+
+<p>
+  这是当前数据链路缺失的关键一环：现有数据只有<b>人手 MANO 48 维参数</b>与<b>物体 SE(3) 位姿</b>，
+  而训练需要<b>机器人 10 维臂关节轨迹</b>。好消息是所需工具在你的仓库里已经存在。
+</p>
+
+<div class="grid g-2-1">
+<div>
+<ol class="steps">
+  <li><b>提取手腕 6D 轨迹</b><br>
+    从 MANO 参数取全局旋转与平移，结合 <code>egocentric_frame_extrinsic.npy</code> 变换到世界系。
+    30 fps，输出 <code>T_wrist(t) ∈ SE(3)</code>。</li>
+  <li><b>尺度与坐标系对齐</b><br>
+    人臂长与机器人臂长比值做位置缩放；肩部原点对齐。这一步需要一份标定参数，
+    可复用 <code>--camera-calibration</code> 已有的参数格式。</li>
+  <li><b>逆运动学求解</b><br>
+    <span class="badge b-green">可复用</span> 仓库已依赖 <code>pin</code> + <code>pin-pink</code>，
+    且 <code>scripts/teleop/run_teleop.py</code> 已实现双臂 IK。
+    把 teleop 的在线 IK 改造为离线批处理即可，含阻尼最小二乘与关节限位软约束。</li>
+  <li><b>限幅与平滑</b><br>
+    按契约的 <code>limits.joint_pos / joint_vel</code> 裁剪；对 20 Hz 目标频率重采样并做低通滤波，
+    避免生成物理上不可执行的抖动动作。</li>
+  <li><b>可行性校验（关键筛选）</b><br>
+    在 Isaac 里重放生成的动作，检查：末端是否到达目标（位置 RMSE）、是否自碰撞、是否触限。
+    <b>不通过即拒绝该样本</b>，并记录原因进漏斗。</li>
+  <li><b>场景重建与渲染</b><br>
+    物体类型/初始位姿 → 实例化 Isaac 资产；用机器人自身相机渲染 <code>camera_top[224,224,3]</code>，
+    与真实 ego 帧共同保存（前者用于训练，后者用于对照）。</li>
+  <li><b>产出 LeRobot 数据集</b><br>
+    <code>state[10]</code> / <code>action[10]</code> / <code>camera_top</code> / <code>task</code> 指令文本，
+    fps=20，契约标记为 <code>ec_bhl_fixedhand_10dof_v1</code>，走 G2 校验。</li>
+</ol>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">重定向门禁</p>
+  <div class="gate pass"><span class="g-ico">✓</span><span>IK 收敛率 ≥ 95%</span><span class="g-val">98.2%</span></div>
+  <div class="gate pass"><span class="g-ico">✓</span><span>末端位置 RMSE ≤ 2 cm</span><span class="g-val">1.4 cm</span></div>
+  <div class="gate fail"><span class="g-ico">✕</span><span>无自碰撞</span><span class="g-val">7 帧碰撞</span></div>
+  <div class="gate pass"><span class="g-ico">✓</span><span>关节速度不触限</span><span class="g-val">峰值 78%</span></div>
+  <div class="gate wait"><span class="g-ico">·</span><span>重放成功率 ≥ 90%</span><span class="g-val">待运行</span></div>
+  <p class="xs muted-2 mb0 mt1">占位数据。门禁不通过的样本进入 <code>rejected/</code> 并在漏斗里增加一级。</p>
+</div>
+<div class="note warn mt2">
+  <span class="note-t">诚实的风险评估</span>
+  这条管线有<b>三个不确定点</b>：人手与 10 DOF 机械臂的运动学差异可能大到 IK 无解；
+  物体识别与资产映射需要额外的视觉标注；
+  人类操作的接触语义（抓握、施力）在无夹爪的 fixed-hand 构型上可能根本不可复现。
+  因此建议先在 <b>29 个 reach 场景</b>上做小规模验证（reach 无需抓取，最可行），
+  拿到重放成功率后再决定是否投入。
+</div>
+</div>
+</div>
+
+<h2 id="preview">3.6 预览器</h2>
+
+<p>
+  具身数据的检查必须是<b>视频 + 时序 + 语言</b>三者联动的。单看曲线看不出「机器人在干什么」，
+  单看视频看不出「动作是否触限」。
+</p>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/data/datasets/ds_reach_push_v3/episodes/ep_00042</div>
+    <span class="proto-tag">原型 · 三联预览器</span>
+  </div>
+  <div class="proto-body no-side">
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">ds_reach_push_v3 · dsv_01JB4M… · LeRobot v2.1 · fps 20 · 契约 ec_bhl_fixedhand_10dof_v1</p>
+          <h3 class="app-h">episode 00042　<span class="badge b-green">校验通过</span> <span class="badge b-cyan">task: reach</span></h3>
+        </div>
+        <div class="app-actions">
+          <button class="btn sm">← 上一条</button>
+          <button class="btn sm">下一条 →</button>
+          <button class="btn sm">标记问题</button>
+          <button class="btn sm primary">加入切片</button>
+        </div>
+      </div>
+
+      <div class="grid g3">
+        <div class="panel-sm">
+          <p class="panel-sm-t">camera_top　<span class="more">224×224 · frame 68/141</span></p>
+          <div class="media" style="aspect-ratio:1/1"><span class="tagline">t = 3.40 s</span></div>
+          <div class="mt1 xs muted-2">
+            指令：<span class="c-cyan">“reach the red cylinder”</span><br>
+            成功判据：<code>end_effector_near_object · tol 0.04 m · hold 3</code>
+          </div>
+        </div>
+        <div class="panel-sm">
+          <p class="panel-sm-t">关节动作 action[0:10]　<span class="more">虚线为关节限位</span></p>
+          <div class="chart" data-chart='{"type":"line","w":420,"h":168,"xmax":141,"legend":false,"dot":false,"lw":1.2,"hlines":[{"v":1.05,"label":"upper limit"},{"v":-1.05,"label":"lower limit"}],"ymin":-1.3,"ymax":1.3,"series":[
+            {"name":"j0","gen":{"kind":"rise","from":0,"to":0.62,"n":141,"seed":11,"noise":0.05}},
+            {"name":"j1","gen":{"kind":"rise","from":0,"to":-0.41,"n":141,"seed":12,"noise":0.06}},
+            {"name":"j2","gen":{"kind":"plateau","from":0,"to":0.88,"n":141,"seed":13,"noise":0.05}},
+            {"name":"j3","gen":{"kind":"walk","from":0,"to":0.3,"n":141,"seed":14,"noise":0.08}},
+            {"name":"j4","gen":{"kind":"rise","from":0,"to":-0.72,"n":141,"seed":15,"noise":0.05}}]}'></div>
+          <p class="xs muted-2 mb0">检查点：无 NaN、无越限、末段收敛平稳（无抖动）。</p>
+        </div>
+        <div class="panel-sm">
+          <p class="panel-sm-t">末端到目标距离　<span class="more">成功阈值 0.04 m</span></p>
+          <div class="chart" data-chart='{"type":"line","w":420,"h":168,"xmax":141,"legend":false,"ymin":0,"ymax":0.42,"hlines":[{"v":0.04,"label":"tol 0.04 m","color":"#53e5a3"}],"series":[
+            {"name":"dist","color":"#ffc857","gen":{"kind":"fall","from":0.38,"to":0.022,"n":141,"seed":21,"noise":0.03}}]}'></div>
+          <div class="mt1">
+            <div class="bar-row"><span>命中帧</span><span class="bar-track"><span class="bar-fill good" style="width:12%"></span></span><span class="bar-val">17</span></div>
+            <div class="bar-row"><span>保持帧</span><span class="bar-track"><span class="bar-fill good" style="width:100%"></span></span><span class="bar-val">≥3 ✓</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-sm mt2">
+        <p class="panel-sm-t">时间轴　<span class="more">拖动同步三个面板；标注来自源数据 narration 或采集脚本阶段标记</span></p>
+        <div class="chart" data-chart='{"type":"area","w":1000,"h":92,"xmax":141,"ymax":1,"series":[
+          {"name":"接近阶段","color":"#53d4ff","gen":{"kind":"fall","from":0.9,"to":0.05,"n":60,"seed":31,"noise":0.05}},
+          {"name":"精调阶段","color":"#ffc857","gen":{"kind":"rise","from":0.05,"to":0.5,"n":60,"seed":32,"noise":0.06}},
+          {"name":"保持阶段","color":"#53e5a3","gen":{"kind":"rise","from":0,"to":0.42,"n":60,"seed":33,"noise":0.04}}]}'></div>
+        <div class="flow mt1">
+          <div class="flow-node"><b>0.0–1.8 s</b><small>初始静止</small></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-node"><b>1.8–4.2 s</b><small>接近目标</small></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-node"><b>4.2–6.1 s</b><small>末端精调</small></div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-node" style="border-color:#53e5a3"><b>6.1–7.05 s</b><small>保持 · 成功</small></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note info">
+  <span class="note-t">Ego4D 长视频的预览要点</span>
+  原始 clip 是 <b>316 秒的 VP9</b>，浏览器对 VP9 支持尚可但 seek 昂贵。
+  方案：<code>eb-artifact</code> 为每个被引用的时间窗口预生成 <b>H.264 代理片段</b>（proxy），
+  并生成雪碧图供时间轴悬停预览。原视频只在需要时按 Range 拉取。
+  代理片段可重建，因此放在 <code>media/</code> 目录不参与备份。
+</div>
+
+<h2 id="quality">3.7 质量校验规则集</h2>
+
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th style="width:90px">类别</th><th style="width:26%">规则</th><th style="width:12%">严重级</th><th>说明与常见成因</th></tr></thead>
+<tbody>
+<tr><td><b>结构</b></td><td>必需文件存在（<code>meta/info.json</code> 等）</td><td><span class="badge b-red">阻断</span></td><td>转换中断留下半成品目录</td></tr>
+<tr><td>结构</td><td>episode 索引连续、无空洞</td><td><span class="badge b-amber">警告</span></td><td>采集中途失败被跳过</td></tr>
+<tr><td><b>完整性</b></td><td>sha256 与 manifest 一致</td><td><span class="badge b-red">阻断</span></td><td>传输截断、磁盘错误</td></tr>
+<tr><td>完整性</td><td>无零字节文件</td><td><span class="badge b-red">阻断</span></td><td>磁盘写满时最典型的症状</td></tr>
+<tr><td><b>视频</b></td><td><b>视频帧数 == parquet 行数</b></td><td><span class="badge b-red">阻断</span></td><td class="c-amber">LeRobot 数据集最高频的坑：编码丢帧导致图像与状态错位，训练能跑但学不到东西</td></tr>
+<tr><td>视频</td><td>分辨率/编码在数据集内一致</td><td><span class="badge b-amber">警告</span></td><td>多次采集混用不同配置（实测派生切片就有 960×540 与 720×540 两种）</td></tr>
+<tr><td>视频</td><td>可被 ffprobe 完整解码</td><td><span class="badge b-red">阻断</span></td><td>写入未 flush</td></tr>
+<tr><td><b>语义</b></td><td>state / action 无 NaN / Inf</td><td><span class="badge b-red">阻断</span></td><td>IK 不收敛、除零</td></tr>
+<tr><td>语义</td><td>时间戳单调递增，间隔 ≈ 1/fps</td><td><span class="badge b-red">阻断</span></td><td>多线程写入乱序</td></tr>
+<tr><td>语义</td><td>action 在契约 <code>limits</code> 内</td><td><span class="badge b-amber">警告</span></td><td>越限样本会教出触限策略</td></tr>
+<tr><td>语义</td><td>饱和帧比例 &lt; 5%</td><td><span class="badge b-amber">警告</span></td><td>动作长期贴在限位上，通常是缩放系数错误</td></tr>
+<tr><td><b>契约</b></td><td>state/action 维度、fps 与契约一致（G2）</td><td><span class="badge b-red">阻断</span></td><td>见 <a href="02-domain-model.html#gates5">02 · G2</a></td></tr>
+<tr><td>契约</td><td>关节名顺序与 <code>joint_order</code> 一致</td><td><span class="badge b-red">阻断</span></td><td>顺序错位是最难查的错误，症状是「动作看起来随机」</td></tr>
+<tr><td><b>统计</b></td><td>任务/物体分布不过度倾斜</td><td><span class="badge b-amber">警告</span></td><td>实测 reach 29 : push 6 已属严重不平衡</td></tr>
+<tr><td>统计</td><td>成功样本比例落在预期区间</td><td><span class="badge b-amber">警告</span></td><td>脚本专家 reach 门槛为成功率 ≥ 0.95，低于说明专家退化</td></tr>
+<tr><td>统计</td><td>episode 长度分布无极端离群</td><td><span class="badge b-gray">提示</span></td><td>超长 episode 通常是超时失败</td></tr>
+<tr><td><b>许可</b></td><td>许可标签存在且传染性已推导</td><td><span class="badge b-red">阻断</span></td><td>见 <a href="#license">3.9</a></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="version">3.8 版本、切片与治理</h2>
+
+<div class="grid g3">
+<div class="card">
+  <p class="card-title">版本</p>
+  <ul class="small mb0">
+    <li>DatasetVersion 不可变，标识为内容哈希（所有文件 sha256 的 Merkle 根）</li>
+    <li>差异对比：新增/删除/修改的 episode 列表 + 统计变化</li>
+    <li>被任何 Run 引用过的版本不可删除，只能 <code>archived</code>（数据移到冷层，元数据永存）</li>
+    <li>版本上标注 <code>compatible_contracts[]</code>，G2 校验的结果缓存在这里</li>
+  </ul>
+</div>
+<div class="card">
+  <p class="card-title">切片</p>
+  <ul class="small mb0">
+    <li>声明式：<code>filter</code> + <code>balance</code> + <code>split</code> + <code>seed</code></li>
+    <li>物化为 episode id 列表（轻量，不复制数据）</li>
+    <li>与 EvalSuite 的 seed 注册表绑定，保证训练/评估不串数据</li>
+    <li>典型切片：<code>train</code>、<code>val</code>、<code>ood_instruction</code>（换指令措辞）、<code>ood_object</code>（换物体颜色/形状）</li>
+  </ul>
+</div>
+<div class="card">
+  <p class="card-title">治理</p>
+  <ul class="small mb0">
+    <li>配额：每个 Dataset 声明上限，超限拒绝新版本</li>
+    <li>冷热分层：TACO 的 24 GB pkl 属于冷数据，压缩归档</li>
+    <li>代理媒体（缩略图/HLS/proxy）可随时重建，不计入备份</li>
+    <li>GC 预演：先列出「将删除什么、能回收多少」，确认后执行</li>
+  </ul>
+</div>
+</div>
+
+<h3 id="proto-list">原型：数据集列表</h3>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/data/datasets</div>
+    <span class="proto-tag">原型 · 占位数据</span>
+  </div>
+  <div class="proto-body no-side">
+    <div class="app-main">
+      <div class="app-bar">
+        <h3 class="app-h">数据集</h3>
+        <input class="input" style="width:200px" placeholder="搜索名称 / 指令 / 物体…">
+        <span class="badge b-gray">契约：全部</span>
+        <span class="badge b-gray">状态：全部</span>
+        <div class="app-actions">
+          <button class="btn">登记外部源</button>
+          <button class="btn primary">+ 新建采集任务</button>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+      <table class="sortable compact">
+        <thead><tr>
+          <th>数据集</th><th>层级</th><th>格式</th><th class="t-num">规模</th><th class="t-num">episode</th>
+          <th>契约兼容</th><th>许可</th><th>校验</th><th>最近版本</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><b>reach_push_scripted_v3</b><br><span class="xs muted-2">脚本专家采集</span></td>
+            <td><span class="badge b-violet">L4</span></td><td class="mono xs">LeRobot 2.1</td>
+            <td class="t-num">18.4 GB</td><td class="t-num">2,400</td>
+            <td class="mono xs c-green">fixedhand_10dof ✓</td>
+            <td><span class="badge b-green">内部</span></td>
+            <td><span class="st st-ok">通过</span></td><td class="mono xs">dsv_…4M2 · 2 h 前</td>
+          </tr>
+          <tr>
+            <td><b>ego4d_fho_scenarios</b><br><span class="xs muted-2">人类 ego 编译</span></td>
+            <td><span class="badge b-amber">L3</span></td><td class="mono xs">EB Catalog</td>
+            <td class="t-num">178 MB</td><td class="t-num">35</td>
+            <td class="mono xs c-amber">无动作维度 ⚠</td>
+            <td><span class="badge b-red">NC</span></td>
+            <td><span class="st st-warn">2 警告</span></td><td class="mono xs">dsv_…3K9 · 3 d 前</td>
+          </tr>
+          <tr>
+            <td><b>taco_hand_poses</b><br><span class="xs muted-2">TACO v1 原始</span></td>
+            <td><span class="badge b-green">L1</span></td><td class="mono xs">pkl + npy</td>
+            <td class="t-num">24.1 GB</td><td class="t-num">2,317</td>
+            <td class="mono xs muted-2">需重定向</td>
+            <td><span class="badge b-amber">CC-BY-4.0</span></td>
+            <td><span class="st st-ok">通过</span></td><td class="mono xs">dsv_…1A0 · 12 d 前</td>
+          </tr>
+          <tr>
+            <td><b>dagger_online_reach</b><br><span class="xs muted-2">在线 rollout 回流</span></td>
+            <td><span class="badge b-violet">L4</span></td><td class="mono xs">LeRobot 2.1</td>
+            <td class="t-num">3.2 GB</td><td class="t-num">640</td>
+            <td class="mono xs c-green">fixedhand_10dof ✓</td>
+            <td><span class="badge b-green">内部</span></td>
+            <td><span class="st st-run">扫描中 62%</span></td><td class="mono xs">dsv_…7C1 · 进行中</td>
+          </tr>
+          <tr>
+            <td><b>hoi4d_instructions</b><br><span class="xs muted-2">受阻</span></td>
+            <td><span class="badge b-gray">L0</span></td><td class="mono xs">—</td>
+            <td class="t-num">25 MB</td><td class="t-num">—</td>
+            <td class="mono xs muted-2">—</td>
+            <td><span class="badge b-red">CC-BY-NC</span></td>
+            <td><span class="st st-err">403 受阻</span></td><td class="mono xs">—</td>
+          </tr>
+          <tr>
+            <td><b>real_failure_cases</b><br><span class="xs muted-2">真机遥测回流</span></td>
+            <td><span class="badge b-orange">L4</span></td><td class="mono xs">LeRobot 2.1</td>
+            <td class="t-num">412 MB</td><td class="t-num">47</td>
+            <td class="mono xs c-green">biped_12dof ✓</td>
+            <td><span class="badge b-green">内部</span></td>
+            <td><span class="st st-ok">通过</span></td><td class="mono xs">dsv_…9F3 · 1 d 前</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="grid g4 mt2">
+        <div class="kpi"><p class="kpi-label">总占用</p><p class="kpi-value">46.3 <small>GB</small></p><p class="kpi-foot">配额 200 GB · 23%</p></div>
+        <div class="kpi accent-green"><p class="kpi-label">可训练 episode</p><p class="kpi-value">3,087</p><p class="kpi-foot">契约兼容且校验通过</p></div>
+        <div class="kpi accent-amber"><p class="kpi-label">待处理告警</p><p class="kpi-value">3</p><p class="kpi-foot">2 警告 · 1 受阻</p></div>
+        <div class="kpi accent-violet"><p class="kpi-label">可回收</p><p class="kpi-value">8.1 <small>GB</small></p><p class="kpi-foot">代理媒体 + 归档候选</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 id="license">3.9 许可与门禁</h2>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>源</th><th>许可</th><th class="t-nowrap">商业使用</th><th>传染性</th><th>平台强制行为</th></tr></thead>
+<tbody>
+<tr><td>Ego4D v2.1</td><td class="mono xs">Ego4D License</td><td><span class="badge b-red">禁止</span></td><td>派生物继承</td><td>标 <code>nc</code> 标签；禁止公开分享链接；导出需二次确认并加许可声明；训练出的模型自动标 <code>nc_tainted</code></td></tr>
+<tr><td>TACO v1</td><td class="mono xs">CC-BY-4.0</td><td><span class="badge b-green">允许</span></td><td>需署名</td><td>导出物自动附署名文件</td></tr>
+<tr><td>HOI4D</td><td class="mono xs">CC-BY-NC-4.0</td><td><span class="badge b-red">禁止</span></td><td>派生物继承</td><td>同 Ego4D；当前处于 <code>gate_status: blocked (403)</code>，不可用</td></tr>
+<tr><td>Isaac 自采</td><td class="mono xs">内部</td><td><span class="badge b-green">允许</span></td><td>无</td><td>无限制。<b>这是唯一可无顾虑对外展示的数据来源</b></td></tr>
+<tr><td>预训练模型权重</td><td class="mono xs">按模型而异</td><td><span class="badge b-amber">逐个核对</span></td><td>视许可</td><td>ModelCard 必填许可字段，见 <a href="04-model.html#license">04 · 模型许可</a></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note danger">
+  <span class="note-t">许可传染的实际后果</span>
+  一旦用 Ego4D 派生数据训练了模型，该 ModelVersion 会被自动标记 <code>nc_tainted</code>，
+  并沿血缘传播到由它导出的 PolicyBundle。平台在<b>对外分享</b>与<b>发布</b>两处拦截并提示。
+  这不是法律意见，而是让风险<b>可见</b>——真正的判断仍需你来做，平台只保证你不会在不知情的情况下越界。
+</div>
+
+<h2 id="impl">3.10 实现要点</h2>
+
+<div class="grid g2">
+<div>
+<pre><code><span class="c">-- 数据域核心表（要点）</span>
+<span class="k">CREATE TABLE</span> dataset_versions (
+  id             text <span class="k">PRIMARY KEY</span>,
+  dataset_id     text <span class="k">NOT NULL REFERENCES</span> datasets(id),
+  layer          smallint <span class="k">NOT NULL</span>,        <span class="c">-- 0..5</span>
+  format         text <span class="k">NOT NULL</span>,            <span class="c">-- lerobot_v21 | eb_catalog | taco_raw …</span>
+  content_hash   text <span class="k">NOT NULL</span>,            <span class="c">-- Merkle 根，不可变标识</span>
+  storage_uri    text <span class="k">NOT NULL</span>,
+  size_bytes     bigint <span class="k">NOT NULL</span>,
+  n_episodes     int, n_frames bigint, fps real,
+  compatible_contracts text[] <span class="k">NOT NULL DEFAULT</span> <span class="s">'{}'</span>,  <span class="c">-- G2 结果缓存</span>
+  license        text <span class="k">NOT NULL</span>,
+  license_flags  text[] <span class="k">NOT NULL DEFAULT</span> <span class="s">'{}'</span>,       <span class="c">-- nc | attribution_required</span>
+  stats          jsonb,                             <span class="c">-- 分布直方图、分辨率、时长</span>
+  validation     jsonb,                             <span class="c">-- 规则 → {passed, severity, detail}</span>
+  parent_id      text <span class="k">REFERENCES</span> dataset_versions(id),
+  produced_by    text <span class="k">REFERENCES</span> runs(id),
+  status         text <span class="k">NOT NULL DEFAULT</span> <span class="s">'active'</span>,  <span class="c">-- active | archived</span>
+  created_at     timestamptz <span class="k">NOT NULL DEFAULT</span> now(),
+  <span class="k">UNIQUE</span> (dataset_id, content_hash)
+);
+
+<span class="k">CREATE TABLE</span> funnel_reports (
+  id           text <span class="k">PRIMARY KEY</span>,
+  version_id   text <span class="k">NOT NULL REFERENCES</span> dataset_versions(id),
+  stages       jsonb <span class="k">NOT NULL</span>,     <span class="c">-- [{name, in, out, rules[]}]</span>
+  rejections   jsonb <span class="k">NOT NULL</span>,     <span class="c">-- {reason: count}</span>
+  sensitivity  jsonb,                <span class="c">-- {rule: delta_accepted}（重算得出）</span>
+  samples_uri  text                  <span class="c">-- 被拒样本索引（JSONL in CAS）</span>
+);
+</code></pre>
+</div>
+<div>
+<div class="card">
+  <p class="card-title">性能与容量预算（目标值）</p>
+  <table class="compact">
+  <tbody>
+  <tr><td>全量扫描 44 GB</td><td class="mono">&lt; 3 min</td></tr>
+  <tr><td>增量扫描</td><td class="mono">&lt; 2 s</td></tr>
+  <tr><td>数据集列表页首屏</td><td class="mono">&lt; 300 ms</td></tr>
+  <tr><td>episode 预览首帧</td><td class="mono">&lt; 500 ms</td></tr>
+  <tr><td>视频 seek 响应</td><td class="mono">&lt; 200 ms（代理片段）</td></tr>
+  <tr><td>漏斗页（含敏感度缓存）</td><td class="mono">&lt; 600 ms</td></tr>
+  <tr><td>敏感度重算（单规则）</td><td class="mono">分钟级，异步 Job</td></tr>
+  </tbody>
+  </table>
+</div>
+<div class="card mt2">
+  <p class="card-title">与上游工具的复用清单</p>
+  <ul class="small mb0">
+    <li><code>scripts/vla/collect_lerobot.py</code>：采集与 LeRobot 导出 → 包装为 <code>data.collect</code></li>
+    <li><code>scripts/vla/scripted_expert.py</code>：脚本专家 → 同上</li>
+    <li><code>scripts/vla/validate_dataset.py</code>：数据集校验 → 作为校验规则的一部分调用</li>
+    <li><code>scripts/vla/build_scenario_catalog.py</code>：场景编译 → 包装为 <code>data.compile</code>，注入规则参数</li>
+    <li><code>RLinf/toolkits/lerobot/calculate_norm_stats.py</code>：归一化统计 → <code>data.convert</code></li>
+    <li><code>scripts/teleop/run_teleop.py</code> 的 Pinocchio IK → 改造为 <code>data.retarget</code> 的求解核心</li>
+  </ul>
+  <p class="xs muted-2 mb0 mt1">
+    原则：<b>不重写上游脚本</b>，只包装并注入参数。上游改了 CLI，只需改 Adapter 与快照测试。
+  </p>
+</div>
+</div>
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>
