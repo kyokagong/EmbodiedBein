@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     agent_weekly_gpu_hours: float = 60.0
     contracts_dir: Path = Path("/app/contracts")
     ingest_roots: str = "/data/kk/Berkeley-Humanoid-Lite,/data/kk/berkeley_ego_data"
+    fake_gpus: str = ""  # e.g. "0,1,2,3" for tests; empty means never invent GPUs
     web_dist: Path = Path("/app/web/dist")
 
 

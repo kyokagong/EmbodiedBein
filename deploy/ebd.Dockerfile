@@ -5,6 +5,8 @@ COPY rust/ ./
 RUN cargo build --release -p ebd
 
 FROM debian:bookworm-slim
+# Host NVIDIA driver is bind-mounted / injected by nvidia-container-runtime.
+# Do not install a driver inside this image; nvidia-smi must see the host GPUs.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker

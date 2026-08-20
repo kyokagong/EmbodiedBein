@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,23 @@ from eb.store.models import Job
 log = logging.getLogger(__name__)
 
 
+def _free_gpu_indices(doctor: dict) -> list[int] | None:
+    """Return free GPU indices, or None if this tick must skip admission."""
+    gpus = doctor.get("gpus") or []
+    busy = {g["index"] for g in gpus if g.get("run_id")}
+    free = [int(g["index"]) for g in gpus if g.get("index") not in busy]
+    if gpus:
+        return free
+    fake = os.environ.get("EB_FAKE_GPUS", "").strip()
+    if not fake:
+        from eb.settings import get_settings
+
+        fake = (get_settings().fake_gpus or "").strip()
+    if not fake:
+        return None
+    return [int(x.strip()) for x in fake.split(",") if x.strip()]
+
+
 class Scheduler:
     def __init__(self, orch: Orchestrator | None = None) -> None:
         self.orch = orch or Orchestrator()
@@ -21,16 +39,10 @@ class Scheduler:
 
     async def tick(self, session: AsyncSession) -> None:
         doctor = await self.ebd.doctor()
-        gpus = doctor.get("gpus") or []
-        busy = {g["index"] for g in gpus if g.get("run_id")}
-        free = [g["index"] for g in gpus if g.get("index") not in busy]
-        if not gpus:
-            # no NVML: allow a virtual 4-GPU pool tracked only by running jobs
-            running = (
-                await session.scalars(select(Job).where(Job.status == JobStatus.RUNNING.value))
-            ).all()
-            used = sum(int((j.spec.get("resources") or {}).get("gpus") or 0) for j in running)
-            free = list(range(max(0, 4 - used)))
+        free = _free_gpu_indices(doctor)
+        if free is None:
+            log.error("ebd doctor reported no GPUs; skip admission this tick (set EB_FAKE_GPUS for tests)")
+            return
         jobs = (
             await session.scalars(
                 select(Job)

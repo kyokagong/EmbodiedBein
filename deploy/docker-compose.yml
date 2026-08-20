@@ -68,6 +68,7 @@ services:
       context: ..
       dockerfile: deploy/ebd.Dockerfile
     restart: unless-stopped
+    runtime: nvidia
     network_mode: host
     pid: host
     environment:
@@ -76,11 +77,17 @@ services:
       EB_EBD_UDS: /run/eb/ebd.sock
       EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
       TZ: Asia/Shanghai
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
+    devices:
+      - /dev/dri:/dev/dri
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/eb:/var/lib/eb
       - /run/eb:/run/eb
       - /data/kk:/data/kk:ro
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
     healthcheck:
       test: ["CMD", "ebctl", "health"]
       interval: 10s
