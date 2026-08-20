@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     contracts_dir: Path = Path("/app/contracts")
     ingest_roots: str = "/data/kk/Berkeley-Humanoid-Lite,/data/kk/berkeley_ego_data"
     fake_gpus: str = ""  # e.g. "0,1,2,3" for tests; empty means never invent GPUs
+    bhl_repo: Path = Path("/data/kk/Berkeley-Humanoid-Lite")
     web_dist: Path = Path("/app/web/dist")
 
 
