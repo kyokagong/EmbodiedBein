@@ -1,0 +1,3 @@
+{"ts":"2026-08-21T00:00:00Z","role":"user","tool":null,"args":{"text":"写日报"},"result":null,"llm_calls":0}
+{"ts":"2026-08-21T00:00:01Z","role":"tool","tool":"query.jobs","args":{},"result":{"n":0},"llm_calls":0}
+{"ts":"2026-08-21T00:00:02Z","role":"tool","tool":"query.models","args":{},"result":{"n":0},"llm_calls":0}

@@ -95,6 +95,11 @@ class ToolBus:
         if decision.needs_approval:
             return ToolResult(ok=False, error="approval_required", data={"tool": name, "args": args})
         spec = REGISTRY[name]
+        if spec.effect != "read":
+            from eb.harness.budget import allow_costly
+
+            if not allow_costly():
+                return ToolResult(ok=False, error="weekly gpu budget exceeded")
         result = await spec.handler(ctx, args)
         self.prior.append(name)
         if isinstance(result, ToolResult):

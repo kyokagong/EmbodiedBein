@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from eb.domain.job import JobKind, JobSpec
 
-
 Confidence = Literal["measured", "analytic", "estimated", "interpolated"]
 Verdict = Literal["fits", "fits_tight", "no_fit", "unknown"]
 

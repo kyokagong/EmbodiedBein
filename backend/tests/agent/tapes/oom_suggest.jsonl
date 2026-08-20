@@ -1,0 +1,2 @@
+{"ts":"2026-08-21T00:00:00Z","role":"user","tool":null,"args":{"text":"oom 诊断"},"result":null,"llm_calls":0}
+{"ts":"2026-08-21T00:00:01Z","role":"tool","tool":"query.jobs","args":{"status":"failed"},"result":{"n":0},"llm_calls":0}

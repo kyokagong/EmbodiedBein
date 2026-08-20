@@ -1,0 +1,2 @@
+{"ts":"2026-08-21T00:00:00Z","role":"user","tool":null,"args":{"text":"真机放行"},"result":null,"llm_calls":0}
+{"ts":"2026-08-21T00:00:01Z","role":"guardrail","tool":"deploy.release","args":{},"result":"blocked","llm_calls":0}

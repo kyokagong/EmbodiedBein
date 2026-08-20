@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from eb.agent.tools import AgentCtx
 from eb.harness.toolbus import ToolBus
-from eb.store.models import EvalReport, Job, ModelVersion, Run
 
 
 @dataclass
@@ -64,14 +63,18 @@ PLAYBOOKS = [
 
 
 async def dispatch(session: AsyncSession, text: str, bus: ToolBus) -> PlaybookResult:
-    low = text.lower()
-    blocked = bus.check("deploy.release", {})
-    if any(k in text for k in ("真机放行", "改契约", "门禁豁免", "gate.override", "contract.modify")):
+    ctx = AgentCtx(api=session, principal="agent:playbook")
+    if any(k in text for k in ("真机放行", "改契约", "门禁豁免", "gate.override", "contract.modify", "deploy.release")):
+        bus.check("deploy.release", {})
+        from eb.harness.tape import append_event
+
+        append_event(role="guardrail", tool="deploy.release", args={}, result="blocked", llm_calls=0)
         return PlaybookResult(
             name="guardrail",
             reply="已拦截：真机放行 / 改契约 / 门禁豁免 是结构禁止动作，已写入审计。规则路径 llm_calls=0。",
             guardrail="blocked",
         )
+    low = text.lower()
     if "submit" in low and "train" in low:
         d = bus.check("job.submit.train", {"gpus": 2, "max_hours": 8})
         if d.needs_approval or not d.allowed:
@@ -80,65 +83,68 @@ async def dispatch(session: AsyncSession, text: str, bus: ToolBus) -> PlaybookRe
                 reply=f"该提交需要审批或被护栏拦截：{d.reason}",
                 guardrail="blocked",
             )
+        from eb.harness.budget import allow_costly
+
+        if not allow_costly():
+            return PlaybookResult(
+                name="job.submit.train",
+                reply="周 GPU·h 预算已用尽，只允许 effect=read 工具。",
+                guardrail="blocked",
+            )
     for pb in PLAYBOOKS:
         if any(k in text for k in pb["keywords"]):
-            body = await _run(pb["id"], session)
+            body = await _run(pb["id"], ctx, bus)
             return PlaybookResult(name=pb["name"], reply=body)
-    body = await _run("daily_report", session)
+    from eb.agent.llm import maybe_llm
+
+    llm = await maybe_llm(text)
+    if llm:
+        return PlaybookResult(name="llm", reply=llm, llm_calls=1)
+    body = await _run("daily_report", ctx, bus)
     return PlaybookResult(
         name="rules",
         reply="规则层（无 LLM）：我可以查队列、契约、估算显存，并跑 7 个预置剧本。"
-        "关掉 LLM 时规则与剧本仍可用。\n\n"
-        + body,
+        "关掉 LLM 时规则与剧本仍可用。\n\n" + body,
     )
 
 
-async def _run(pid: str, session: AsyncSession) -> str:
-    n_jobs = await session.scalar(select(func.count()).select_from(Job)) or 0
-    n_models = await session.scalar(select(func.count()).select_from(ModelVersion)) or 0
-    failed = (
-        await session.scalars(select(Job).where(Job.status.in_(["failed", "infra_failed"])).limit(5))
-    ).all()
-    queued = (await session.scalars(select(Job).where(Job.status == "queued").limit(8))).all()
-    reports = (await session.scalars(select(EvalReport).limit(5))).all()
-    latest = (await session.scalars(select(Run).order_by(Run.created_at.desc()).limit(5))).all()
+async def _run(pid: str, ctx: AgentCtx, bus: ToolBus) -> str:
+    jobs = await bus.call("query.jobs", ctx, {"limit": 20})
+    models = await bus.call("query.models", ctx, {})
+    n_jobs = len((jobs.data or {}).get("items") or [])
+    n_models = len((models.data or {}).get("items") or [])
+    job_ref = jobs.ref_id or ""
+    model_ref = models.ref_id or ""
+    failed = [j for j in (jobs.data or {}).get("items") or [] if j.get("status") in ("failed", "infra_failed")]
+    queued = [j for j in (jobs.data or {}).get("items") or [] if j.get("status") == "queued"]
 
     if pid == "diagnose_train_fail":
         if not failed:
             return "训练失败诊断：当前没有 failed/infra_failed 任务。已知模式库含 OOM / 缺显示设备 / 契约不匹配。"
-        lines = [f"- {j.id} {j.kind} {j.error or j.status}" for j in failed]
+        lines = [f"- {j['id']} {j['kind']} {j.get('error') or j['status']}" for j in failed[:8]]
         return "训练失败诊断（规则路径，llm_calls=0）：\n" + "\n".join(lines)
     if pid == "hyperparam_sweep":
         return "超参扫描剧本已注册。第一版只生成计划，不自动提交 GPU 任务。并发受周预算约束。"
     if pid == "night_queue":
-        idle = 4 - min(4, len(queued))
-        return f"夜间队列填充：待办 {len(queued)} 个，估算空闲槽 {idle}。将以可抢占方式提交，早上 8:00 前腾出。"
+        return f"夜间队列填充：待办 {len(queued)} 个。将以可抢占方式提交，早上 8:00 前腾出。"
     if pid == "pre_deploy_check":
         return (
             "上机前检查清单：G1–G5 必须通过；sim2sim 一致性；标定未过期；固件关节数匹配契约。"
             "最后放行按钮仍由人按。Agent 不能调用 deploy.release。"
         )
     if pid == "data_gap":
-        return (
-            "数据缺口分析：berkeley_ego_data 漏斗 155k 事件 → 35 场景。"
-            "建议优先补失败场景的 object/instruction 组合，而不是再堆原始事件。"
-        )
+        return "数据缺口分析：漏斗数字来自最近一次 ebd scan，而不是种子 155000。"
     if pid == "storage_patrol":
         return (
-            f"资源与存储巡检：已纳管模型 {n_models} 个、任务 {n_jobs} 个。"
+            f"资源与存储巡检：已纳管模型 {n_models} 个、最近任务 {n_jobs} 个。"
             "可回收候选需人工确认后才删除，删除动作永不自动执行。"
         )
-    # daily_report default
-    runs = [f"- {r.id} {r.status} {list((r.metrics_summary or {}).keys())[:4]}" for r in latest]
-    extra = [f"- report {r.id}" for r in reports]
     return (
         "【日报】（规则路径，llm_calls=0）\n"
-        f"任务总数 {n_jobs} · 模型 {n_models} · 队列 {len(queued)}\n"
-        "最近 run：\n"
-        + ("\n".join(runs) or "- 无")
-        + "\n异常与风险：历史导入记录 provenance=partial，五元组不完整。\n"
-        "待决策：是否为未归属 ONNX 指定契约。\n"
-        + ("评估：\n" + "\n".join(extra) if extra else "")
+        f"最近任务 {n_jobs} · 模型 {n_models}\n"
+        f"任务 ref `{job_ref or 'none'}` · 模型 ref `{model_ref or 'none'}`\n"
+        "异常与风险：历史导入 provenance 可能为 partial。\n"
+        "待决策：是否为未归属 ONNX 指定契约。"
     )
 
 

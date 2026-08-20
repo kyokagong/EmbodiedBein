@@ -1,6 +1,6 @@
+from eb.agent import tools as _tools  # noqa: F401
 from eb.agent.playbooks import PLAYBOOKS, dispatch
 from eb.harness.toolbus import ToolBus
-from eb.agent import tools as _tools  # noqa: F401
 
 
 class _FakeSession:

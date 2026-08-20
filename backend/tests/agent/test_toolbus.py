@@ -1,5 +1,5 @@
-from eb.harness.toolbus import FORBIDDEN, ToolBus
 from eb.agent import tools as _tools  # noqa: F401
+from eb.harness.toolbus import FORBIDDEN, ToolBus
 
 
 def test_forbidden_tools_blocked():
