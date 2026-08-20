@@ -18,7 +18,7 @@ from eb.ids import new_id
 from eb.settings import get_settings
 from eb.store.ebd import EbdClient
 from eb.store.models import EmbodimentContractRow, Job, Run
-from eb.worktree import overlay_mounts, prepare_run_dirs, prepare_worktree
+from eb.worktree import overlay_mounts, prepare_run_dirs, prepare_worktree, seed_rsl_resume
 
 log = logging.getLogger(__name__)
 
@@ -102,8 +102,22 @@ class Orchestrator:
             await session.refresh(job)
             await session.refresh(run)
             return run
-        rendered = get_adapter(spec).render(spec, run.id)
         run_root = prepare_run_dirs(run.id)
+        if spec.inputs.resume_from:
+            try:
+                load_run, ckpt = seed_rsl_resume(run_root, spec.inputs.resume_from)
+            except FileNotFoundError as e:
+                apply_ebd_result(
+                    job,
+                    run,
+                    {"status": "docker_error", "reason": str(e), "container_id": None},
+                )
+                await session.commit()
+                return run
+            spec = spec.model_copy(
+                update={"overrides": ["--load_run", load_run, "--checkpoint", ckpt, *spec.overrides]}
+            )
+        rendered = get_adapter(spec).render(spec, run.id)
         mounts = list(rendered.mounts)
         repo = Path(spec.code_ref.repo) if spec.code_ref and spec.code_ref.repo else get_settings().bhl_repo
         if repo.exists() and (repo / ".git").exists():

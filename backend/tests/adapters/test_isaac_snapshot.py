@@ -32,3 +32,21 @@ def test_isaac_adapter_snapshot():
     cmd = equivalent_command(spec, "run_test")
     assert "docker run" in cmd
     assert "--headless" in cmd
+
+
+def test_export_policy_uses_play_export_only():
+    spec = JobSpec(
+        kind=JobKind.EXPORT_POLICY,
+        contract_id="ec_bhl_biped_12dof_v1",
+        name="biped-export",
+        params={"task": "Velocity-Berkeley-Humanoid-Lite-Biped-v0", "num_envs": 16, "seed": 0},
+        overrides=["--load_run", "2026-08-20_biped-smoke", "--checkpoint", "model_4.pt"],
+        image="eb/isaac-lab:2.3.2",
+    )
+    rendered = get_adapter(spec).render(spec, "run_export")
+    assert rendered.command[:3] == ["/isaac-sim/python.sh", "scripts/rsl_rl/play.py", "--task"]
+    assert "--export_only" in rendered.command
+    assert "--load_run" in rendered.command
+    assert "model_4.pt" in rendered.command
+    assert "--max_iterations" not in rendered.command
+    assert "berkeley_humanoid_lite_assets" in rendered.env["PYTHONPATH"]

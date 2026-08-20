@@ -40,6 +40,31 @@ def test_worktree_leaves_source_clean(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def test_seed_rsl_resume_copies_checkpoint(tmp_path, monkeypatch):
+    from eb.worktree import seed_rsl_resume
+
+    data = tmp_path / "eb"
+    monkeypatch.setenv("EB_DATA_ROOT", str(data))
+    from eb.settings import get_settings
+
+    get_settings.cache_clear()
+    src_dir = data / "runs" / "run_src" / "logs" / "rsl_rl" / "biped" / "2026-08-20_biped-smoke"
+    src_dir.mkdir(parents=True)
+    (src_dir / "model_0.pt").write_bytes(b"old")
+    (src_dir / "model_4.pt").write_bytes(b"latest-ckpt")
+    (src_dir / "params").mkdir()
+    (src_dir / "params" / "env.yaml").write_text("ok\n")
+    dest = data / "runs" / "run_export"
+    dest.mkdir(parents=True)
+    load_run, ckpt = seed_rsl_resume(dest, "run_src")
+    assert load_run == "2026-08-20_biped-smoke"
+    assert ckpt == "model_4.pt"
+    copied = dest / "logs" / "rsl_rl" / "biped" / load_run / "model_4.pt"
+    assert copied.read_bytes() == b"latest-ckpt"
+    assert (dest / "logs" / "rsl_rl" / "biped" / load_run / "params" / "env.yaml").read_text() == "ok\n"
+    get_settings.cache_clear()
+
+
 def test_overlay_writable_binds(tmp_path):
     wt = tmp_path / "wt"
     run = tmp_path / "run"

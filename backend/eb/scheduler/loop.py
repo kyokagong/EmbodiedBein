@@ -65,7 +65,11 @@ class Scheduler:
                 JobKind.TRAIN_SFT,
                 JobKind.TRAIN_RLFT,
                 JobKind.EVAL_SIM,
+                JobKind.EVAL_SIM2SIM,
+                JobKind.EXPORT_POLICY,
                 JobKind.DATA_COLLECT,
+                JobKind.DATA_RETARGET,
+                JobKind.ASSET_VALIDATE,
                 JobKind.SERVE_POLICY,
             }
             need = spec.resources.gpus

@@ -65,6 +65,22 @@ class IsaacLabRslRlAdapter(Adapter):
                 "/workspace/isaaclab_extension_template/outputs/metrics.json",
                 *spec.overrides,
             ]
+        if spec.kind == JobKind.EXPORT_POLICY:
+            cmd = [
+                "/isaac-sim/python.sh",
+                "scripts/rsl_rl/play.py",
+                "--task",
+                str(task),
+                "--headless",
+                "--device",
+                "cuda:0",
+                "--num_envs",
+                str(spec.params.get("num_envs", 16)),
+                "--seed",
+                str(seed),
+                "--export_only",
+                *spec.overrides,
+            ]
         return RenderedJob(
             image=_image(spec, "eb/isaac-lab:2.3.2"),
             command=cmd,
