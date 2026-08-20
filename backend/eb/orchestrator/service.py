@@ -201,6 +201,14 @@ class Orchestrator:
         from eb.orchestrator.collect import claim_outputs
 
         await claim_outputs(session, job, run)
+        if job.status in {JobStatus.FAILED.value, JobStatus.INFRA_FAILED.value}:
+            await session.commit()
+            return
+        if run.status == RunStatus.ABORTED.value:
+            if job.status == JobStatus.RUNNING.value:
+                job.status = JobStatus.FAILED.value
+            await session.commit()
+            return
         run.status = RunStatus.FINISHED.value
         run.finished_at = datetime.now(UTC)
         job.status = JobStatus.SUCCEEDED.value

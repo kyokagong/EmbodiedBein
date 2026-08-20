@@ -23,6 +23,7 @@ from eb.gates.engine import GateContext, evaluate_gate_dsl, g1_submit, g3_model
 from eb.harness.toolbus import ToolBus
 from eb.ids import new_id
 from eb.orchestrator.service import Orchestrator
+from eb.pipelines import start_pipeline
 from eb.settings import get_settings
 from eb.store.ebd import EbdClient
 from eb.store.models import (
@@ -40,6 +41,7 @@ from eb.store.models import (
     LineageEdge,
     ModelFamily,
     ModelVersion,
+    Pipeline,
     Robot,
     Run,
     Share,
@@ -625,10 +627,28 @@ async def search(q: str, session: SessionDep, principal: PrincipalDep) -> dict:
 
 @api_v1.get("/pipelines")
 async def pipelines(session: SessionDep, principal: PrincipalDep) -> dict:
-    from eb.store.models import Pipeline
-
     rows = (await session.scalars(select(Pipeline))).all()
-    return {"items": [_row(r, ["id", "name", "spec"]) for r in rows]}
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "name": r.name,
+                "status": (r.spec or {}).get("status"),
+                "job_ids": (r.spec or {}).get("job_ids") or [],
+                "spec": r.spec,
+            }
+            for r in rows
+        ]
+    }
+
+
+@api_v1.post("/pipelines/{pid}/start")
+async def pipeline_start(pid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    row = await session.get(Pipeline, pid)
+    if not row:
+        raise HTTPException(404)
+    await start_pipeline(session, row)
+    return {"id": row.id, "status": (row.spec or {}).get("status")}
 
 
 @api_v1.post("/gates/{gid}/evaluations")

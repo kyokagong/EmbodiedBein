@@ -19,6 +19,7 @@ from eb.store.models import (
     DatasetVersion,
     EmbodimentContractRow,
     EvalSuite,
+    Pipeline,
     Robot,
     Share,
     User,
@@ -96,15 +97,16 @@ async def seed_if_empty(session: AsyncSession) -> None:
                 dataset_id=ds.id,
                 version="raw",
                 compatible_contracts=[],
-                stats={"events": 155000, "scenarios": 35},
+                stats={"note": "await data.scan"},
                 funnel={
-                    "stages": [
-                        {"name": "raw_events", "n": 155000},
-                        {"name": "valid_episode", "n": 1200},
-                        {"name": "scenario", "n": 35},
-                    ]
+                    "source": {"n": 0, "rejected": []},
+                    "raw": {"n": 0, "rejected": []},
+                    "valid_episode": {"n": 0, "rejected": []},
+                    "retargeted": {"n": 0, "rejected": []},
+                    "canonical": {"n": 0, "rejected": []},
+                    "slice": {"n": 0, "rejected": []},
                 },
-                content_hash="unknown",
+                content_hash="unscanned",
             )
         )
         session.add(
@@ -117,6 +119,34 @@ async def seed_if_empty(session: AsyncSession) -> None:
             )
         )
         await session.flush()
+        session.add(
+            Pipeline(
+                id="pipe_ego_scan_slice",
+                name="scan then slice ego",
+                spec={
+                    "status": "idle",
+                    "cursor": 0,
+                    "job_ids": [],
+                    "steps": [
+                        {
+                            "kind": "data.scan",
+                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
+                            "params": {"path": "/data/kk/berkeley_ego_data"},
+                            "resources": {"gpus": 0},
+                        },
+                        {
+                            "kind": "data.slice",
+                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
+                            "params": {
+                                "dataset_id": "ds_berkeley_ego",
+                                "query": {"limit": 1},
+                            },
+                            "resources": {"gpus": 0},
+                        },
+                    ],
+                },
+            )
+        )
         session.add(
             Robot(
                 id="robot_bhl_01",
@@ -142,7 +172,7 @@ async def seed_if_empty(session: AsyncSession) -> None:
                     "kpis": [
                         {"label": "历史策略", "value": "6+", "foot": "遗留导入"},
                         {"label": "契约", "value": "4", "foot": "humanoid/biped/wbc/hand"},
-                        {"label": "数据场景", "value": "35", "foot": "155k 事件漏斗"},
+                        {"label": "数据场景", "value": "待扫描", "foot": "漏斗来自 data.scan"},
                     ],
                     "milestones": [
                         {"t": "M0", "d": "平台骨架与只读纳管"},

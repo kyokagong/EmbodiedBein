@@ -7,10 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from eb.domain.fsm import JobStatus, RunStatus
-from eb.domain.job import JobSpec
+from eb.domain.job import CONTAINERLESS_KINDS, JobKind, JobSpec
 from eb.orchestrator.service import Orchestrator
+from eb.pipelines import advance_pipeline
 from eb.store.ebd import EbdClient
-from eb.store.models import Job, Run
+from eb.store.models import Job, Pipeline, Run
 
 log = logging.getLogger(__name__)
 
@@ -39,11 +40,11 @@ class Scheduler:
 
     async def tick(self, session: AsyncSession) -> None:
         await self.reap_running(session)
+        await self.advance_pipelines(session)
         doctor = await self.ebd.doctor()
         free = _free_gpu_indices(doctor)
         if free is None:
-            log.error("ebd doctor reported no GPUs; skip admission this tick (set EB_FAKE_GPUS for tests)")
-            return
+            log.error("ebd doctor reported no GPUs; skip GPU admission this tick (set EB_FAKE_GPUS for tests)")
         jobs = (
             await session.scalars(
                 select(Job)
@@ -53,15 +54,50 @@ class Scheduler:
         ).all()
         for job in jobs:
             spec = JobSpec.model_validate({**job.spec, "kind": job.kind, "contract_id": job.contract_id})
-            need = spec.resources.gpus
-            if need and len(free) < need:
+            if spec.kind in CONTAINERLESS_KINDS:
+                try:
+                    await self.orch.admit_and_start(session, job, [])
+                except Exception:
+                    log.exception("admit_and_start failed for %s", job.id)
                 continue
-            assigned = free[:need] if need else []
+            gpu_kinds = {
+                JobKind.TRAIN_RL,
+                JobKind.TRAIN_SFT,
+                JobKind.TRAIN_RLFT,
+                JobKind.EVAL_SIM,
+                JobKind.DATA_COLLECT,
+                JobKind.SERVE_POLICY,
+            }
+            need = spec.resources.gpus
+            if spec.kind in gpu_kinds:
+                need = need or 1
+            if not need:
+                try:
+                    await self.orch.admit_and_start(session, job, [])
+                except Exception:
+                    log.exception("admit_and_start failed for %s", job.id)
+                continue
+            if free is None:
+                continue
+            if len(free) < need:
+                continue
+            assigned = free[:need]
             free = free[need:]
             try:
                 await self.orch.admit_and_start(session, job, assigned)
             except Exception:
                 log.exception("admit_and_start failed for %s", job.id)
+
+    async def advance_pipelines(self, session: AsyncSession) -> None:
+        rows = (await session.scalars(select(Pipeline))).all()
+        for pipe in rows:
+            status = (pipe.spec or {}).get("status")
+            if status != "running":
+                continue
+            try:
+                await advance_pipeline(session, pipe, self.orch, "user:kk")
+            except Exception:
+                log.exception("advance_pipeline failed for %s", pipe.id)
 
     async def reap_running(self, session: AsyncSession) -> None:
         jobs = (await session.scalars(select(Job).where(Job.status == JobStatus.RUNNING.value))).all()

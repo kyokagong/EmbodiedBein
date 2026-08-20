@@ -50,11 +50,13 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
         session.add(report)
         run.metrics_summary = {k: v for k, v in report.metrics.items() if k != "per_seed"}
 
-    if not outputs.exists():
+    search_roots = [p for p in (outputs, root / "logs") if p.exists()]
+    if not search_roots:
         return
-    onnx_files = list(outputs.rglob("exported/policy.onnx")) + [
-        p for p in outputs.rglob("*.onnx") if p.name != "policy.onnx" or "exported" not in p.parts
-    ]
+    onnx_files: list[Path] = []
+    for base in search_roots:
+        onnx_files.extend(base.rglob("exported/policy.onnx"))
+        onnx_files.extend(p for p in base.rglob("*.onnx") if "exported" not in p.parts or p.name != "policy.onnx")
     # unique
     seen: set[str] = set()
     uniq: list[Path] = []
@@ -63,7 +65,17 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
         if k not in seen:
             seen.add(k)
             uniq.append(p)
-    ckpt_files = list(outputs.rglob("model_*.pt"))
+    ckpt_files: list[Path] = []
+    for base in search_roots:
+        ckpt_files.extend(base.rglob("model_*.pt"))
+    ckpt_seen: set[str] = set()
+    ckpt_uniq: list[Path] = []
+    for p in ckpt_files:
+        k = str(p)
+        if k not in ckpt_seen:
+            ckpt_seen.add(k)
+            ckpt_uniq.append(p)
+    ckpt_files = ckpt_uniq
     if not uniq and not ckpt_files:
         return
 
