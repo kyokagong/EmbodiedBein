@@ -25,5 +25,5 @@ RSL-RL 随该镜像内的 Isaac Lab 安装提供，不另起栈。
 
 - `make images` 必须能 `docker image inspect isaac-lab-template`，否则失败并打印「先有 isaac-lab-template」。
 - **禁止**回落到 busybox 或凭空 NGC tag。
-- Dockerfile 仅 `FROM` 该镜像并固定 workdir / EULA，不重新发明依赖。
+- `eb/isaac-lab:2.3.2` Dockerfile 清空 ENTRYPOINT：源镜像是 `runheadless.sh`（Isaac Sim Streaming），权威容器 `isaac-lab-template` 实际用 bash 跑 `python scripts/rsl_rl/train.py`。
 - Job 指纹使用 `docker image inspect --format '{{.Id}}'`，不用浮动 tag。

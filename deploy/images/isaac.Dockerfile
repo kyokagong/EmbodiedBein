@@ -3,3 +3,6 @@ ARG BASE=isaac-lab-template
 FROM ${BASE}
 ENV ACCEPT_EULA=Y OMNI_KIT_ACCEPT_EULA=YES
 WORKDIR /workspace/isaaclab_extension_template
+# The source image entrypoint is runheadless.sh (Isaac Sim streaming).
+# The working isaac-lab-template container overrides it to bash.
+ENTRYPOINT []

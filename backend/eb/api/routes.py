@@ -259,6 +259,14 @@ async def cancel_job(jid: str, session: SessionDep, principal: PrincipalDep) -> 
     job = await session.get(Job, jid)
     if not job:
         raise HTTPException(404)
+    run = await session.scalar(select(Run).where(Run.job_id == jid).order_by(Run.attempt.desc()))
+    if run and run.id:
+        try:
+            await EbdClient().cancel_run(run.id)
+        except Exception:
+            pass
+        run.status = "aborted"
+        run.abort_reason = "cancelled"
     job.status = JobStatus.CANCELLED.value
     await session.commit()
     return _job_out(job)
