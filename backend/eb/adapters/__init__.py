@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eb.adapters.base import Adapter
+from eb.adapters.data_convert import DataConvertAdapter, DataRetargetAdapter
 from eb.adapters.isaaclab_rslrl import IsaacLabRslRlAdapter
 from eb.adapters.mujoco import MujocoAdapter, NativeAdapter, ToolsAdapter
 from eb.adapters.rlinf import RlinfAdapter
@@ -11,6 +12,8 @@ _RLINF = RlinfAdapter()
 _MUJOCO = MujocoAdapter()
 _TOOLS = ToolsAdapter()
 _NATIVE = NativeAdapter()
+_CONVERT = DataConvertAdapter()
+_RETARGET = DataRetargetAdapter()
 
 KIND_ADAPTER: dict[JobKind, Adapter] = {
     JobKind.TRAIN_RL: _ISAAC,
@@ -22,9 +25,9 @@ KIND_ADAPTER: dict[JobKind, Adapter] = {
     JobKind.SERVE_POLICY: _RLINF,
     JobKind.EVAL_SIM2SIM: _MUJOCO,
     JobKind.DATA_COMPILE: _TOOLS,
-    JobKind.DATA_CONVERT: _TOOLS,
+    JobKind.DATA_CONVERT: _CONVERT,
     JobKind.DATA_CANONICALIZE: _TOOLS,
-    JobKind.DATA_RETARGET: _TOOLS,
+    JobKind.DATA_RETARGET: _RETARGET,
     JobKind.REPORT_RENDER: _TOOLS,
     JobKind.ASSET_VALIDATE: _TOOLS,
     JobKind.BUNDLE_BUILD: _TOOLS,

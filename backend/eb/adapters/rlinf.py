@@ -12,22 +12,21 @@ class RlinfAdapter(Adapter):
         cfg_name = spec.params.get("config_name", "maniskill_rlt_stage1_sft_openpi_pi05")
         cfg_path = spec.params.get("config_path", "examples/sft/config/")
         ray_port = (spec.runtime.get("ray") or {}).get("port", 6390)
+        gpus = spec.resources.gpus or 2
         script = "examples/sft/train_vla_sft.py"
         if spec.kind == JobKind.TRAIN_RLFT:
             script = "examples/rlft/train.py"
         cmd = [
-            "python",
-            script,
-            "--config-path",
-            f"/workspace/rlinf/{cfg_path}",
-            "--config-name",
-            str(cfg_name),
-            "cluster.num_nodes=1",
-            f"cluster.ray_port={ray_port}",
-            *spec.overrides,
+            "bash",
+            "-lc",
+            f"ray start --head --port {ray_port} && python {script} "
+            f"--config-path /workspace/rlinf/{cfg_path} --config-name {cfg_name} "
+            f"cluster.num_nodes=1 cluster.ray_port={ray_port} "
+            f"cluster.component_placement.actor_rollout={gpus} "
+            + " ".join(spec.overrides),
         ]
         env = {"MUJOCO_GL": "egl", "PYOPENGL_PLATFORM": "egl"}
-        env.update((spec.runtime.get("env") or {}))
+        env.update(spec.runtime.get("env") or {})
         return RenderedJob(
             image=_image(spec, "eb/rlinf:0.4.0-emb"),
             command=cmd,
