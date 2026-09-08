@@ -31,7 +31,7 @@ class ToolSpec:
 
 
 REGISTRY: dict[str, ToolSpec] = {}
-FORBIDDEN = {"deploy.release", "contract.create", "contract.modify", "gate.override"}
+FORBIDDEN = {"deploy.release", "embodiment_env.publish", "gate.override"}
 
 
 def tool(

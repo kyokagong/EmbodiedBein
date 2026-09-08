@@ -10,17 +10,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from eb.adapters import equivalent_command, get_adapter
 from eb.capacity import estimate_job
-from eb.domain.contract import Contract
+from eb.domain.contract import EmbodimentEnv
 from eb.domain.fsm import JobStatus, RunStatus, transition
-from eb.domain.job import CONTAINERLESS_KINDS, JobKind, JobSpec
+from eb.domain.job import CONTAINERLESS_KINDS, CodeRefs, GitCodeRef, JobKind, JobSpec
+from eb.domain.task import TaskSpec
 from eb.gates.engine import GateContext, g1_submit
 from eb.ids import new_id
 from eb.settings import get_settings
 from eb.store.ebd import EbdClient
-from eb.store.models import EmbodimentContractRow, Job, Run
-from eb.worktree import overlay_mounts, prepare_run_dirs, prepare_worktree, seed_rsl_resume
+from eb.store.models import EmbodimentEnvRow, EmbodimentRow, Job, Run, TaskRow
+from eb.worktree import git_is_dirty, overlay_mounts, prepare_run_dirs, prepare_worktree, resolve_commit, seed_rsl_resume
 
 log = logging.getLogger(__name__)
+
+
+def _git_ref(path: Path, commit: str | None, kind: str = "git_external") -> GitCodeRef:
+    sha = resolve_commit(path, commit) if (path / ".git").exists() else commit
+    return GitCodeRef(kind=kind, path=str(path), commit=sha)
+
+
+def _refuse_dirty(path: Path, label: str) -> None:
+    if path.exists() and (path / ".git").exists() and git_is_dirty(path):
+        raise PermissionError(
+            {
+                "violations": [
+                    {
+                        "path": f"code_refs.{label}",
+                        "expected": "clean worktree",
+                        "actual": "dirty",
+                        "hint": "G1 拒绝脏工作树；只用 /var/lib/eb/repos/<slug>/<commit> 快照",
+                    }
+                ]
+            }
+        )
 
 
 def apply_ebd_result(job, run, result: dict) -> None:
@@ -47,11 +69,42 @@ class Orchestrator:
             existing = await session.scalar(select(Job).where(Job.idem_key == idem_key))
             if existing:
                 return existing
-        row = await session.get(EmbodimentContractRow, spec.contract_id)
+        row = await session.get(EmbodimentEnvRow, spec.embodiment_env_id)
         if not row:
-            raise ValueError(f"unknown contract {spec.contract_id}")
-        ctr = Contract.model_validate(row.spec)
-        gate = g1_submit(spec, ctr, GateContext(dataset_versions=[]))
+            raise ValueError(f"unknown embodiment env {spec.embodiment_env_id}")
+        env = EmbodimentEnv.model_validate(row.spec)
+        task = None
+        if spec.task_id:
+            trow = await session.get(TaskRow, spec.task_id)
+            if trow:
+                task = TaskSpec.model_validate(trow.spec)
+        params = dict(spec.params)
+        if task and not params.get("task"):
+            gym = task.gym_id()
+            if gym:
+                params["task"] = gym
+        if task and spec.kind in {JobKind.TRAIN_SFT, JobKind.TRAIN_RLFT} and not params.get("config_name"):
+            cfg = task.rlinf_config_name()
+            if cfg:
+                params["config_name"] = cfg
+        if params != spec.params:
+            spec = spec.model_copy(update={"params": params})
+        emb = await session.get(EmbodimentRow, env.embodiment_id)
+        settings = get_settings()
+        refs = spec.code_refs or CodeRefs()
+        emb_path = Path((refs.embodiment.path if refs.embodiment else "") or ((emb.source or {}).get("path") if emb else "") or settings.bhl_repo)
+        if emb_path.exists() and (emb_path / ".git").exists():
+            _refuse_dirty(emb_path, "embodiment")
+            refs = refs.model_copy(update={"embodiment": _git_ref(emb_path, refs.embodiment.commit if refs.embodiment else None)})
+        stack_kind = (spec.runtime.get("stack") if spec.runtime else None) or spec.params.get("stack")
+        need_rlinf = spec.kind in {JobKind.TRAIN_SFT, JobKind.TRAIN_RLFT} or stack_kind == "rlinf"
+        if need_rlinf:
+            stack_path = Path((refs.stack.path if refs.stack else "") or settings.rlinf_repo)
+            if stack_path.exists() and (stack_path / ".git").exists():
+                _refuse_dirty(stack_path, "stack")
+                refs = refs.model_copy(update={"stack": _git_ref(stack_path, refs.stack.commit if refs.stack else None)})
+        spec = spec.model_copy(update={"code_refs": refs})
+        gate = g1_submit(spec, env, GateContext(dataset_versions=[], task=task))
         if not gate.passed:
             raise PermissionError({"violations": [v.model_dump() for v in gate.violations]})
         est = estimate_job(spec)
@@ -59,7 +112,7 @@ class Orchestrator:
             raise PermissionError({"capacity": est.__dict__})
         job = Job(
             id=new_id("job"),
-            contract_id=spec.contract_id,
+            embodiment_env_id=spec.embodiment_env_id,
             kind=spec.kind.value,
             spec=spec.model_dump(mode="json"),
             spec_hash=spec.canonical_hash(),
@@ -74,7 +127,7 @@ class Orchestrator:
         return job
 
     async def admit_and_start(self, session: AsyncSession, job: Job, gpu_ids: list[int]) -> Run:
-        spec = JobSpec.model_validate({**job.spec, "kind": job.kind, "contract_id": job.contract_id, "api_version": "eb/v1"})
+        spec = JobSpec.model_validate({**job.spec, "kind": job.kind, "embodiment_env_id": job.embodiment_env_id, "api_version": "eb/v1"})
         job.status = transition(JobStatus(job.status), JobStatus.ADMITTED).value
         job.status = transition(JobStatus(job.status), JobStatus.PREPARING).value
         job.attempts += 1
@@ -119,15 +172,62 @@ class Orchestrator:
             )
         rendered = get_adapter(spec).render(spec, run.id)
         mounts = list(rendered.mounts)
-        repo = Path(spec.code_ref.repo) if spec.code_ref and spec.code_ref.repo else get_settings().bhl_repo
+        emb_ref = spec.code_refs.embodiment if spec.code_refs else None
+        repo = Path(emb_ref.path) if emb_ref and emb_ref.path else get_settings().bhl_repo
+        isaac_like = spec.kind not in {JobKind.TRAIN_SFT, JobKind.TRAIN_RLFT}
         if repo.exists() and (repo / ".git").exists():
+            if git_is_dirty(repo):
+                apply_ebd_result(
+                    job,
+                    run,
+                    {"status": "dirty_worktree", "reason": "G1 拒绝脏工作树", "container_id": None},
+                )
+                await session.commit()
+                return run
             try:
-                wt = prepare_worktree(repo, spec.code_ref.commit if spec.code_ref else None, run.id)
-                writable = rendered.writable_paths or ["logs", "outputs", "configs"]
-                mounts = overlay_mounts(wt, run_root, writable)
-            except Exception:
+                wt = prepare_worktree(repo, emb_ref.commit if emb_ref else None, run.id, slug=repo.name.lower().replace(" ", "_"))
+                if isaac_like:
+                    writable = rendered.writable_paths or ["logs", "outputs", "configs"]
+                    mounts = overlay_mounts(wt, run_root, writable)
+                else:
+                    mounts = [(src, dst, mode) for src, dst, mode in mounts if dst != "/workspace/berkeley"]
+                    mounts.append((str(wt), "/workspace/berkeley", "ro"))
+            except Exception as e:
                 log.exception("prepare_worktree failed for %s", run.id)
-                mounts = list(rendered.mounts)
+                apply_ebd_result(
+                    job,
+                    run,
+                    {"status": "docker_error", "reason": f"worktree snapshot failed: {e}", "container_id": None},
+                )
+                await session.commit()
+                return run
+        stack_ref = spec.code_refs.stack if spec.code_refs else None
+        if stack_ref and stack_ref.path:
+            sp = Path(stack_ref.path)
+            dst = "/workspace/rlinf"
+            mounts = [(src, d, mode) for src, d, mode in mounts if d != dst]
+            if (sp / ".git").exists():
+                if git_is_dirty(sp):
+                    apply_ebd_result(
+                        job,
+                        run,
+                        {"status": "dirty_worktree", "reason": "G1 拒绝脏栈仓工作树", "container_id": None},
+                    )
+                    await session.commit()
+                    return run
+                try:
+                    wt_s = prepare_worktree(sp, stack_ref.commit, run.id, slug=sp.name.lower().replace(" ", "_"))
+                    mounts.append((str(wt_s), dst, "ro"))
+                except Exception as e:
+                    apply_ebd_result(
+                        job,
+                        run,
+                        {"status": "docker_error", "reason": f"stack worktree snapshot failed: {e}", "container_id": None},
+                    )
+                    await session.commit()
+                    return run
+            else:
+                mounts.append((str(sp), dst, "ro"))
         try:
             result = await self.ebd.submit_run(
                 {
@@ -151,7 +251,7 @@ class Orchestrator:
             if digest:
                 from eb.domain.fingerprint import fingerprint
 
-                commit = spec.code_ref.commit if spec.code_ref else None
+                commit = emb_ref.commit if emb_ref else None
                 run.provenance = json.dumps(fingerprint(spec, digest, commit))
         except Exception as e:
             apply_ebd_result(
@@ -181,7 +281,12 @@ class Orchestrator:
             ver = await session.scalar(select(DatasetVersion).where(DatasetVersion.dataset_id == "ds_berkeley_ego"))
             if ver:
                 ver.content_hash = result.get("content_hash")
-                ver.stats = {"files": result.get("files"), "bytes": result.get("bytes"), "kinds": result.get("kinds")}
+                ver.stats = {
+                    "files": result.get("files"),
+                    "bytes": result.get("bytes"),
+                    "kinds": result.get("kinds"),
+                    "samples": result.get("samples") or [],
+                }
                 funnel = result.get("funnel") or {}
                 ver.funnel = {
                     "source": funnel.get("source") or {"n": result.get("files") or 0, "rejected": []},
@@ -205,7 +310,7 @@ class Orchestrator:
                     id=vid,
                     dataset_id=spec.params.get("dataset_id") or "ds_berkeley_ego",
                     version=str(spec.params.get("version") or vid),
-                    compatible_contracts=spec.params.get("compatible_contracts") or [],
+                    compatible_envs=spec.params.get("compatible_envs") or [],
                     stats={"query": query, "parent_hash": src_hash},
                     funnel={"slice": {"n": 0, "rejected": [{"reason": "empty_query", "count": 0}]}},
                     content_hash=src_hash,

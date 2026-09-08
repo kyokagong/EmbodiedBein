@@ -12,7 +12,7 @@ async def test_budget_blocks_submit_train(monkeypatch):
     class _S:
         pass
 
-    spec = {"kind": "train.rl", "contract_id": "ec_bhl_biped_12dof_v1", "gpus": 1}
+    spec = {"kind": "train.rl", "embodiment_env_id": "ee_bhl_biped_12dof_v1", "task_id": "tsk_bhl_velocity_biped", "gpus": 1}
     r = await bus.call("job.submit.train", AgentCtx(api=_S(), principal="t"), spec)
     assert r.ok is False
     assert "budget" in (r.error or "")

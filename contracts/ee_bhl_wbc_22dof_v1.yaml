@@ -1,4 +1,5 @@
-id: ec_bhl_wbc_22dof_v1
+id: ee_bhl_wbc_22dof_v1
+embodiment_id: emb_berkeley_humanoid_lite
 robot_family: berkeley_humanoid_lite
 morphology: humanoid
 interface_version: 1

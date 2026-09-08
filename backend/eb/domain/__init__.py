@@ -1,17 +1,24 @@
-from eb.domain.contract import Contract, load_contract, load_contract_dir
+from eb.domain.contract import EmbodimentEnv, load_env, load_env_dir
+from eb.domain.embodiment import Embodiment, EmbodimentSource
 from eb.domain.fsm import JobStatus, RunStatus, transition
-from eb.domain.job import JobKind, JobSpec
+from eb.domain.job import CodeRefs, GitCodeRef, JobKind, JobSpec
 from eb.domain.result import CheckResult, Violation
+from eb.domain.task import TaskSpec
 
 __all__ = [
-    "Contract",
+    "Embodiment",
+    "EmbodimentEnv",
+    "EmbodimentSource",
+    "TaskSpec",
     "JobKind",
     "JobSpec",
+    "CodeRefs",
+    "GitCodeRef",
     "JobStatus",
     "RunStatus",
     "CheckResult",
     "Violation",
-    "load_contract",
-    "load_contract_dir",
+    "load_env",
+    "load_env_dir",
     "transition",
 ]

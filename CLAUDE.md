@@ -8,16 +8,16 @@
 - 控制面 Python（`backend/eb`），数据面 Rust（`rust/`，单一二进制 `ebd` + `ebctl`）。
 - 外部仓只读：`/data/kk/Berkeley-Humanoid-Lite`、`/data/kk/RLinf`、`/data/kk/berkeley_ego_data`。平台不得写入这三个目录。
 - 执行一律容器化。`ebd` 是唯一持有 `docker.sock` 的服务。控制面禁止 `subprocess` 跑训练。
-- 平台内 Agent 没有后门：工具走 ToolBus，禁止 shell / 文件系统 / 出网 / SQL / 真机放行 / 改契约 / 门禁豁免。
+- 平台内 Agent 没有后门：工具走 ToolBus，禁止 shell / 文件系统 / 出网 / SQL / 真机放行 / 改已发布本体环境 / 门禁豁免。
 - 部署：`make up`。前端打进 api 镜像的 `backend/web/dist`（由 `frontend/` Vite 构建，不进 git）。
 - 单机、`docker compose` 是唯一入口。任务容器不进 compose，由 ebd 按 Job 动态创建。
 - Redis 端口 **6380**（避让 Ray 默认 6379）。
 
 ## 项目基本信息
 
-EmbodiedBein 是面向 Berkeley-Humanoid-Lite 的单机在线管理平台：契约、数据、模型、训练、评估、部署与平台 Agent。
+EmbodiedBein 是面向 Berkeley-Humanoid-Lite 的单机在线管理平台：本体、本体环境、任务、数据、模型、训练、评估、部署与平台 Agent。
 
-当前是 **v0.1 可部署骨架**：`make up` 后浏览器可打开；契约/门禁/估算器/ToolBus 是真实现；Isaac/RLinf 大镜像、真机、重定向、LLM 为占位。对照表：`docs/progress/2026-08-21-first-version.md`。
+当前是 **v0.1 可部署骨架**：`make up` 后浏览器可打开；本体环境/门禁/估算器/ToolBus 是真实现；Isaac/RLinf 大镜像、真机、重定向、LLM 为占位。对照表：`docs/progress/2026-08-21-first-version.md`。
 
 | 项 | 值 |
 |---|---|
@@ -31,7 +31,7 @@ EmbodiedBein 是面向 Berkeley-Humanoid-Lite 的单机在线管理平台：契�
 | 默认用户 | `kk` / `embodied` |
 | 默认 API Key | Bearer `eb-dev-key`；Agent `eb-agent-key` |
 | Showcase | `/showcase/bhl-progress-demo` |
-| 契约 | `ec_bhl_humanoid_22dof_v1`（75/22/25Hz）、`ec_bhl_biped_12dof_v1`（45/12/25）、`ec_bhl_wbc_22dof_v1`（85/22/50）、`ec_bhl_fixedhand_10dof_v1`（10+img/10/20） |
+| 本体 / 环境 | `emb_berkeley_humanoid_lite`；`ee_bhl_humanoid_22dof_v1`（75/22/25Hz）、`ee_bhl_biped_12dof_v1`（45/12/25）、`ee_bhl_wbc_22dof_v1`（85/22/50）、`ee_bhl_fixedhand_10dof_v1`（10+img/10/20） |
 | UDS | `/run/eb/ebd.sock`、`/run/eb/ebd-http.sock` |
 | MinIO 用户 | `ebadmin` |
 | 配置前缀 | `EB_`（`backend/eb/settings.py`、`deploy/.env.example`） |
@@ -63,11 +63,11 @@ EmbodiedBein/
 ├── CLAUDE.md                 # 本文件
 ├── README.md
 ├── Makefile
-├── contracts/                # 四个契约 YAML
-│   ├── ec_bhl_humanoid_22dof_v1.yaml
-│   ├── ec_bhl_biped_12dof_v1.yaml
-│   ├── ec_bhl_wbc_22dof_v1.yaml
-│   └── ec_bhl_fixedhand_10dof_v1.yaml
+├── contracts/                # 四份本体环境 YAML（ee_*）
+│   ├── ee_bhl_humanoid_22dof_v1.yaml
+│   ├── ee_bhl_biped_12dof_v1.yaml
+│   ├── ee_bhl_wbc_22dof_v1.yaml
+│   └── ee_bhl_fixedhand_10dof_v1.yaml
 ├── backend/                  # 控制面包 eb
 │   ├── pyproject.toml
 │   ├── alembic.ini
@@ -75,7 +75,7 @@ EmbodiedBein/
 │   ├── web/dist/             # gitignore；镜像内静态资源
 │   ├── eb/
 │   │   ├── api/              # FastAPI（路由目前集中在 routes.py）
-│   │   ├── domain/           # 纯逻辑：契约、JobSpec、FSM
+│   │   ├── domain/           # 纯逻辑：本体环境、JobSpec、FSM
 │   │   ├── orchestrator/
 │   │   ├── scheduler/
 │   │   ├── adapters/         # isaaclab_rslrl / rlinf / mujoco / …
@@ -116,6 +116,6 @@ EmbodiedBein/
 
 - 新训练栈：只加 adapter 文件 + 快照测试。
 - tfevents / 视频 / 大文件走 ebd，不要在 Python 里做热路径。
-- 禁止给平台 Agent 开 shell、改契约、真机放行。
+- 禁止给平台 Agent 开 shell、改已发布本体环境、真机放行。
 - 不要把任务大镜像绑进 `make up`。
 - 不要为了迁就实现去改 `docs/design/`。

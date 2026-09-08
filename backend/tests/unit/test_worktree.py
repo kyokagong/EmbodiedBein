@@ -40,6 +40,22 @@ def test_worktree_leaves_source_clean(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def test_git_is_dirty(tmp_path):
+    from eb.worktree import git_is_dirty
+
+    src = tmp_path / "repo"
+    src.mkdir()
+    subprocess.run(["git", "init"], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=src, check=True, capture_output=True)
+    (src / "README").write_text("hi\n")
+    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=src, check=True, capture_output=True)
+    assert git_is_dirty(src) is False
+    (src / "README").write_text("dirty\n")
+    assert git_is_dirty(src) is True
+
+
 def test_seed_rsl_resume_copies_checkpoint(tmp_path, monkeypatch):
     from eb.worktree import seed_rsl_resume
 

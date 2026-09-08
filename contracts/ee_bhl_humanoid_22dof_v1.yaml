@@ -1,12 +1,24 @@
-id: ec_bhl_biped_12dof_v1
+id: ee_bhl_humanoid_22dof_v1
+embodiment_id: emb_berkeley_humanoid_lite
 robot_family: berkeley_humanoid_lite
-morphology: biped
+morphology: humanoid
 interface_version: 1
 status: active
-dof: 12
+dof: 22
 joint_groups:
+  arm: { count: 10 }
   leg: { count: 12 }
 joint_order:
+  - arm_left_shoulder_pitch_joint
+  - arm_left_shoulder_roll_joint
+  - arm_left_shoulder_yaw_joint
+  - arm_left_elbow_pitch_joint
+  - arm_left_elbow_roll_joint
+  - arm_right_shoulder_pitch_joint
+  - arm_right_shoulder_roll_joint
+  - arm_right_shoulder_yaw_joint
+  - arm_right_elbow_pitch_joint
+  - arm_right_elbow_roll_joint
   - leg_left_hip_roll_joint
   - leg_left_hip_yaw_joint
   - leg_left_hip_pitch_joint
@@ -20,18 +32,18 @@ joint_order:
   - leg_right_ankle_pitch_joint
   - leg_right_ankle_roll_joint
 observation:
-  dim: 45
+  dim: 75
   history_length: 1
   concat: true
   layout:
     - { term: velocity_commands, dim: 3, source: command }
     - { term: base_ang_vel, dim: 3, source: imu }
     - { term: projected_gravity, dim: 3, source: imu }
-    - { term: joint_pos_rel, dim: 12, source: encoder }
-    - { term: joint_vel_rel, dim: 12, source: encoder }
-    - { term: last_action, dim: 12, source: policy }
+    - { term: joint_pos_rel, dim: 22, source: encoder }
+    - { term: joint_vel_rel, dim: 22, source: encoder }
+    - { term: last_action, dim: 22, source: policy }
 action:
-  dim: 12
+  dim: 22
   type: joint_position
   scale: 0.25
   offset: default_joint_pos
@@ -42,11 +54,11 @@ control:
   decimation: 8
   max_policy_latency_ms: 12
 sim_bindings:
-  isaac_task: Velocity-Berkeley-Humanoid-Lite-Biped-v0
-  experiment_name: biped
-  mjcf: robots/berkeley_humanoid/berkeley_humanoid_lite/mjcf/berkeley_humanoid_lite_biped.xml
-  usd: robots/berkeley_humanoid/berkeley_humanoid_lite/usd/berkeley_humanoid_lite_biped.usd
+  isaac_task: Velocity-Berkeley-Humanoid-Lite-v0
+  experiment_name: humanoid
+  mjcf: robots/berkeley_humanoid/berkeley_humanoid_lite/mjcf/berkeley_humanoid_lite.xml
+  usd: robots/berkeley_humanoid/berkeley_humanoid_lite/usd/berkeley_humanoid_lite.usd
 real_bindings:
   udp: { obs_port: 10000, action_port: 10001, viz_port: 10002, joystick_port: 10011 }
   motor_bus: socketcan
-  firmware_n_joints: 12
+  firmware_n_joints: 22

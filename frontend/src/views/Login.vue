@@ -2,8 +2,8 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api/client";
-const user = ref("kk");
-const password = ref("embodied");
+const user = ref("");
+const password = ref("");
 const err = ref("");
 const router = useRouter();
 async function go() {

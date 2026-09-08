@@ -17,6 +17,24 @@ def _git(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProces
     )
 
 
+def git_is_dirty(repo: Path) -> bool:
+    if not (repo / ".git").exists():
+        return False
+    r = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return bool(r.stdout.strip())
+
+
+def resolve_commit(repo: Path, commit: str | None = None) -> str:
+    target = commit or "HEAD"
+    return _git(["rev-parse", "--verify", target], cwd=repo).stdout.strip()
+
+
 def _copy_populated_submodules(src: Path, dest: Path) -> None:
     """Copy already-checked-out submodule trees. Do not fetch GitHub over SSH."""
     try:
@@ -41,25 +59,29 @@ def _copy_populated_submodules(src: Path, dest: Path) -> None:
         shutil.copytree(sdir, ddir, symlinks=True, ignore=shutil.ignore_patterns(".git"))
 
 
-def prepare_worktree(repo: Path, commit: str | None, run_id: str) -> Path:
-    """Snapshot repo under /var/lib/eb/worktrees/<run_id>.
+def prepare_worktree(repo: Path, commit: str | None, run_id: str, slug: str = "bhl") -> Path:
+    """Snapshot repo under /var/lib/eb/repos/<slug>/<commit>.
 
     Uses `git clone` into the data root (not `git worktree add`) so the source
-    repo — including `.git` — is never written. External trees are bind-mounted
-    read-only.
+    repo — including `.git` — is never written. Training never bind-mounts a
+    dirty live tree.
     """
-    root = get_settings().data_root / "worktrees" / run_id
+    sha = resolve_commit(repo, commit)
+    root = get_settings().data_root / "repos" / slug / sha
     root.parent.mkdir(parents=True, exist_ok=True)
     if root.exists():
         return root
-    _git(["clone", "--no-hardlinks", str(repo), str(root)])
-    target = commit or "HEAD"
-    _git(["checkout", "--detach", target], cwd=root)
+    tmp = root.parent / f".tmp-{run_id}-{sha[:12]}"
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    _git(["clone", "--no-hardlinks", str(repo), str(tmp)])
+    _git(["checkout", "--detach", sha], cwd=tmp)
     try:
-        _git(["submodule", "update", "--init", "--recursive"], cwd=root)
+        _git(["submodule", "update", "--init", "--recursive"], cwd=tmp)
     except subprocess.CalledProcessError:
         pass
-    _copy_populated_submodules(repo, root)
+    _copy_populated_submodules(repo, tmp)
+    tmp.rename(root)
     return root
 
 

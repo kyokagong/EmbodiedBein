@@ -49,11 +49,11 @@ class Scheduler:
             await session.scalars(
                 select(Job)
                 .where(Job.status == JobStatus.QUEUED.value)
-                .order_by(Job.priority.desc(), Job.created_at)
+                .order_by(Job.priority.desc(), Job.created_at.asc())
             )
         ).all()
         for job in jobs:
-            spec = JobSpec.model_validate({**job.spec, "kind": job.kind, "contract_id": job.contract_id})
+            spec = JobSpec.model_validate({**job.spec, "kind": job.kind, "embodiment_env_id": job.embodiment_env_id})
             if spec.kind in CONTAINERLESS_KINDS:
                 try:
                     await self.orch.admit_and_start(session, job, [])
@@ -104,13 +104,34 @@ class Scheduler:
                 log.exception("advance_pipeline failed for %s", pipe.id)
 
     async def reap_running(self, session: AsyncSession) -> None:
+        from datetime import UTC, datetime
         jobs = (await session.scalars(select(Job).where(Job.status == JobStatus.RUNNING.value))).all()
+        now = datetime.now(UTC)
         for job in jobs:
             run = await session.scalar(
                 select(Run).where(Run.job_id == job.id).order_by(Run.attempt.desc())
             )
             if not run or not run.id:
                 continue
+
+            # Check timeout
+            timeout_h = (job.spec or {}).get("policy", {}).get("timeout_h")
+            if timeout_h and job.started_at:
+                started = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=UTC)
+                elapsed_hours = (now - started).total_seconds() / 3600.0
+                if elapsed_hours > float(timeout_h):
+                    log.warning("Job %s exceeded timeout limit %sh (ran %.2fh). Cancelling.", job.id, timeout_h, elapsed_hours)
+                    try:
+                        await self.ebd.cancel_run(run.id)
+                    except Exception:
+                        pass
+                    run.status = RunStatus.ABORTED.value
+                    run.abort_reason = "timeout"
+                    job.status = JobStatus.FAILED.value
+                    job.error = f"Job exceeded timeout limit of {timeout_h}h"
+                    await session.commit()
+                    continue
+
             try:
                 info = await self.ebd.get_run(run.id)
             except Exception:

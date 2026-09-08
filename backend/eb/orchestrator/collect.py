@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from eb.domain.contract import Contract
+from eb.domain.contract import EmbodimentEnv
 from eb.domain.fsm import JobStatus, RunStatus
 from eb.eval.parse_play import parse_play
 from eb.gates.engine import g3_model
@@ -16,7 +16,7 @@ from eb.onnx_io import read_signature, sha256_file
 from eb.settings import get_settings
 from eb.store.models import (
     Artifact,
-    EmbodimentContractRow,
+    EmbodimentEnvRow,
     EvalReport,
     Job,
     LineageEdge,
@@ -84,8 +84,8 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
         fam = ModelFamily(id="mf_run", name="run policies", family="mlp")
         session.add(fam)
         await session.flush()
-    ctr_row = await session.get(EmbodimentContractRow, job.contract_id)
-    ctr = Contract.model_validate(ctr_row.spec) if ctr_row else None
+    ctr_row = await session.get(EmbodimentEnvRow, job.embodiment_env_id)
+    ctr = EmbodimentEnv.model_validate(ctr_row.spec) if ctr_row else None
 
     for path in uniq:
         try:
@@ -130,7 +130,7 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
             id=new_id("mv"),
             family_id=fam.id,
             name=path.stem,
-            contract_id=job.contract_id,
+            embodiment_env_id=job.embodiment_env_id,
             io_signature={"obs": sig.get("obs"), "act": sig.get("act")},
             provenance="full",
             artifact_id=art.id,

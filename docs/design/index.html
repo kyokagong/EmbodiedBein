@@ -47,7 +47,7 @@
 <tr>
   <td><b>本体维度矩阵极易静默出错</b><br><span class="xs muted">四套观测布局、三套自由度共存</span></td>
   <td class="xs">humanoid <code>obs 75/act 22</code> @25Hz、biped <code>45/12</code> @25Hz、WBC <code>85/22</code> @50Hz（<code>command_dim 13</code>）、fixed-hand <code>state 10/act 10</code> @20Hz。写错一处要等仿真起来几十分钟后才暴露。</td>
-  <td><a href="02-domain-model.html#contract">Embodiment&nbsp;Contract</a> 作为一等实体，在<b>提交任务 / 注册数据 / 注册模型 / 导出 / 上机</b>五个卡口做静态校验，秒级拦截。</td>
+  <td><a href="12-embodiment-environment.html">本体环境</a> 作为一等实体（归属某个<a href="12-embodiment-environment.html">本体</a>），在<b>提交任务 / 注册数据 / 注册模型 / 导出 / 上机</b>五个卡口做静态校验，秒级拦截。旧名 Embodiment Contract 见 <a href="12-embodiment-environment.md">12.md 词表</a>。</td>
 </tr>
 <tr>
   <td><b>训练任务互相污染仓库</b></td>
@@ -328,10 +328,10 @@
   </div>
   <div class="card mcard m-model">
     <p class="card-title"><span class="badge b-violet">04</span> 模型与本体资产</p>
-    <p class="card-sub">权重、契约、资产同源治理</p>
+    <p class="card-sub">权重、本体环境、资产同源治理</p>
     <ul class="small mb0">
       <li>模型注册表与版本谱系</li>
-      <li>ONNX/JIT 维度自动反查契约</li>
+      <li>ONNX/JIT 维度自动反查本体环境</li>
       <li>模型卡：来源、许可、显存画像</li>
       <li>URDF/MJCF/USD 资产版本</li>
       <li>标定数据与本体实例绑定</li>
@@ -390,11 +390,11 @@
     <p class="card-title"><span class="badge b-blue">02</span> 领域模型</p>
     <p class="card-sub">所有模块共享的语言</p>
     <ul class="small mb0">
-      <li>18 个核心实体与 ER</li>
-      <li>Embodiment Contract 规范</li>
+      <li>核心实体与 ER（本体环境见 12）</li>
       <li>Job/Run 状态机</li>
       <li>REST 资源树与事件 topic</li>
       <li>数据库 schema 要点</li>
+      <li><a href="12-embodiment-environment.html">12 本体与本体环境</a> 为接口真源</li>
     </ul>
     <p class="mt1 mb0"><a href="02-domain-model.html">进入 →</a></p>
   </div>
@@ -422,12 +422,46 @@
     </ul>
     <p class="mt1 mb0"><a href="09-ui-system.html">进入 →</a></p>
   </div>
+  <div class="card mcard m-data">
+    <p class="card-title"><span class="badge b-green">11</span> 数据 · 本体环境 · 配置视图</p>
+    <p class="card-sub">页面上到底要看见什么</p>
+    <ul class="small mb0">
+      <li>本体环境：观测条带、关节树、G 矩阵（CRUD/3D 见 12）</li>
+      <li>数据：概览统计、两套漏斗、切片/转换</li>
+      <li>设置五页与 JobSpec 提交表单</li>
+      <li>空态：缺媒体、0、未注册，禁止假图</li>
+    </ul>
+    <p class="mt1 mb0"><a href="11-workspace-views.html">进入 →</a></p>
+  </div>
+  <div class="card mcard m-infra">
+    <p class="card-title"><span class="badge b-blue">12</span> 本体与本体环境</p>
+    <p class="card-sub">替换 Embodiment Contract</p>
+    <ul class="small mb0">
+      <li>本体 / 本体环境 / 任务 三实体</li>
+      <li>BHL 只读纳管，不迁仓</li>
+      <li>五种来源与能力徽章</li>
+      <li>可视化 CRUD 与 URDF 3D</li>
+      <li>RLinf：环境 × 任务 × 栈 × 镜像</li>
+    </ul>
+    <p class="mt1 mb0"><a href="12-embodiment-environment.html">进入 →</a></p>
+  </div>
+  <div class="card mcard" style="--c: #53d4ff">
+    <p class="card-title"><span class="badge b-cyan">13</span> 本体环境 CRUD 原型</p>
+    <p class="card-sub">可点击产品壳</p>
+    <ul class="small mb0">
+      <li>本体：接入向导、详情、3D、归档/删除</li>
+      <li>环境：草稿 YAML、发布冻结、G 矩阵、废弃</li>
+      <li>任务：扫描草稿、手建、改绑定</li>
+      <li>提交训练四元组与 G1 预检</li>
+    </ul>
+    <p class="mt1 mb0"><a href="13-embodiment-crud-prototype.html">进入 →</a></p>
+  </div>
 </div>
 
 <h2 id="adr">五、关键设计决策（ADR 摘要）</h2>
 
 <p>
-  下表是十条会显著影响实现的决策。每条都给出被放弃的替代方案与代价，
+  下表是会显著影响实现的决策。每条都给出被放弃的替代方案与代价，
   以便日后条件变化时可以有依据地推翻，而不是重新猜。
 </p>
 
@@ -440,13 +474,14 @@
 <tr><td class="mono">ADR-03</td><td>Redis Streams 作队列</td><td>已需 Redis 做缓存；Streams 有消费组与 ack，够用且可观测</td><td>Celery / RQ / Kafka</td><td>没有成熟的重试中间件生态，需自写补偿逻辑</td></tr>
 <tr><td class="mono">ADR-04</td><td>Artifact 内容寻址（sha256）</td><td>天然去重与完整性校验；与 Berkeley 导出物已带 sha256 的做法一致</td><td>路径寻址 + 数据库记 md5</td><td>需要维护引用计数才能安全 GC</td></tr>
 <tr><td class="mono">ADR-05</td><td>时序先自研 append-only 段文件</td><td>指标模型极简（run×metric×step×value），自研可控且零外部依赖</td><td>直接上 VictoriaMetrics / Prometheus</td><td>缺 PromQL 生态。<b>触发重议</b>：需要跨月长周期聚合或多机汇聚</td></tr>
-<tr><td class="mono">ADR-06</td><td>Embodiment Contract 为一等实体与全局门禁</td><td>这是本领域最高频的静默错误来源，收益最大的一条</td><td>把维度当训练配置的普通字段</td><td>新增本体形态时要先建契约，前期略繁琐</td></tr>
+<tr><td class="mono">ADR-06</td><td>已发布<b>本体环境</b>为一等实体与全局门禁（旧称 Embodiment Contract）</td><td>维度/频率静默错误仍是最高频事故；环境从属于可纳管的<b>本体</b>，才能接新机器人与 RLinf。详见 <a href="12-embodiment-environment.html">12</a></td><td>把维度当训练配置的普通字段；或继续用不可 CRUD 的「契约」一名</td><td>新增形态要先发布环境；草稿可改、已发布冻结。BHL 仓本身不迁</td></tr>
 <tr><td class="mono">ADR-07</td><td>源码只读挂载 + per-run workspace</td><td><code>play.py</code> 会改写仓库内 YAML，必须隔离；同时保证复现</td><td>直接 bind mount 可写仓库</td><td>需要 overlay 或输出重定向补丁层，个别脚本硬编码路径要特殊处理</td></tr>
 <tr><td class="mono">ADR-08</td><td>Agent 分三层，Autopilot 带硬预算</td><td>你要的是自动闭环，但 4 张卡经不起无约束探索</td><td>单一全权 Agent</td><td>实现复杂度上升；需要完整审计与回放</td></tr>
 <tr><td class="mono">ADR-09</td><td>真机需物理确认，平台不远程使能电机</td><td>22 个电机 + CAN 总线，误触发有人身与硬件风险</td><td>Web 一键上机</td><td>牺牲便利性换安全，不可协商</td></tr>
 <tr><td class="mono">ADR-10</td><td>全部服务由一份 <code>docker-compose.yml</code> 拉起；前端打包进 api 镜像的 <code>web/dist</code>，FastAPI 单端口对外</td><td>部署只有 <code>docker compose up -d</code> 一步；宿主除 Docker 外零依赖，重装机器十分钟可恢复</td><td>宿主 systemd 起 uvicorn + Nginx 反代 + 独立前端容器</td><td>失去 Nginx 的静态优化与限流（需要时用 <code>--profile tls</code> 起 Caddy 补）；改前端要重建 api 镜像</td></tr>
 <tr><td class="mono">ADR-11</td><td>Agent harness <b>内核自研</b>（Python ~2000 行），插件范式借鉴 <a href="https://github.com/deepseek-ai/deepseek-harness">dsh</a>/Cordis，协议层复用 MCP</td><td>难的部分（护栏、审计、上下文构造）没有框架能代写；自研内核与领域对象同进程，调试路径最短；MCP 让工具可被外部客户端复用</td><td>直接以 dsh 为地基；或用 LangGraph 等重框架</td><td>会话循环、流式、schema 校验需自己维护；放弃 dsh 的插件生态（我们本就不需要编码 agent 的终端/文件能力）。详见 <a href="08-agent.html#runtime">8.3</a></td></tr>
 <tr><td class="mono">ADR-12</td><td>Agent <b>无 shell / 无文件系统 / 无出网 / 无 SQL</b>；一切动作经 ToolBus 单一收口</td><td>封闭能力集自身即沙箱，无需进程隔离；护栏只写一遍且无旁路；审计天然完备、行为可回放</td><td>给 agent 沙箱化的 shell 与文件工具</td><td>Agent 无法处理工具表未覆盖的新情况——但这正是我们想要的边界。详见 <a href="08-agent.html#harness">8.4</a></td></tr>
+<tr><td class="mono">ADR-13</td><td>外部本体<b>纳管不迁仓</b>；训练四元组 = 环境 × 任务 × 栈 × 镜像</td><td>BHL/RLinf 是事实来源，平台写入会污染复现；RLinf 的 Hydra <code>env/</code> 是任务入口不是身体。详见 <a href="12-embodiment-environment.md">12.md</a></td><td>把 BHL 拷进平台仓；或用平台 YAML 生成 RLinf env yaml</td><td>双 <code>code_refs</code>；<code>managed_bundle</code> 默认不能训。触发重议：上游自愿加入 <code>eb.embodiment.yaml</code> 清单</td></tr>
 </tbody>
 </table>
 </div>
@@ -481,6 +516,9 @@
       <li><a href="01-architecture.html">01 架构</a>：模块与通信</li>
       <li><a href="02-domain-model.html">02 领域模型</a>：实体、状态机、API</li>
       <li>各模块页的「实现要点」小节</li>
+      <li><a href="12-embodiment-environment.html">12 本体环境</a>：纳管、CRUD、RLinf 接线</li>
+      <li><a href="13-embodiment-crud-prototype.html">13 CRUD 原型</a>：点开即用的工作台壳</li>
+      <li><a href="11-workspace-views.html">11 工作台视图</a>：数据/本体环境/配置画面规格</li>
       <li><a href="10-roadmap.html#repo">10 目录结构与里程碑</a></li>
     </ol>
   </div>

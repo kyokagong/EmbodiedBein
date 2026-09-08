@@ -23,7 +23,7 @@ services:
       POSTGRES_USER: eb
       POSTGRES_PASSWORD: ${EB_DB_PASSWORD}
       POSTGRES_DB: eb
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:${EB_PORT_POSTGRES:-5432}:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data", "../backup:/backup"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U eb -d eb"]
@@ -34,7 +34,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --port 6380 --appendonly yes --appendfsync everysec
-    ports: ["127.0.0.1:6380:6380"]
+    ports: ["127.0.0.1:${EB_PORT_REDIS:-6380}:6380"]
     volumes: ["redisdata:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "6380", "ping"]
@@ -48,7 +48,9 @@ services:
     environment:
       MINIO_ROOT_USER: ${EB_S3_ACCESS_KEY:-ebadmin}
       MINIO_ROOT_PASSWORD: ${EB_S3_PASSWORD:-eb-minio-change-me}
-    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    ports:
+      - "127.0.0.1:${EB_PORT_MINIO:-9000}:9000"
+      - "127.0.0.1:${EB_PORT_MINIO_CONSOLE:-9001}:9001"
     volumes: ["miniodata:/data"]
 
   migrate:
@@ -72,7 +74,7 @@ services:
     network_mode: host
     pid: host
     environment:
-      EB_REDIS_URL: redis://127.0.0.1:6380/0
+      EB_REDIS_URL: redis://127.0.0.1:${EB_PORT_REDIS:-6380}/0
       EB_DATA_ROOT: /var/lib/eb
       EB_EBD_UDS: /run/eb/ebd.sock
       EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
@@ -98,7 +100,7 @@ services:
       context: ..
       dockerfile: deploy/api.Dockerfile
     restart: unless-stopped
-    ports: ["8000:8000"]
+    ports: ["${EB_PORT_API:-8000}:8000"]
     environment: *bridge-env
     volumes:
       - /var/lib/eb:/var/lib/eb
@@ -121,7 +123,7 @@ services:
     profiles: ["tls"]
     image: caddy:2-alpine
     restart: unless-stopped
-    ports: ["80:80", "443:443"]
+    ports: ["${EB_PORT_HTTP:-80}:80", "${EB_PORT_HTTPS:-443}:443"]
     volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddydata:/data"]
     depends_on: [api]
 

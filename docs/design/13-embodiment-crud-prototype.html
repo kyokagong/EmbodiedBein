@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 本体 / 本体环境 / 任务 全套 CRUD 可点击原型。对照 12 章。">
+<title>13 · 本体环境 CRUD 原型｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+<style>
+  .obs-strip { display:flex; height:32px; border-radius:8px; overflow:hidden; border:1px solid var(--line); font: 600 11px/32px var(--mono); }
+  .obs-strip span { text-align:center; color:#071018; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 4px; }
+  .lock { font-size:.72rem; color:var(--amber); border:1px solid rgba(255,200,87,.35); padding:.05rem .4rem; border-radius:999px; margin-left:.4rem; }
+  .cap { display:inline-block; font: 650 .68rem/1 var(--mono); letter-spacing:.04em; padding:.12rem .38rem; border-radius:999px; border:1px solid var(--line); color:var(--muted); margin-right:4px; }
+  .cap.on { color:#04121a; background:var(--teal); border-color:var(--teal); }
+  .cap.off { opacity:.55; }
+  .screen { display:none; }
+  .screen.on { display:block; }
+  .proto-app { min-height: 720px; }
+  .kind-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }
+  .kind-card { text-align:left; padding:.85rem .9rem; background:var(--panel-2); border:1px solid var(--line); border-radius:12px; width:100%; }
+  .kind-card:hover { border-color:#3d5f78; }
+  .kind-card.sel { border-color:var(--cyan); box-shadow:0 0 0 1px var(--cyan) inset; }
+  .kind-card b { display:block; font-size:.84rem; margin-bottom:.25rem; }
+  .kind-card span { display:block; color:var(--muted); font-size:.74rem; }
+  .steps { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 1rem; }
+  .steps i { font-style:normal; font-size:.72rem; color:var(--muted-2); padding:.15rem .5rem; border:1px solid var(--line); border-radius:999px; }
+  .steps i.on { color:var(--cyan); border-color:var(--cyan); }
+  .yaml { margin:0; padding:.7rem .8rem; background:#071018; border:1px solid var(--line); border-radius:10px; font: 12px/1.5 var(--mono); color:#cfe0ea; max-height:280px; overflow:auto; white-space:pre; }
+  .form-grid { display:grid; grid-template-columns:140px 1fr; gap:.45rem .8rem; align-items:center; font-size:.84rem; }
+  .form-grid .lbl { color:var(--muted); }
+  .joint-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font: 12px/1.5 var(--mono); }
+  .joint-grid .dim { opacity:.35; }
+  .idx { color:var(--muted-2); display:inline-block; width:1.5em; }
+  .stage-3d { height:280px; background:#071018; border:1px solid var(--line); border-radius:12px; position:relative; overflow:hidden; }
+  .toast { position:fixed; right:18px; bottom:18px; z-index:40; padding:.55rem .85rem; background:#122332; border:1px solid var(--cyan); border-radius:10px; font-size:.82rem; max-width:360px; display:none; }
+  .toast.on { display:block; }
+  .modal-bg { position:fixed; inset:0; background:rgba(4,10,16,.72); z-index:30; display:none; align-items:center; justify-content:center; padding:24px; }
+  .modal-bg.on { display:flex; }
+  .modal { width:min(440px,100%); padding:1.1rem 1.15rem; background:var(--panel); border:1px solid var(--line); border-radius:14px; }
+  .pillrow { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 .8rem; }
+  .pillrow a, .pillrow button { padding:.22rem .65rem; border:1px solid var(--line); border-radius:999px; font-size:.74rem; color:var(--muted); background:transparent; }
+  .pillrow a.on, .pillrow button.on { border-color:var(--cyan); color:var(--cyan); background:rgba(83,212,255,.08); }
+  .env-mini { cursor:pointer; }
+  .env-mini:hover { border-color:#3d5f78; }
+  .check { font-size:.8rem; margin:.25rem 0; }
+  .check.ok { color:var(--green); }
+  .check.bad { color:var(--red); }
+  .btn[disabled] { opacity:.45; cursor:not-allowed; }
+  .crud { font: 700 .65rem var(--mono); letter-spacing:.08em; color:var(--muted-2); border:1px solid var(--line); padding:0 .28rem; border-radius:4px; margin-left:.35rem; vertical-align:middle; }
+  .map a { display:inline-block; margin:.15rem .15rem .15rem 0; }
+  .obs-legend { display:flex; flex-wrap:wrap; gap:.35rem .9rem; margin:.55rem 0 0; font-size:.72rem; color:var(--muted); }
+  .obs-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:.35rem; vertical-align:-1px; }
+  .gate-cell { text-align:center; font-weight:700; font-size:.72rem; }
+  .draft-sec { margin:0 0 .75rem; }
+  #eb-toc { display:none; }
+  .layout { display:block; }
+  .content { max-width: 1180px; margin: 0 auto; padding: 1.2rem 1.2rem 4rem; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">13 · CRUD Prototype</p>
+  <h1>本体工作台原型：<br>所有增删改查都可以点。</h1>
+  <p class="hero-copy">
+    对照 <a href="12-embodiment-environment.html">12</a>。下面是可点击的产品壳，不是静态插图。
+    三条数据：BHL（可训）、只上传了 URDF 的新臂（仅预览）、RLinf 镜像里的 LIBERO（<code>in_image</code>）。
+    保存只进平台；<b>不会写</b> <code>/data/kk/*</code>。
+  </p>
+</header>
+
+<div class="note info">
+  <span class="note-t">怎么用</span>
+  点卡片和按钮切换页面。左侧是产品导航。本页上方的「画面地图」可直接跳到某一屏。
+  禁止项会 toast，不会假装成功。
+</div>
+
+<div class="tbl-wrap mb2">
+<table class="compact">
+<thead><tr><th>实体</th><th>C</th><th>R</th><th>U</th><th>D</th></tr></thead>
+<tbody>
+<tr>
+  <td>本体</td>
+  <td class="xs">接入向导（五种来源）</td>
+  <td class="xs">列表 · 详情（概览/3D/资产/来源/环境）</td>
+  <td class="xs">显示名/标签/default_ref · 重扫；kind/path 锁</td>
+  <td class="xs">归档；BHL 种子不可删</td>
+</tr>
+<tr>
+  <td>本体环境</td>
+  <td class="xs">空白草稿或克隆</td>
+  <td class="xs">条带/关节/G 矩阵/引用/YAML</td>
+  <td class="xs">仅 draft；active 只能克隆 _v2</td>
+  <td class="xs">删草稿；废弃已发布</td>
+</tr>
+<tr>
+  <td>任务</td>
+  <td class="xs">扫描草稿或手建绑定</td>
+  <td class="xs">列表 · 栈绑定详情</td>
+  <td class="xs">兼容环境 + Isaac/RLinf 入口</td>
+  <td class="xs">废弃（不删历史 Job）</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<p class="map small muted mb2">
+  画面：
+  <a href="#list">列表</a>
+  <a href="#empty">空列表</a>
+  <a href="#wizard">接入</a>
+  <a href="#contracts">/contracts 301</a>
+  <a href="#bhl">BHL 详情</a>
+  <a href="#bhl-3d">3D</a>
+  <a href="#bhl-assets">资产</a>
+  <a href="#bhl-source">来源</a>
+  <a href="#bhl-meta">改元数据</a>
+  <a href="#bhl-scan">重扫</a>
+  <a href="#bhl-archive">归档</a>
+  <a href="#env-new">新建环境</a>
+  <a href="#env-humanoid">humanoid</a>
+  <a href="#env-g">G 矩阵</a>
+  <a href="#env-humanoid-yaml">YAML 只读</a>
+  <a href="#env-draft">草稿编辑</a>
+  <a href="#env-publish">发布</a>
+  <a href="#env-publish-fail">发布失败</a>
+  <a href="#env-refs">引用方</a>
+  <a href="#env-deprecate">废弃</a>
+  <a href="#env-wbc">WBC</a>
+  <a href="#env-biped">biped</a>
+  <a href="#env-fixedhand">fixed-hand</a>
+  <a href="#tasks">任务</a>
+  <a href="#task-draft">任务草稿</a>
+  <a href="#task-new">手建任务</a>
+  <a href="#task-edit">改绑定</a>
+  <a href="#arm">仅预览臂</a>
+  <a href="#arm-delete">删本体</a>
+  <a href="#libero">LIBERO</a>
+  <a href="#submit">提交训练</a>
+</p>
+
+<div class="proto proto-app">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url" id="url">eb.local/embodiments</div>
+    <span class="proto-tag">可点击原型 · 12 章</span>
+  </div>
+  <div class="proto-body">
+    <aside class="app-side">
+      <p class="app-side-t">工作台</p>
+      <nav class="app-nav">
+        <a href="#list" data-go="list"><span class="ico">▣</span>本体<span class="cnt">3</span></a>
+        <a href="#tasks" data-go="tasks"><span class="ico">·</span>任务<span class="cnt">6</span></a>
+        <a href="#submit" data-go="submit"><span class="ico">·</span>提交训练</a>
+        <a href="#contracts" data-go="contracts"><span class="ico">·</span>旧 /contracts</a>
+      </nav>
+      <p class="app-side-t">本页</p>
+      <nav class="app-nav" id="local-nav"></nav>
+    </aside>
+    <div class="app-main" id="stage"></div>
+  </div>
+</div>
+
+<p class="xs muted-2 mt1">原型数据来自 12 章与四份平台 YAML 数字；3D 是关节示意图，不是 USD 播放器。</p>
+
+<div id="eb-pager"></div>
+</main>
+
+<div class="toast" id="toast"></div>
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <p class="app-h" id="modal-t" style="margin-bottom:.5rem"></p>
+    <p class="small muted" id="modal-b"></p>
+    <div class="app-actions" style="margin:.9rem 0 0">
+      <button class="btn" type="button" id="modal-no">取消</button>
+      <button class="btn danger" type="button" id="modal-yes">确认</button>
+    </div>
+  </div>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+<script>
+(function () {
+  var stage = document.getElementById("stage");
+  var urlEl = document.getElementById("url");
+  var localNav = document.getElementById("local-nav");
+  var toastEl = document.getElementById("toast");
+  var modal = document.getElementById("modal");
+  var current = "list";
+  var wizardKind = "git_external";
+  var toastTimer;
+
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("on"); }, 3200);
+  }
+
+  function confirmModal(title, body, onYes) {
+    document.getElementById("modal-t").textContent = title;
+    document.getElementById("modal-b").textContent = body;
+    modal.classList.add("on");
+    document.getElementById("modal-no").onclick = function () { modal.classList.remove("on"); };
+    document.getElementById("modal-yes").onclick = function () {
+      modal.classList.remove("on");
+      onYes();
+    };
+  }
+
+  function caps(preview, train, evalCap, deploy) {
+    return (
+      '<span class="cap ' + (preview ? "on" : "off") + '">preview</span>' +
+      '<span class="cap ' + (train ? "on" : "off") + '">train</span>' +
+      '<span class="cap ' + (evalCap ? "on" : "off") + '">eval</span>' +
+      '<span class="cap ' + (deploy ? "on" : "off") + '">deploy</span>'
+    );
+  }
+
+  function setNav(items, active) {
+    localNav.innerHTML = items.map(function (it) {
+      return '<a href="#' + it.id + '" data-go="' + it.id + '" class="' + (it.id === active ? "on" : "") + '"><span class="ico">·</span>' + it.t + "</a>";
+    }).join("");
+    document.querySelectorAll(".app-side .app-nav a").forEach(function (a) {
+      var g = a.getAttribute("data-go");
+      if (g === "list" || g === "tasks" || g === "submit") {
+        a.classList.toggle("on", g === active || (g === "list" && (active.indexOf("bhl") === 0 || active.indexOf("env") === 0 || active.indexOf("arm") === 0 || active.indexOf("libero") === 0 || active.indexOf("wizard") === 0 || active === "empty" || active === "contracts")) || (g === "tasks" && active.indexOf("task") === 0) || (g === "contracts" && active === "contracts"));
+      }
+    });
+  }
+
+  var screens = {};
+
+  screens.list = {
+    url: "eb.local/embodiments",
+    nav: [{ id: "list", t: "全部" }, { id: "empty", t: "空态" }, { id: "wizard", t: "接入向导" }],
+    html: function () {
+      return bar("本体", "本体", '<span class="badge b-green">3</span>',
+        '<button class="btn primary" data-go="wizard">接入新本体</button>') +
+        '<div class="grid g2">' +
+          card("emb_berkeley_humanoid_lite", "Berkeley Humanoid Lite", "git_external · 只读纳管",
+            "4 个已发布环境 · 5 个任务", caps(1,1,1,1), "bhl") +
+          card("emb_demo_arm_urdf", "Demo 10DoF Arm", "managed_bundle · CAS",
+            "0 任务 · 不能训练", caps(1,0,0,0), "arm") +
+          card("emb_libero_franka", "LIBERO Franka", "in_image · eb/rlinf@sha256:9c…",
+            "环境投影自 Hydra · 钉 digest", caps(1,1,1,0), "libero") +
+        "</div>" +
+        '<p class="xs muted-2 mt1 mb0">列表按本体聚合，不把 BHL 四套接口平铺成四个顶层卡片。</p>';
+    }
+  };
+
+  screens.empty = {
+    url: "eb.local/embodiments",
+    nav: [{ id: "list", t: "全部" }, { id: "empty", t: "空态" }],
+    html: function () {
+      return bar("本体", "还没有本体", "", '<button class="btn primary" data-go="wizard">接入新本体</button>') +
+        '<div class="panel-sm" style="text-align:center;padding:2rem 1rem">' +
+        "<b>平台不预装机器人代码。</b>" +
+        '<p class="xs muted mb0 mt1">从 git_external 纳管 BHL，或上传 URDF bundle。接入不会改 /data/kk。</p></div>';
+    }
+  };
+
+  screens.wizard = {
+    url: "eb.local/embodiments/new",
+    nav: [{ id: "list", t: "返回列表" }],
+    html: function () {
+      return bar("本体 / 接入", "接入新本体", '<span class="badge b-cyan">C</span>',
+        '<button class="btn" data-go="list">取消</button><button class="btn primary" data-go="wizard-src">下一步</button>') +
+        steps(1) +
+        '<p class="small muted">来源写在本体上。选错只能归档再建，不能改 kind。</p>' +
+        '<div class="kind-grid" id="kinds">' +
+          kind("git_external", "git_external", "BHL / 已有只读仓", "填宿主路径，零写入") +
+          kind("git_snapshot", "git_snapshot", "平台 clone", "缓存到 /var/lib/eb/repos") +
+          kind("managed_bundle", "managed_bundle", "上传 URDF zip", "默认仅 preview") +
+          kind("in_image", "in_image", "镜像内环境", "LIBERO / ManiSkill") +
+          kind("plugin", "plugin", "eb_plugin_*", "v1 不阻塞 BHL") +
+        "</div>";
+    }
+  };
+
+  screens["wizard-src"] = {
+    url: "eb.local/embodiments/new?step=2",
+    nav: [{ id: "wizard", t: "上一步" }],
+    html: function () {
+      var k = wizardKind;
+      var fields = {
+        git_external: field("路径", "/data/kk/Berkeley-Humanoid-Lite", "只读探测 · 禁止写入") + field("default_ref", "HEAD", "提交 Job 时冻成 commit"),
+        git_snapshot: field("git URL", "git@host:org/my-robot.git", "clone 到平台盘") + field("ref", "main", ""),
+        managed_bundle: '<div class="form-grid"><div class="lbl">资产包</div><div><button class="btn sm" type="button" data-act="fake-upload">选择 zip</button> <span class="xs muted">urdf + meshes，进 CAS</span></div></div>',
+        in_image: field("镜像", "eb/rlinf:0.4.0-emb@sha256:9c21…", "必须 digest") + field("镜像内路径", "examples/embodiment/config/env/libero_10.yaml", ""),
+        plugin: field("插件", "eb_plugin_bhl==0.1.0", "已安装列表")
+      };
+      return bar("本体 / 接入", "来源：" + k, "", '<button class="btn" data-go="wizard">上一步</button><button class="btn primary" data-go="wizard-scan">探测</button>') +
+        steps(2) + '<div class="panel-sm">' + (fields[k] || "") + "</div>" +
+        '<p class="xs muted-2 mb0 mt1">BHL 豁免仓根 eb.embodiment.yaml。探测失败会停在本步，不创建本体。</p>';
+    }
+  };
+
+  screens["wizard-scan"] = {
+    url: "eb.local/embodiments/new?step=3",
+    nav: [{ id: "wizard-src", t: "上一步" }],
+    html: function () {
+      var k = wizardKind;
+      var body = {
+        git_external: '<div class="grid g2">' +
+          '<div class="panel-sm"><p class="panel-sm-t">资产</p><p class="xs mono mb0">urdf/berkeley_humanoid_lite.urdf · 22 joints<br>mjcf/*.xml · usd/*.usd · meshes/*.stl × 28</p></div>' +
+          '<div class="panel-sm"><p class="panel-sm-t">发现的入口</p><p class="xs mono mb0">gym.register × 5<br>子模块 assets v2025.09.03 · dirty=false</p></div></div>' +
+          '<p class="small mt1">将挂接平台已有四份 ee_* 。关节名 ⊆ URDF 才能发布环境。</p>',
+        git_snapshot: '<div class="panel-sm"><p class="check ok">clone 到 /var/lib/eb/repos/…</p><p class="check ok">工作树干净</p><p class="xs muted mb0">YAML 不会 push 回远程。改接口 = 克隆 ee_*_v2 再下载给人开 PR。</p></div>',
+        managed_bundle: '<div class="panel-sm"><p class="check ok">URDF 10 joints · STL × 12 进 CAS</p><p class="check bad">gym.register × 0</p><p class="xs muted mb0">' + caps(1,0,0,0) + ' 没有栈绑定就不点亮 train。这是设计。</p></div>',
+        in_image: '<div class="panel-sm"><p class="check ok">digest sha256:9c21…</p><p class="check ok">发现 env/libero_10.yaml</p><p class="xs muted mb0">投影为 ee_libero_franka_v1。不能改镜像内文件。</p></div>',
+        plugin: '<div class="panel-sm"><p class="check ok">eb_plugin_bhl==0.1.0 已加载</p><p class="xs muted mb0">v1 不阻塞 BHL 纳管。插件可声明资产根与扫描器。</p></div>'
+      };
+      return bar("本体 / 接入", "扫描预览 · " + k, "", '<button class="btn" data-go="wizard-src">上一步</button><button class="btn primary" data-go="wizard-done">创建草稿本体</button>') +
+        steps(3) + (body[k] || body.git_external);
+    }
+  };
+
+  screens["wizard-done"] = {
+    url: "eb.local/embodiments/new?done=1",
+    nav: [{ id: "list", t: "列表" }],
+    html: function () {
+      var k = wizardKind;
+      var next = k === "managed_bundle" ? "arm" : (k === "in_image" ? "libero" : "bhl");
+      return bar("本体 / 接入", "已写入 PostgreSQL", '<span class="badge b-green">C 完成</span>',
+        '<button class="btn primary" data-go="' + next + '">打开本体</button>') +
+        steps(4) +
+        '<div class="panel-sm"><p class="mb0">kind=' + k + '。worktree / CAS 按来源处理。<b>未写入 /data/kk/*。</b></p></div>';
+    }
+  };
+
+  screens.contracts = {
+    url: "eb.local/contracts → 301 /embodiments",
+    nav: [{ id: "list", t: "本体列表" }],
+    html: function () {
+      return bar("兼容重定向", "/contracts 已退役", '<span class="badge b-gray">301</span>',
+        '<button class="btn primary" data-go="list">去本体列表</button>' +
+        '<button class="btn" data-go="env-humanoid">打开 ec_* 别名</button>') +
+        '<p class="small">GET /contracts 与 /contracts/ec_bhl_humanoid_22dof_v1 仍可用，代理到本体列表 / 对应 ee_*。产品导航不再出现「契约」。</p>';
+    }
+  };
+
+  screens.bhl = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite",
+    nav: bhlNav("bhl"),
+    html: function () {
+      return bar("本体 / emb_berkeley_humanoid_lite", "Berkeley Humanoid Lite " + caps(1,1,1,1),
+        '<span class="badge b-green">active</span><span class="lock">种子不可删</span>',
+        '<button class="btn" data-go="bhl-meta">编辑元数据</button>' +
+        '<button class="btn" data-go="bhl-scan">重新扫描</button>' +
+        '<button class="btn" data-go="bhl-archive">归档</button>' +
+        '<button class="btn danger" data-act="no-delete-bhl">删除</button>') +
+        '<div class="grid g4 mb2">' +
+          kpi("来源", "git_external", "writable: false") +
+          kpi("commit", "6ff398f", "feat/isaac5") +
+          kpi("环境", "4 active", "+1 draft") +
+          kpi("任务", "5", "Isaac + RLinf") +
+        "</div>" +
+        '<p class="panel-sm-t">本体环境</p>' +
+        '<div class="grid g2">' +
+          envCard("ee_bhl_humanoid_22dof_v1", "75 / 22 @ 25 Hz", "active · Velocity", "env-humanoid") +
+          envCard("ee_bhl_biped_12dof_v1", "45 / 12 @ 25 Hz", "active · 真机默认 12", "env-biped") +
+          envCard("ee_bhl_wbc_22dof_v1", "85 / 22 @ 50 Hz", "active · 双 action term", "env-wbc") +
+          envCard("ee_bhl_fixedhand_10dof_v1", "10+img / 10 @ 20 Hz", "active · concat:false", "env-fixedhand") +
+          envCard("ee_bhl_humanoid_22dof_v2", "75 / 22 @ 25 Hz", "draft · 克隆自 v1", "env-draft") +
+        "</div>" +
+        '<div class="app-actions" style="margin-top:1rem"><button class="btn primary" data-go="env-new">新建环境草稿</button></div>';
+    }
+  };
+
+  screens["bhl-meta"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite?edit=meta",
+    nav: bhlNav("bhl-meta"),
+    html: function () {
+      return bar("本体 / 编辑", "可改显示名 · 不可改来源", '<span class="badge b-amber">U</span>',
+        '<button class="btn" data-go="bhl">取消</button><button class="btn primary" data-act="save-pg">保存</button>') +
+        '<div class="panel-sm"><div class="form-grid">' +
+        '<div class="lbl">显示名</div><input class="input" value="Berkeley Humanoid Lite">' +
+        '<div class="lbl">标签</div><input class="input" value="bhl, loco, manip">' +
+        '<div class="lbl">default_ref</div><input class="input" value="HEAD">' +
+        '<div class="lbl">source.kind</div><input class="input" value="git_external" disabled>' +
+        '<div class="lbl">path</div><input class="input" value="/data/kk/Berkeley-Humanoid-Lite" disabled>' +
+        '</div><p class="xs muted-2 mb0 mt1">kind / path 禁用。改路径 = 另一个本体。</p></div>';
+    }
+  };
+
+  screens["bhl-scan"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite/scan",
+    nav: bhlNav("bhl-scan"),
+    html: function () {
+      return bar("本体 / 扫描", "只读重扫", '<span class="badge b-cyan">R</span>',
+        '<button class="btn primary" data-go="bhl">完成</button>') +
+        '<div class="panel-sm"><p class="check ok">工作树干净</p><p class="check ok">URDF 22 名与四份 ee_* 对齐</p>' +
+        '<p class="check ok">gym.register 5 个，无新增</p>' +
+        '<p class="xs muted mb0">不写 BHL。若发现新 Gym id，会生成任务草稿等人确认。</p></div>';
+    }
+  };
+
+  screens["bhl-archive"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite/archive",
+    nav: bhlNav("bhl-archive"),
+    html: function () {
+      return bar("归档本体", "仍有已发布环境，不能删除", '<span class="badge b-gray">D→archived</span>',
+        '<button class="btn" data-go="bhl">取消</button><button class="btn danger" data-act="archive-bhl">确认归档</button>') +
+        '<p class="small">归档后新 Job 默认不选此本体。已有 Run / 模型仍指向 ee_*。BHL 种子不可 DELETE。</p>';
+    }
+  };
+
+  screens["bhl-3d"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite?tab=3d",
+    nav: bhlNav("bhl-3d"),
+    html: function () {
+      return bar("本体 / 3D", "URDF + STL · 浏览器", "", '<button class="btn sm" data-act="toggle-col">visual / collision</button>') +
+        '<div class="grid g-2-1"><div class="stage-3d">' + robotSvg() +
+        '<p class="xs muted" style="position:absolute;left:10px;bottom:8px;margin:0">示意图，不是 Isaac 视口。USD 见资产卡片。</p></div>' +
+        '<div class="panel-sm"><p class="panel-sm-t">高亮随环境</p>' +
+        '<button class="btn sm" data-go="bhl-3d">humanoid 22</button> ' +
+        '<button class="btn sm" data-go="env-biped">切到 biped → 臂半透明</button>' +
+        '<p class="xs muted mb0 mt1">滑条范围 = URDF limit ∩ YAML limits。冲突标红。</p></div></div>';
+    }
+  };
+
+  screens["bhl-assets"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite?tab=assets",
+    nav: bhlNav("bhl-assets"),
+    html: function () {
+      return bar("本体 / 资产", "指针 + 哈希，不是副本", "", "") +
+        '<div class="tbl-wrap"><table class="compact"><thead><tr><th>格式</th><th>路径</th><th>展示</th></tr></thead><tbody>' +
+        '<tr><td>URDF</td><td class="mono xs">…/urdf/berkeley_humanoid_lite.urdf</td><td>3D 真渲</td></tr>' +
+        '<tr><td>STL × 28</td><td class="mono xs">…/meshes/*_visual.stl</td><td>ebd 流式</td></tr>' +
+        '<tr><td>MJCF</td><td class="mono xs">…/mjcf/*.xml</td><td>一致性徽章</td></tr>' +
+        '<tr><td>USD</td><td class="mono xs">…/usd/berkeley_humanoid_lite.usd</td><td>卡片 + sha256 · 不在浏览器解析</td></tr>' +
+        "</tbody></table></div>" +
+        '<p class="xs muted-2">GET /api/v1/embodiments/…/assets/file?path= 必须落在资产根内，否则 403。</p>';
+    }
+  };
+
+  screens["bhl-source"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite?tab=source",
+    nav: bhlNav("bhl-source"),
+    html: function () {
+      return bar("本体 / 来源", "git_external", "", "") +
+        '<dl class="dl">' +
+        "<dt>path</dt><dd>/data/kk/Berkeley-Humanoid-Lite</dd>" +
+        "<dt>writable</dt><dd>false</dd>" +
+        "<dt>worktree_cache</dt><dd>/var/lib/eb/repos/bhl/6ff398f</dd>" +
+        "<dt>submodules</dt><dd>assets v2025.09.03 · lowlevel feat/isaac5</dd>" +
+        "</dl>" +
+        '<p class="xs muted mb0 mt1">Job 只用缓存 commit。脏工作树 G1 拒绝。</p>';
+    }
+  };
+
+  screens["env-new"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite/envs/new",
+    nav: [{ id: "bhl", t: "返回本体" }],
+    html: function () {
+      return bar("新建本体环境", "必须挂在某个本体下", '<span class="badge b-cyan">C</span>',
+        '<button class="btn" data-go="bhl">取消</button>') +
+        '<div class="grid g2">' +
+          '<div class="card env-mini" data-go="env-draft"><p class="card-title">空白草稿</p><p class="xs muted mb0">从表单填关节 / obs / act</p></div>' +
+          '<div class="card env-mini" data-go="env-draft"><p class="card-title">克隆 ee_bhl_humanoid_22dof_v1</p><p class="xs muted mb0">生成 v2 草稿，数字可改</p></div>' +
+        "</div>";
+    }
+  };
+
+  screens["env-humanoid"] = {
+    url: "eb.local/embodiments/emb_berkeley_humanoid_lite/envs/ee_bhl_humanoid_22dof_v1",
+    nav: envNav("env-humanoid"),
+    html: function () {
+      return bar("ee_bhl_humanoid_22dof_v1", "全身运控 " + '<span class="badge b-green">active</span><span class="lock">spec 已冻</span>',
+        "",
+        '<button class="btn" data-go="env-humanoid-yaml">YAML 只读</button>' +
+        '<button class="btn" data-go="env-g">G 矩阵</button>' +
+        '<button class="btn" data-go="env-refs">引用方</button>' +
+        '<button class="btn" data-go="env-draft">克隆为 v2 草稿</button>' +
+        '<button class="btn" disabled title="已发布不可改">编辑数字</button>' +
+        '<button class="btn primary" data-go="submit">用此环境训练</button>' +
+        '<button class="btn danger" data-go="env-deprecate">废弃</button>') +
+        '<div class="grid g4 mb2">' +
+          kpi("obs", "75", "sum(layout)=75") + kpi("act / dof", "22", "scale 0.25") +
+          kpi("policy", "25 Hz", "dt 0.005 × dec 8") + kpi("别名", "ec_bhl_humanoid_22dof_v1", "只读") +
+        "</div>" +
+        '<div class="panel-sm mb2"><p class="panel-sm-t">观测拼接</p>' + obsStrip() + "</div>" +
+        '<div class="panel-sm mt1"><p class="panel-sm-t">关节顺序 · 权威</p>' + jointList(false) + "</div>";
+    }
+  };
+
+  screens["env-humanoid-yaml"] = {
+    url: "eb.local/…/ee_bhl_humanoid_22dof_v1?tab=yaml",
+    nav: envNav("env-humanoid-yaml"),
+    html: function () {
+      return bar("YAML", "只读 · spec_hash a3f1…", "", '<button class="btn" data-act="dl-yaml">下载 YAML</button><button class="btn" data-go="env-humanoid">返回</button>') +
+        '<pre class="yaml">id: ee_bhl_humanoid_22dof_v1\nstatus: active\ndof: 22\nobservation:\n  dim: 75\naction:\n  dim: 22\n  type: joint_position\ncontrol:\n  policy_hz: 25</pre>' +
+        '<p class="xs muted-2">保存不会出现。要改数字走克隆草稿。</p>';
+    }
+  };
+
+  screens["env-draft"] = {
+    url: "eb.local/…/ee_bhl_humanoid_22dof_v2",
+    nav: envNav("env-draft"),
+    html: function () {
+      return bar("ee_bhl_humanoid_22dof_v2", "草稿 " + '<span class="badge b-amber">draft</span>',
+        "",
+        '<button class="btn" data-act="save-pg">保存到 PG</button>' +
+        '<button class="btn" data-go="env-publish-fail">校验失败示例</button>' +
+        '<button class="btn primary" data-go="env-publish">发布…</button>' +
+        '<button class="btn danger" data-act="del-draft">删除草稿</button>') +
+        '<div class="grid g-2-1">' +
+          '<div>' +
+            '<div class="panel-sm draft-sec"><p class="panel-sm-t">关节 · 从 URDF 勾选子集</p>' +
+            '<p class="xs muted">拖拽改 joint_order（原型用勾选）。biped 去掉臂。</p>' + jointList(false) + "</div>" +
+            '<div class="panel-sm draft-sec"><p class="panel-sm-t">观测 term</p><div class="form-grid">' +
+            '<div class="lbl">cmd</div><input class="input" value="3">' +
+            '<div class="lbl">ang / grav</div><input class="input" value="3 + 3">' +
+            '<div class="lbl">q / dq / a-1</div><input class="input" value="22 + 22 + 22">' +
+            '<div class="lbl">obs.dim</div><input class="input" value="75">' +
+            "</div>" + obsStrip() + "</div>" +
+            '<div class="panel-sm draft-sec"><p class="panel-sm-t">动作</p><div class="form-grid">' +
+            '<div class="lbl">type</div><input class="input" value="joint_position">' +
+            '<div class="lbl">dim / scale</div><input class="input" value="22 / 0.25">' +
+            '<div class="lbl">WBC terms</div><input class="input" value="（本草稿单 term；WBC 见已发布页）">' +
+            "</div></div>" +
+            '<div class="panel-sm draft-sec"><p class="panel-sm-t">控制</p><div class="form-grid">' +
+            '<div class="lbl">policy_hz</div><input class="input" value="25">' +
+            '<div class="lbl">sim_dt × dec</div><input class="input" value="0.005 × 8">' +
+            '<div class="lbl">kp / kd</div><input class="input" value="来自 URDF / YAML limits">' +
+            "</div></div>" +
+            '<div class="panel-sm"><p class="panel-sm-t">绑定</p><p class="xs muted mb0">仿真/真机端口写在环境上，不写回 BHL。保存只进 PostgreSQL。</p></div>' +
+          "</div>" +
+          '<pre class="yaml">id: ee_bhl_humanoid_22dof_v2\nstatus: draft\ndof: 22\nobservation:\n  dim: 75\naction:\n  dim: 22\ncontrol:\n  policy_hz: 25\n# 左表单 = 右 YAML · 未冻结</pre>' +
+        "</div>";
+    }
+  };
+
+  screens["env-publish"] = {
+    url: "eb.local/…/ee_bhl_humanoid_22dof_v2/publish",
+    nav: envNav("env-publish"),
+    html: function () {
+      return bar("发布", "断言必须全过", '<span class="badge b-cyan">C→active</span>',
+        '<button class="btn" data-go="env-draft">返回</button><button class="btn primary" data-act="publish-ok">发布并冻结</button>') +
+        '<div class="panel-sm">' +
+        '<p class="check ok">observation.dim == sum(layout)</p>' +
+        '<p class="check ok">len(joint_order) == dof</p>' +
+        '<p class="check ok">1/(sim_dt×decimation) == policy_hz</p>' +
+        '<p class="check ok">关节名 ⊆ URDF</p>' +
+        '<p class="xs muted mb0">Agent 没有这个按钮。发布后 spec_hash 冻结。</p></div>';
+    }
+  };
+
+  screens["env-publish-fail"] = {
+    url: "eb.local/…/ee_bhl_humanoid_22dof_v2/publish?fail=1",
+    nav: envNav("env-publish-fail"),
+    html: function () {
+      return bar("发布被拒", "GET /validate", '<span class="badge b-red">400</span>',
+        '<button class="btn" data-go="env-draft">回草稿改数字</button>') +
+        '<div class="panel-sm">' +
+        '<p class="check bad">observation.dim 76 ≠ sum(layout) 75</p>' +
+        '<p class="check ok">len(joint_order) == dof</p>' +
+        '<p class="check bad">关节 ghost_joint 不在 URDF</p>' +
+        '<p class="xs muted mb0">不会部分发布。不写 BHL。</p></div>';
+    }
+  };
+
+  screens["env-g"] = {
+    url: "eb.local/…/ee_bhl_humanoid_22dof_v1?tab=gates",
+    nav: envNav("env-g"),
+    html: function () {
+      return bar("G1–G5", "主语是本体环境，不是旧契约", "", '<button class="btn" data-go="env-humanoid">返回</button>') +
+        '<div class="tbl-wrap"><table class="compact"><thead><tr><th></th><th>G1 提交</th><th>G2 数据</th><th>G3 模型</th><th>G4 导出</th><th>G5 上机</th></tr></thead><tbody>' +
+        '<tr><td class="xs">humanoid 75/22</td><td class="gate-cell c-green">task 匹配</td><td class="gate-cell muted">未注册</td><td class="gate-cell c-green">75→22</td><td class="gate-cell muted">—</td><td class="gate-cell c-amber">未扫总线</td></tr>' +
+        '<tr><td class="xs">fixed-hand</td><td class="gate-cell c-green">Reach</td><td class="gate-cell muted">—</td><td class="gate-cell muted">—</td><td class="gate-cell muted">无 .ebp</td><td class="gate-cell muted">仅仿真</td></tr>' +
+        "</tbody></table></div>" +
+        '<p class="xs muted-2">行来自 GET …/refs 的真实登记，不是手填勾选。</p>';
+    }
+  };
+
+  screens["env-refs"] = {
+    url: "eb.local/…/ee_bhl_humanoid_22dof_v1/refs",
+    nav: envNav("env-refs"),
+    html: function () {
+      return bar("引用方", "G 矩阵的行来自真实登记", "", '<button class="btn" data-go="env-humanoid">返回</button>') +
+        '<div class="tbl-wrap"><table class="compact"><thead><tr><th>类型</th><th>id</th><th>G</th></tr></thead><tbody>' +
+        '<tr><td>Job</td><td class="mono xs">job_01JB… train.rl</td><td>G1 通过</td></tr>' +
+        '<tr><td>ModelVersion</td><td class="mono xs">mv_01JB… onnx 75→22</td><td>G3 通过</td></tr>' +
+        '<tr><td>DatasetVersion</td><td class="xs muted">无</td><td>—</td></tr>' +
+        "</tbody></table></div>";
+    }
+  };
+
+  screens["env-wbc"] = {
+    url: "eb.local/…/ee_bhl_wbc_22dof_v1",
+    nav: envNav("env-wbc"),
+    html: function () {
+      return bar("ee_bhl_wbc_22dof_v1", "不规则 · 双 action term", '<span class="badge b-amber">WBC</span>',
+        '<button class="btn primary" data-go="submit">训练</button>') +
+        '<p class="small">obs 85（含 +10 臂参考）· act 22 = 臂 to_limits 10 + 腿 position 12 · 50 Hz。可视化必须画出双 term，不能退化成单向量。</p>' +
+        '<div class="obs-strip"><span style="flex:13;background:#53d4ff">cmd 13</span><span style="flex:72;background:#b28dff">state 72</span></div>';
+    }
+  };
+
+  screens["env-biped"] = {
+    url: "eb.local/…/ee_bhl_biped_12dof_v1",
+    nav: envNav("env-biped"),
+    html: function () {
+      return bar("ee_bhl_biped_12dof_v1", "45 / 12 @ 25 Hz", '<span class="badge b-green">active</span>',
+        '<button class="btn" data-go="bhl-3d">3D 只高亮腿</button>') +
+        '<div class="panel-sm"><p class="panel-sm-t">关节 · 臂半透明</p>' + jointList(true) + "</div>";
+    }
+  };
+
+  screens["env-fixedhand"] = {
+    url: "eb.local/…/ee_bhl_fixedhand_10dof_v1",
+    nav: envNav("env-fixedhand"),
+    html: function () {
+      return bar("ee_bhl_fixedhand_10dof_v1", "concat:false", '<span class="badge b-violet">多模态</span>',
+        '<button class="btn primary" data-go="submit">RLinf Reach</button>') +
+        '<div class="grid g2"><div class="panel-sm"><p class="panel-sm-t">state 10</p><p class="xs mb0">绝对关节位置</p></div>' +
+        '<div class="panel-sm"><p class="panel-sm-t">camera_top</p><p class="xs mb0">224×224×3 · 不拼接进向量</p></div></div>';
+    }
+  };
+
+  screens["env-deprecate"] = {
+    url: "eb.local/…/ee_bhl_humanoid_22dof_v1/deprecate",
+    nav: envNav("env-deprecate"),
+    html: function () {
+      return bar("废弃", "旧 Run 仍可复现", '<span class="badge b-gray">D</span>',
+        '<button class="btn" data-go="env-humanoid">取消</button><button class="btn danger" data-act="deprecated">确认废弃</button>') +
+        '<p class="small">新 Job 默认不选。不能删除：已被模型引用。</p>';
+    }
+  };
+
+  screens.tasks = {
+    url: "eb.local/tasks",
+    nav: [{ id: "tasks", t: "已发布" }, { id: "task-draft", t: "扫描草稿" }],
+    html: function () {
+      return bar("任务", "Task ≠ Hydra env ≠ Scenario", '<span class="badge b-green">5 发布 · 1 草稿</span>',
+        '<button class="btn" data-go="task-new">手建绑定</button>') +
+        '<div class="tbl-wrap"><table class="compact"><thead><tr><th>id</th><th>兼容环境</th><th>栈</th></tr></thead><tbody>' +
+        taskRow("tsk_bhl_velocity_humanoid", "ee_bhl_humanoid_22dof_v1", "Isaac", "task-reach") +
+        taskRow("tsk_bhl_reach", "ee_bhl_fixedhand_10dof_v1", "Isaac + RLinf", "task-reach") +
+        taskRow("tsk_bhl_wbc_tracking", "ee_bhl_wbc_22dof_v1", "Isaac + RLinf", "task-reach") +
+        taskRow("tsk_libero_10", "ee_libero_franka_v1", "RLinf in_image", "task-reach") +
+        "</tbody></table></div>";
+    }
+  };
+
+  screens["task-draft"] = {
+    url: "eb.local/tasks?status=draft",
+    nav: [{ id: "tasks", t: "已发布" }, { id: "task-draft", t: "扫描草稿" }],
+    html: function () {
+      return bar("任务草稿", "扫描出来的 Gym id，人确认才发布", '<span class="badge b-amber">C</span>',
+        '<button class="btn primary" data-act="publish-task">确认绑定并发布</button>') +
+        '<div class="panel-sm"><p class="mono xs mb0">发现 Isaac-Berkeley-Humanoid-Lite-FixedHand-Push-v0<br>建议兼容 ee_bhl_fixedhand_10dof_v1<br>RLinf 绑定：无（Push 仅 Isaac）</p></div>';
+    }
+  };
+
+  screens["task-new"] = {
+    url: "eb.local/tasks/new",
+    nav: [{ id: "tasks", t: "返回" }],
+    html: function () {
+      return bar("手建任务", "不编奖励函数", "", '<button class="btn" data-go="tasks">取消</button><button class="btn primary" data-act="save-pg">保存草稿</button>') +
+        '<div class="panel-sm"><div class="form-grid">' +
+        '<div class="lbl">id</div><input class="input" value="tsk_">' +
+        '<div class="lbl">兼容 ee_*</div><input class="input" value="ee_bhl_fixedhand_10dof_v1">' +
+        '<div class="lbl">Isaac gym_id</div><input class="input" placeholder="可选">' +
+        '<div class="lbl">RLinf config_name</div><input class="input" placeholder="仓内已有 yaml 名">' +
+        "</div></div>";
+    }
+  };
+
+  screens["task-reach"] = {
+    url: "eb.local/tasks/tsk_bhl_reach",
+    nav: [{ id: "tasks", t: "列表" }],
+    html: function () {
+      return bar("tsk_bhl_reach", "兼容 fixedhand", '<span class="badge b-green">active</span>',
+        '<button class="btn" data-go="task-edit">改绑定</button>' +
+        '<button class="btn primary" data-go="submit">提交训练</button><button class="btn danger" data-act="dep-task">废弃</button>') +
+        '<pre class="yaml">compatible_env_ids: [ee_bhl_fixedhand_10dof_v1]\nstack_bindings:\n  isaaclab_rslrl:\n    gym_id: Isaac-…-FixedHand-Reach-v0\n  rlinf:\n    config_name: 指向仓内 isaaclab_berkeley_reach\n    # 平台不生成这份 yaml</pre>';
+    }
+  };
+
+  screens["task-edit"] = {
+    url: "eb.local/tasks/tsk_bhl_reach?edit=1",
+    nav: [{ id: "task-reach", t: "返回" }],
+    html: function () {
+      return bar("改任务绑定", "不编奖励函数", '<span class="badge b-amber">U</span>',
+        '<button class="btn" data-go="task-reach">取消</button><button class="btn primary" data-act="save-pg">保存</button>') +
+        '<div class="panel-sm"><div class="form-grid">' +
+        '<div class="lbl">兼容 ee_*</div><input class="input" value="ee_bhl_fixedhand_10dof_v1">' +
+        '<div class="lbl">Isaac gym_id</div><input class="input" value="Isaac-…-FixedHand-Reach-v0">' +
+        '<div class="lbl">RLinf config_name</div><input class="input" value="isaaclab_berkeley_reach">' +
+        '</div><p class="xs muted-2 mb0 mt1">改兼容环境会影响 G1。不在平台改 Hydra yaml 正文。</p></div>';
+    }
+  };
+
+  screens.arm = {
+    url: "eb.local/embodiments/emb_demo_arm_urdf",
+    nav: [{ id: "list", t: "列表" }, { id: "arm", t: "概览" }],
+    html: function () {
+      return bar("emb_demo_arm_urdf", "managed_bundle " + caps(1,0,0,0),
+        '<span class="badge b-amber">仅 preview</span>',
+        '<button class="btn" disabled title="没有 Task 栈绑定">提交训练</button>' +
+        '<button class="btn" data-go="env-new">补环境 YAML</button>' +
+        '<button class="btn" data-go="arm-delete">删除</button>') +
+        '<div class="panel-sm"><p class="mb0">只有 URDF 进了 CAS。train 徽章未点亮是设计：没有入口就不要假装能训。无已发布环境，允许删除。</p></div>';
+    }
+  };
+
+  screens["arm-delete"] = {
+    url: "eb.local/embodiments/emb_demo_arm_urdf?delete=1",
+    nav: [{ id: "arm", t: "返回" }],
+    html: function () {
+      return bar("删除本体", "无被引用的已发布环境", '<span class="badge b-red">D</span>',
+        '<button class="btn" data-go="arm">取消</button><button class="btn danger" data-act="del-arm">确认删除</button>') +
+        '<p class="small">CAS 对象按引用计数 GC。对比 BHL：那边只能归档。</p>';
+    }
+  };
+
+  screens.libero = {
+    url: "eb.local/embodiments/emb_libero_franka",
+    nav: [{ id: "list", t: "列表" }, { id: "libero", t: "概览" }],
+    html: function () {
+      return bar("emb_libero_franka", "in_image " + caps(1,1,1,0),
+        "", '<button class="btn primary" data-go="submit">用 RLinf 训</button>') +
+        '<p class="small">本体不是 BHL。YAML 是 Hydra 投影，不能在平台改镜像内文件。换 tag 必须换 digest。</p>' +
+        '<dl class="dl"><dt>image</dt><dd>eb/rlinf:0.4.0-emb@sha256:9c21…</dd><dt>env yaml</dt><dd>env/libero_10.yaml</dd></dl>';
+    }
+  };
+
+  screens.submit = {
+    url: "eb.local/train/submit",
+    nav: [{ id: "submit", t: "表单" }],
+    html: function () {
+      return bar("提交训练", "四元组", "", '<button class="btn" data-act="g1-fail">预检失败示例</button><button class="btn primary" data-act="g1-ok">G1 通过并提交</button>') +
+        '<div class="panel-sm"><div class="form-grid">' +
+        '<div class="lbl">本体</div><div class="mono xs">emb_berkeley_humanoid_lite</div>' +
+        '<div class="lbl">本体环境</div><div class="mono xs">ee_bhl_fixedhand_10dof_v1 · active</div>' +
+        '<div class="lbl">任务</div><div class="mono xs">tsk_bhl_reach</div>' +
+        '<div class="lbl">栈</div><div>rlinf</div>' +
+        '<div class="lbl">镜像</div><div class="mono xs">eb/rlinf:0.4.0-emb@sha256:…</div>' +
+        '<div class="lbl">code_refs</div><div class="xs">BHL 6ff398f + RLinf commit · 双冻结</div>' +
+        '<div class="lbl">Ray</div><div>6390</div>' +
+        "</div></div>" +
+        '<p class="xs muted-2 mb0 mt1">config_name 来自 Task，人可用 overrides，但改 obs/act/关节会 400。</p>';
+    }
+  };
+
+  function bar(crumb, title, extra, actions) {
+    return '<div class="app-bar"><div><p class="app-crumb">' + crumb + '</p><h3 class="app-h">' + title + ' ' + (extra || '') +
+      '</h3></div><div class="app-actions">' + (actions || '') + '</div></div>';
+  }
+  function kpi(l, v, f) {
+    return '<div class="kpi"><p class="kpi-label">' + l + '</p><p class="kpi-value" style="font-size:1.25rem">' + v + '</p><p class="kpi-foot">' + f + '</p></div>';
+  }
+  function card(id, title, sub, foot, cap, go) {
+    return '<div class="card env-mini" data-go="' + go + '"><p class="card-title mono xs">' + id + '</p><p class="app-h" style="font-size:1rem">' + title +
+      '</p><p class="xs muted">' + sub + '</p>' + cap + '<p class="xs muted-2 mb0 mt1">' + foot + '</p></div>';
+  }
+  function envCard(id, kpiText, sub, go) {
+    return '<div class="card env-mini" data-go="' + go + '"><p class="card-title mono xs">' + id + '</p><p class="kpi-value" style="font-size:1.35rem">' + kpiText +
+      '</p><p class="xs muted mb0">' + sub + '</p></div>';
+  }
+  function kind(id, title, l1, l2) {
+    return '<button type="button" class="kind-card' + (wizardKind === id ? " sel" : "") + '" data-kind="' + id + '"><b>' + title + "</b><span>" + l1 + "<br>" + l2 + "</span></button>";
+  }
+  function field(l, v, h) {
+    return '<div class="form-grid"><div class="lbl">' + l + '</div><div><input class="input" style="width:100%" value="' + v + '">' +
+      (h ? '<div class="xs muted-2">' + h + "</div>" : "") + "</div></div>";
+  }
+  function steps(n) {
+    return '<div class="steps"><i class="' + (n >= 1 ? "on" : "") + '">1 来源</i><i class="' + (n >= 2 ? "on" : "") + '">2 路径</i><i class="' + (n >= 3 ? "on" : "") + '">3 扫描</i><i class="' + (n >= 4 ? "on" : "") + '">4 登记</i></div>';
+  }
+  function bhlNav(on) {
+    return [
+      { id: "bhl", t: "概览" }, { id: "bhl-3d", t: "3D" }, { id: "bhl-assets", t: "资产" },
+      { id: "bhl-source", t: "来源" }, { id: "bhl-meta", t: "元数据" }, { id: "env-new", t: "新建环境" }
+    ];
+  }
+  function envNav() {
+    return [
+      { id: "bhl", t: "本体" }, { id: "env-humanoid", t: "humanoid" }, { id: "env-g", t: "G 矩阵" },
+      { id: "env-biped", t: "biped" }, { id: "env-wbc", t: "WBC" }, { id: "env-fixedhand", t: "fixed-hand" },
+      { id: "env-draft", t: "v2 草稿" }
+    ];
+  }
+  function taskRow(id, env, stack, goId) {
+    return '<tr class="env-mini" data-go="' + (goId || "task-reach") + '"><td class="mono xs">' + id + '</td><td class="mono xs">' + env + '</td><td>' + stack + '</td></tr>';
+  }
+  function obsStrip() {
+    return '<div class="obs-strip">' +
+      '<span style="flex:3;background:#53d4ff">cmd 3</span>' +
+      '<span style="flex:3;background:#55d6be">ang 3</span>' +
+      '<span style="flex:3;background:#5b8cff">grav 3</span>' +
+      '<span style="flex:22;background:#b28dff">q 22</span>' +
+      '<span style="flex:22;background:#ffc857">dq 22</span>' +
+      '<span style="flex:22;background:#ff884d">a 22</span></div>' +
+      '<div class="obs-legend"><span><i style="background:#53d4ff"></i>0–2 cmd</span><span><i style="background:#55d6be"></i>3–5 ang</span><span><i style="background:#5b8cff"></i>6–8 grav</span><span><i style="background:#b28dff"></i>9–30 q</span><span><i style="background:#ffc857"></i>31–52 dq</span><span><i style="background:#ff884d"></i>53–74 a₋₁</span></div>';
+  }
+  function jointList(biped) {
+    var legs = ["hip_roll_l","hip_yaw_l","hip_pitch_l","knee_l","ankle_pitch_l","ankle_roll_l","hip_roll_r","hip_yaw_r","hip_pitch_r","knee_r","ankle_pitch_r","ankle_roll_r"];
+    var arms = ["sh_pitch_l","sh_roll_l","sh_yaw_l","el_pitch_l","el_roll_l","sh_pitch_r","sh_roll_r","sh_yaw_r","el_pitch_r","el_roll_r"];
+    var html = '<div class="joint-grid">';
+    arms.forEach(function (n, i) {
+      html += '<div class="' + (biped ? 'dim' : '') + '"><span class="idx">' + i + '</span>' + n + '</div>';
+    });
+    legs.forEach(function (n, i) {
+      html += '<div><span class="idx">' + (i + 10) + '</span>' + n + '</div>';
+    });
+    return html + "</div>";
+  }
+  function robotSvg() {
+    return '<svg viewBox="0 0 200 260" width="100%" height="100%" aria-label="关节示意图">' +
+      '<line x1="100" y1="40" x2="100" y2="110" stroke="#53d4ff" stroke-width="3"/>' +
+      '<circle cx="100" cy="28" r="12" fill="none" stroke="#9fb4c2"/>' +
+      '<line x1="100" y1="55" x2="55" y2="90" stroke="#b28dff" stroke-width="3"/>' +
+      '<line x1="100" y1="55" x2="145" y2="90" stroke="#b28dff" stroke-width="3"/>' +
+      '<line x1="55" y1="90" x2="40" y2="130" stroke="#b28dff" stroke-width="3"/>' +
+      '<line x1="145" y1="90" x2="160" y2="130" stroke="#b28dff" stroke-width="3"/>' +
+      '<line x1="100" y1="110" x2="75" y2="170" stroke="#ffc857" stroke-width="3"/>' +
+      '<line x1="100" y1="110" x2="125" y2="170" stroke="#ffc857" stroke-width="3"/>' +
+      '<line x1="75" y1="170" x2="70" y2="230" stroke="#ffc857" stroke-width="3"/>' +
+      '<line x1="125" y1="170" x2="130" y2="230" stroke="#ffc857" stroke-width="3"/>' +
+      '<circle cx="100" cy="55" r="4" fill="#53d4ff"/>' +
+      '<circle cx="55" cy="90" r="4" fill="#b28dff"/><circle cx="145" cy="90" r="4" fill="#b28dff"/>' +
+      '<circle cx="75" cy="170" r="4" fill="#ffc857"/><circle cx="125" cy="170" r="4" fill="#ffc857"/>' +
+      "</svg>";
+  }
+
+  function go(id) {
+    var s = screens[id];
+    if (!s) { id = "list"; s = screens.list; }
+    current = id;
+    location.hash = id;
+    urlEl.textContent = s.url;
+    setNav(typeof s.nav === "function" ? s.nav(id) : s.nav, id);
+    stage.innerHTML = s.html();
+    stage.scrollTop = 0;
+  }
+
+  document.addEventListener("click", function (e) {
+    var kindBtn = e.target.closest("[data-kind]");
+    if (kindBtn) {
+      wizardKind = kindBtn.getAttribute("data-kind");
+      go("wizard");
+      return;
+    }
+    var goEl = e.target.closest("[data-go]");
+    if (goEl) {
+      e.preventDefault();
+      go(goEl.getAttribute("data-go"));
+      return;
+    }
+    var act = e.target.closest("[data-act]");
+    if (!act) return;
+    var a = act.getAttribute("data-act");
+    if (a === "no-delete-bhl") toast("BHL 种子本体不可删除，只能归档（且仍有被引用的已发布环境）。");
+    if (a === "archive-bhl") {
+      toast("本体已归档。已发布 ee_* 仍可复现。未写 /data/kk。");
+      go("list");
+    }
+    if (a === "del-arm") {
+      toast("本体已删除。CAS 待引用计数 GC。");
+      go("list");
+    }
+    if (a === "save-pg") toast("已写入 PostgreSQL。未写入 /data/kk/Berkeley-Humanoid-Lite。");
+    if (a === "dl-yaml") toast("下载平台快照 YAML，给人拿到上游仓开 PR。平台不代推。");
+    if (a === "fake-upload") toast("原型：zip 会进 CAS，源仓不出现新文件。");
+    if (a === "del-draft") {
+      confirmModal("删除草稿", "从未发布、无引用。不可恢复。", function () {
+        toast("草稿已删。");
+        go("bhl");
+      });
+    }
+    if (a === "publish-ok") {
+      toast("已发布并冻结 spec_hash。Agent 不能执行这一步。");
+      go("env-humanoid");
+    }
+    if (a === "deprecated") {
+      toast("status=deprecated。历史 Run 仍指向此 ee_*。");
+      go("bhl");
+    }
+    if (a === "publish-task") {
+      toast("任务已发布。奖励函数仍在 BHL/RLinf 仓里。");
+      go("tasks");
+    }
+    if (a === "dep-task") toast("任务已废弃。已有 Job 不受影响。");
+    if (a === "g1-fail") toast("G1 400：草稿环境不能提交；或 overrides 试图改 observation.dim。");
+    if (a === "g1-ok") toast("已入队。等价命令含双 commit、两处 ro 挂载、Ray 6390。");
+    if (a === "toggle-col") toast("切换 visual / collision（URDF collision 盒）。");
+  });
+
+  window.addEventListener("hashchange", function () {
+    var id = location.hash.replace("#", "") || "list";
+    go(id);
+  });
+
+  go((location.hash || "#list").replace("#", "") || "list");
+})();
+</script>
+</body>
+</html>

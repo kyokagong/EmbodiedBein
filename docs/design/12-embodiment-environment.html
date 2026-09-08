@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 本体与本体环境：替换 Embodiment Contract。分层、五种来源、BHL 只读纳管、可视化 CRUD、3D、与 RLinf 四元组训练。">
+<title>12 · 本体与本体环境｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">12 · Embodiment Environment</p>
+  <h1>本体与本体环境：<br>管资产、定义和怎么跑起来。</h1>
+  <p class="hero-copy">
+    「契约」只锁住了 obs / act / Hz，名称不像在管机器人。
+    本章把它替换为两层实体：<b>本体</b>管品牌、来源与 3D 资产；
+    <b>本体环境</b>管一种可跑接口（关节、观测、动作、控制律）。
+    任务独立。训练时选定环境、任务、栈和镜像。
+    Berkeley-Humanoid-Lite <b>只被纳管，不迁仓、不改文件</b>。
+  </p>
+  <div class="chips">
+    <span class="chip is-infra"><span class="chip-dot"></span>真源 <b>本章 + 12.md</b></span>
+    <span class="chip is-model"><span class="chip-dot"></span>旧名 <b>ec_* → ee_* 别名</b></span>
+    <span class="chip is-train"><span class="chip-dot"></span>训练 <b>环境 × 任务 × 栈 × 镜像</b></span>
+  </div>
+</header>
+
+<div class="note decide">
+  <span class="note-t">完整条文在 Markdown</span>
+  表格、schema、失败归因、十轮反思见
+  <a href="12-embodiment-environment.md"><code>12-embodiment-environment.md</code></a>。
+  本页是设计书里的导航章：结构、画面和与 02/09/11 的衔接。
+  旧词 Embodiment Contract / <code>contract_id</code> 仅为兼容；冲突时改代码，不改回本章。
+</div>
+
+<h2 id="why">12.1 换名解决什么</h2>
+
+<p>
+  旧机制的价值留下：维度错误要在提交阶段拦住。
+  换掉的是范围——平台还要能<b>接入新本体</b>、<b>看见 3D</b>、<b>草稿里改 YAML</b>、
+  <b>把同一套身体交给 Isaac 或 RLinf</b>。这些不是一份只读契约卡片能表达的。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>已拍板</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td>两层</td><td>本体 <code>emb_*</code> + 本体环境 <code>ee_*</code>。Job / 模型 / 数据集只引用已发布环境</td></tr>
+<tr><td>任务独立</td><td>Velocity / Reach / LIBERO 是 <code>tsk_*</code>，不是环境的一部分</td></tr>
+<tr><td>草稿冻结</td><td>草稿可改；发布后该版本不可变；改数字克隆 <code>_v2</code></td></tr>
+<tr><td>BHL</td><td><code>git_external</code> 纳管 <code>/data/kk/Berkeley-Humanoid-Lite</code>，平台零写入</td></tr>
+<tr><td>RLinf</td><td>不造 Hydra yaml；入口来自 Task 绑定；双 <code>code_refs</code> 冻结</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="entities">12.2 三实体</h2>
+
+<figure class="diagram diagram-wide">
+<svg viewBox="0 0 1140 280" role="img" aria-label="本体拥有资产与多个本体环境；任务绑定兼容环境；Job 引用环境加任务加栈镜像">
+  <g transform="translate(12,20)">
+    <rect class="svg-lane" width="340" height="240" rx="12" style="stroke:#5b8cff"/>
+    <text class="svg-t-lane" x="12" y="22" style="fill:#5b8cff">本体 Embodiment</text>
+    <text class="svg-t-mono" x="12" y="42">emb_berkeley_humanoid_lite</text>
+    <g transform="translate(12,56)"><rect class="svg-box" width="316" height="40" rx="7"/><text class="svg-t" x="9" y="16">source.git_external</text><text class="svg-t-mono" x="9" y="30">/data/kk/Berkeley-Humanoid-Lite 只读</text></g>
+    <g transform="translate(12,104)"><rect class="svg-box" width="316" height="40" rx="7"/><text class="svg-t" x="9" y="16">RobotAsset</text><text class="svg-t-mono" x="9" y="30">URDF / MJCF / USD 指针 + 哈希</text></g>
+    <g transform="translate(12,152)"><rect class="svg-box" width="150" height="36" rx="7"/><text class="svg-t-mono" x="9" y="22">3D 预览 URDF+STL</text></g>
+    <g transform="translate(178,152)"><rect class="svg-box" width="150" height="36" rx="7"/><text class="svg-t-mono" x="9" y="22">Calibration · Instance</text></g>
+    <text class="svg-t-mono" x="12" y="214">不把仓拷进平台 · 扫描不写回</text>
+  </g>
+  <g transform="translate(372,20)">
+    <rect class="svg-lane" width="380" height="240" rx="12" style="stroke:#b28dff"/>
+    <text class="svg-t-lane" x="12" y="22" style="fill:#b28dff">本体环境 EmbodimentEnv ★</text>
+    <g transform="translate(12,40)"><rect class="svg-box" width="356" height="36" rx="7" style="stroke:#b28dff;stroke-width:2"/><text class="svg-t-mono" x="9" y="22">ee_bhl_humanoid_22dof_v1 · 75/22@25</text></g>
+    <g transform="translate(12,84)"><rect class="svg-box" width="356" height="36" rx="7"/><text class="svg-t-mono" x="9" y="22">ee_bhl_biped_12dof_v1 · 45/12@25</text></g>
+    <g transform="translate(12,128)"><rect class="svg-box" width="356" height="36" rx="7"/><text class="svg-t-mono" x="9" y="22">ee_bhl_wbc_22dof_v1 · 85/22@50 双 term</text></g>
+    <g transform="translate(12,172)"><rect class="svg-box" width="356" height="36" rx="7"/><text class="svg-t-mono" x="9" y="22">ee_bhl_fixedhand_10dof_v1 · 10+img/10</text></g>
+    <text class="svg-t-mono" x="12" y="226">draft 可改 · active 冻 spec_hash · ec_* 别名</text>
+  </g>
+  <g transform="translate(772,20)">
+    <rect class="svg-lane" width="356" height="240" rx="12" style="stroke:#53d4ff"/>
+    <text class="svg-t-lane" x="12" y="22" style="fill:#53d4ff">任务 Task · 栈 · Job</text>
+    <g transform="translate(12,40)"><rect class="svg-box" width="332" height="40" rx="7"/><text class="svg-t" x="9" y="16">tsk_bhl_reach</text><text class="svg-t-mono" x="9" y="30">兼容 fixedhand · Isaac Gym + RLinf hydra</text></g>
+    <g transform="translate(12,92)"><rect class="svg-box" width="332" height="40" rx="7" style="stroke:#53d4ff;stroke-width:2"/><text class="svg-t" x="9" y="16">JobSpec</text><text class="svg-t-mono" x="9" y="30">ee_* × tsk_* × stack × image digest</text></g>
+    <g transform="translate(12,144)"><rect class="svg-box" width="332" height="40" rx="7"/><text class="svg-t" x="9" y="16">code_refs</text><text class="svg-t-mono" x="9" y="30">embodiment commit + stack commit</text></g>
+    <text class="svg-t-mono" x="12" y="206">Hydra env/* 属于任务绑定</text>
+    <text class="svg-t-mono" x="12" y="222">不是本体环境本身</text>
+  </g>
+</svg>
+<figcaption>图 12-1　BHL 一个本体、四套已发布环境、任务把 Gym/Hydra 入口挂到环境上。★ Job 引用的是环境。</figcaption>
+</figure>
+
+<div class="note warn">
+  <span class="note-t">RLinf 的 env 不是本体环境</span>
+  <code>examples/embodiment/config/env/isaaclab_berkeley_reach.yaml</code> 的
+  <code>init_params.id</code> 是 Gym 任务名。登记在 <code>Task.stack_bindings.rlinf</code>。
+  API 禁止用 <code>env_id</code> 指本体环境，一律 <code>embodiment_env_id</code>。
+</div>
+
+<h2 id="bhl">12.3 BHL：纳管不是迁移</h2>
+
+<p>
+  外部仓只读原则（<a href="01-architecture.html#principles">01.1</a>）不变。
+  平台在 PG 里登记指针与接口快照；执行逻辑留在
+  <code>source/berkeley_humanoid_lite/</code>，资产留在子模块。
+  不插入 <code>eb.embodiment.yaml</code>，不把四份 YAML 写回 BHL。
+</p>
+
+<div class="grid g2">
+<div class="card">
+  <p class="card-title">平台侧（可 CRUD）</p>
+  <ul class="small mb0">
+    <li>本体记录与来源 <code>git_external.path</code></li>
+    <li>四份 <code>ee_*</code> YAML（现 <code>contracts/</code> 改挂）</li>
+    <li>Task 绑定到已有 <code>gym.register</code></li>
+    <li>worktree 缓存 <code>/var/lib/eb/repos/bhl/&lt;commit&gt;</code></li>
+    <li>3D：按相对路径 <b>读</b> STL/URDF</li>
+  </ul>
+</div>
+<div class="card">
+  <p class="card-title">仓侧（零写入）</p>
+  <ul class="small mb0">
+    <li><code>/data/kk/Berkeley-Humanoid-Lite</code></li>
+    <li>Isaac 任务与奖励代码</li>
+    <li>URDF / MJCF / USD / meshes</li>
+    <li>lowlevel C++</li>
+    <li><code>tasks/manipulation/contracts.py</code> 仍是 Python 常量</li>
+  </ul>
+</div>
+</div>
+
+<div class="note danger">
+  <span class="note-t">脏工作树禁止开训</span>
+  直接 bind 活目录会让 <code>play.py</code> 写回 BHL。G1：只用干净 commit 的平台缓存。
+  跑完 <code>git -C /data/kk/Berkeley-Humanoid-Lite status</code> 必须干净。
+</div>
+
+<h2 id="sources">12.4 五种来源</h2>
+
+<p>来源写在本体上。能力徽章 <code>preview / train / eval / deploy</code> 必须诚实：没有 Task 栈绑定就不要点亮 train。</p>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>kind</th><th>范本</th><th>默认能力</th></tr></thead>
+<tbody>
+<tr><td class="mono">git_external</td><td>BHL、RLinf 仓</td><td>预览；绑定齐全则可训</td></tr>
+<tr><td class="mono">git_snapshot</td><td>平台 clone 的新 git</td><td>同上；YAML 不 push 回远程</td></tr>
+<tr><td class="mono">managed_bundle</td><td>只上传 URDF 的新机器</td><td><b>仅 preview</b>，直到补 Task</td></tr>
+<tr><td class="mono">in_image</td><td>RLinf 镜像内 LIBERO</td><td>钉 digest；不把 LIBERO 算进 BHL</td></tr>
+<tr><td class="mono">plugin</td><td><code>eb_plugin_*</code></td><td>v1 不阻塞 BHL 纳管</td></tr>
+</tbody>
+</table>
+</div>
+
+<p class="small">新仓建议根目录 <code>eb.embodiment.yaml</code>。BHL 豁免，扫描器认 Gym id 与资产目录即可。</p>
+
+<h2 id="ui">12.5 工作台</h2>
+
+<p>
+  导航「契约」改为「本体」。旧 <code>/contracts</code> 301 到列表；
+  <code>/contracts/ec_*</code> 打开对应 <code>ee_*</code>。
+  画面规格仍以 <a href="11-workspace-views.html#contract">11.3</a> 的观测条带 / 关节树 / G 矩阵为准，
+  但列表改为<b>按本体聚合</b>，已发布 YAML 只读，<b>草稿可编辑</b>。
+  全套可点击 CRUD：<a href="13-embodiment-crud-prototype.html">13 原型</a>。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>路由</th><th>CRUD</th></tr></thead>
+<tbody>
+<tr><td class="mono xs">/embodiments</td><td>C 接入向导；R 卡片（环境个数 + 徽章）</td></tr>
+<tr><td class="mono xs">/embodiments/:id</td><td>3D + 资产 + 来源；U 显示名/重扫；path/kind 不可改</td></tr>
+<tr><td class="mono xs">/embodiments/:id/envs/:eeId</td><td>草稿改 YAML；发布冻 hash；克隆 _v2</td></tr>
+<tr><td class="mono xs">/train/submit</td><td>环境 → 任务 → 栈 → 镜像；G1 预检</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="grid g2">
+<div class="note info">
+  <span class="note-t">3D</span>
+  P0 在本体页用 three.js 渲 <b>URDF + STL</b>。USD 只做文件卡片（路径 / sha256），
+  不在浏览器解析。缺 mesh 用 collision 盒 + 文案，禁止假模型。
+  选中 biped 环境时臂半透明、只高亮 12 个腿关节。媒体走 ebd，路径必须落在该本体资产根下。
+</div>
+<div class="note warn">
+  <span class="note-t">YAML</span>
+  保存只写 PG。下载 YAML 给人到上游仓开 PR。
+  发布前：维数自洽、关节名 ⊆ URDF、WBC 双 term、fixed-hand <code>concat:false</code>。
+  Agent 可建议草稿，不能 publish。
+</div>
+</div>
+
+<h2 id="rlinf">12.6 四元组交给 RLinf</h2>
+
+<p>
+  可提交 Job = <b>已发布环境 × 兼容任务 × 栈 rlinf × 镜像 digest</b>。
+  Adapter 不生成 RLinf 的 env yaml。与现成
+  <code>compose.berkeley-openpi.yaml</code> 同构：BHL 挂到 <code>/workspace/berkeley</code>，
+  RLinf 在 <code>/workspace/rlinf</code> 或镜像内，差别是 commit 冻结、可写目录不落回两仓、Ray 端口 6390。
+</p>
+
+<pre><code><span class="y">spec</span>:
+  <span class="y">kind</span>: train.rlft
+  <span class="y">embodiment_env_id</span>: ee_bhl_wbc_22dof_v1
+  <span class="y">task_id</span>: tsk_bhl_wbc_tracking
+  <span class="y">stack</span>: rlinf
+  <span class="y">image</span>: eb/rlinf:0.4.0-emb@sha256:…
+  <span class="y">code_refs</span>:
+    <span class="y">embodiment</span>: { kind: git_external, path: /data/kk/Berkeley-Humanoid-Lite, commit: 6ff398f }
+    <span class="y">stack</span>:      { kind: git_external, path: /data/kk/RLinf, commit: <span class="s">"…"</span> }
+  <span class="y">runtime</span>: { ray: { port: <span class="n">6390</span> } }
+</code></pre>
+
+<p>
+  <code>config_name</code> 默认来自 Task（WBC → <code>berkeley_wbc_ppo_mlp</code>，其 defaults 已 include
+  <code>env/isaaclab_berkeley_wbc</code>）。<code>PYTHONPATH</code> 含 BHL 三个 source 包，禁止对只读仓
+  <code>pip install -e</code>。<code>overrides[]</code> 不得改 obs/act/关节顺序。
+</p>
+
+<div class="note danger">
+  <span class="note-t">Adapter 三条禁止</span>
+  不把平台 YAML 覆盖进 RLinf 仓；不写 <code>/data/kk/*</code>；Ray 不准走 6379 / 平台 Redis 6380。
+  运行时维度对不上 → Run 失败，发 <code>ee_*_v2</code> 或改上游，不在 Adapter 里改数字。
+</div>
+
+<h2 id="gates">12.7 门禁与 Agent</h2>
+
+<p>
+  G1–G5 语义不变，主语改成本体环境。G1 额外查：环境已发布、任务兼容、栈绑定存在、镜像能力矩阵、
+  双 commit、数据集/基座同 <code>ee_*</code>、overrides 不改接口。
+</p>
+
+<p>
+  Agent 永久禁止：发布/改 active 环境、门禁豁免、真机放行。
+  允许只读扫描与（若开放工具）克隆草稿。详见
+  <a href="08-agent.html">08</a> 补丁段。
+</p>
+
+<h2 id="compat">12.8 对旧章的效力</h2>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>章</th><th>怎么读</th></tr></thead>
+<tbody>
+<tr><td><a href="02-domain-model.html">02</a></td><td>实体 ER / JobSpec / REST 以本章替换契约段；schema 过渡期视图</td></tr>
+<tr><td><a href="09-ui-system.html">09</a></td><td>路由表：/contracts → /embodiments；3D 从 P2 升到本体页 P0</td></tr>
+<tr><td><a href="11-workspace-views.html">11</a></td><td>观测条带仍有效；「不可新建改数字」改为「不可改已发布」</td></tr>
+<tr><td>01 03 04 05 07 08 10</td><td>文首对照：契约一词若指本体接口，读作本体环境</td></tr>
+</tbody>
+</table>
+</div>
+
+<p class="small muted">词表、REST 全树、SQL、失败归因、十轮反思：<a href="12-embodiment-environment.md">12.md §6–11</a>。</p>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

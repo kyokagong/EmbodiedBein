@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     ingest_roots: str = "/data/kk/Berkeley-Humanoid-Lite,/data/kk/berkeley_ego_data"
     fake_gpus: str = ""  # e.g. "0,1,2,3" for tests; empty means never invent GPUs
     bhl_repo: Path = Path("/data/kk/Berkeley-Humanoid-Lite")
+    rlinf_repo: Path = Path("/data/kk/RLinf")
     web_dist: Path = Path("/app/web/dist")
+    allowed_path_prefixes: str = "/data/kk,/var/lib/eb"
 
 
 @lru_cache

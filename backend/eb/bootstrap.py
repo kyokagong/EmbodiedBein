@@ -8,7 +8,9 @@ from passlib.hash import pbkdf2_sha256
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from eb.domain.contract import load_contract_dir
+from eb.domain.contract import load_env_dir
+from eb.domain.embodiment import BHL_ASSET_INDEX, BHL_SEED
+from eb.domain.task import BHL_SEED_TASKS
 from eb.ids import new_id, sha256_bytes
 from eb.ingest import ingest_all
 from eb.settings import get_settings
@@ -17,13 +19,16 @@ from eb.store.models import (
     Bundle,
     Dataset,
     DatasetVersion,
-    EmbodimentContractRow,
+    EmbodimentEnvRow,
+    EmbodimentRow,
     EvalSuite,
     Job,
     Pipeline,
     Robot,
+    RobotAssetRow,
     Run,
     Share,
+    TaskRow,
     User,
 )
 
@@ -57,24 +62,59 @@ async def seed_if_empty(session: AsyncSession) -> None:
             )
         )
 
+    if not await session.get(EmbodimentRow, BHL_SEED.id):
+        src = BHL_SEED.source.model_dump(mode="json")
+        session.add(
+            EmbodimentRow(
+                id=BHL_SEED.id,
+                display_name=BHL_SEED.display_name,
+                source=src,
+                status=BHL_SEED.status,
+                seed=BHL_SEED.seed,
+                tags=BHL_SEED.tags,
+                capabilities=BHL_SEED.capabilities,
+                root_path=src.get("path"),
+            )
+        )
+        session.add(
+            RobotAssetRow(
+                id="ras_bhl_v1",
+                embodiment_id=BHL_SEED.id,
+                version_label="bhl-hw-v1",
+                paths={"items": BHL_ASSET_INDEX},
+                content_hash="",
+            )
+        )
+        await session.flush()
     contracts_dir = settings.contracts_dir
     if not contracts_dir.exists():
-        # repo-relative fallback
         here = Path(__file__).resolve().parents[2] / "contracts"
         if here.exists():
             contracts_dir = here
-    for ctr in load_contract_dir(contracts_dir):
-        if await session.get(EmbodimentContractRow, ctr.id):
+    for env in load_env_dir(contracts_dir):
+        if await session.get(EmbodimentEnvRow, env.id):
             continue
         session.add(
-            EmbodimentContractRow(
-                id=ctr.id,
-                spec=ctr.model_dump(mode="json"),
-                spec_hash=ctr.spec_hash(),
-                status=ctr.status,
-                obs_dim=ctr.observation.dim,
-                action_dim=ctr.action.dim,
-                policy_hz=ctr.control.policy_hz,
+            EmbodimentEnvRow(
+                id=env.id,
+                embodiment_id=env.embodiment_id,
+                spec=env.model_dump(mode="json"),
+                spec_hash=env.spec_hash(),
+                status=env.status,
+                obs_dim=env.observation.dim,
+                action_dim=env.action.dim,
+                policy_hz=env.control.policy_hz,
+            )
+        )
+    for tsk in BHL_SEED_TASKS:
+        if await session.get(TaskRow, tsk.id):
+            continue
+        session.add(
+            TaskRow(
+                id=tsk.id,
+                spec=tsk.model_dump(mode="json"),
+                spec_hash=tsk.spec_hash(),
+                status=tsk.status,
             )
         )
     await session.flush()
@@ -89,8 +129,12 @@ async def seed_if_empty(session: AsyncSession) -> None:
             name="berkeley_ego_data",
             format="ego_jsonl",
             license="mixed/nc_tainted",
-            contract_id="ec_bhl_fixedhand_10dof_v1",
+            embodiment_env_id="ee_bhl_fixedhand_10dof_v1",
             meta={"root": "/data/kk/berkeley_ego_data"},
+            source_kind="path",
+            source_uri="/data/kk/berkeley_ego_data",
+            dest_path="/data/kk/berkeley_ego_data",
+            status="ready",
         )
         session.add(ds)
         session.add(
@@ -98,7 +142,7 @@ async def seed_if_empty(session: AsyncSession) -> None:
                 id="dsv_ego_raw",
                 dataset_id=ds.id,
                 version="raw",
-                compatible_contracts=[],
+                compatible_envs=[],
                 stats={"note": "await data.scan"},
                 funnel={
                     "source": {"n": 0, "rejected": []},
@@ -115,7 +159,7 @@ async def seed_if_empty(session: AsyncSession) -> None:
             EvalSuite(
                 id="suite_biped_locomotion_v2",
                 name="biped locomotion",
-                contract_id="ec_bhl_biped_12dof_v1",
+                embodiment_env_id="ee_bhl_biped_12dof_v1",
                 seeds=[0, 1, 2, 3, 4, 5, 6, 7],
                 frozen=True,
             )
@@ -125,14 +169,14 @@ async def seed_if_empty(session: AsyncSession) -> None:
             Robot(
                 id="robot_bhl_01",
                 name="BHL-01",
-                contract_id="ec_bhl_biped_12dof_v1",
+                embodiment_env_id="ee_bhl_biped_12dof_v1",
                 calibration={"expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat()},
             )
         )
         session.add(
             Bundle(
                 id="bnd_biped_demo",
-                contract_id="ec_bhl_biped_12dof_v1",
+                embodiment_env_id="ee_bhl_biped_12dof_v1",
                 stage="S0",
                 signed=False,
                 manifest={"note": "first-version placeholder bundle"},
@@ -145,7 +189,7 @@ async def seed_if_empty(session: AsyncSession) -> None:
                 snapshot={
                     "kpis": [
                         {"label": "历史策略", "value": "6+", "foot": "遗留导入"},
-                        {"label": "契约", "value": "4", "foot": "humanoid/biped/wbc/hand"},
+                        {"label": "本体环境", "value": "4", "foot": "humanoid/biped/wbc/hand"},
                         {"label": "数据场景", "value": "待扫描", "foot": "漏斗来自 data.scan"},
                     ],
                     "milestones": [
@@ -168,13 +212,13 @@ async def seed_if_empty(session: AsyncSession) -> None:
                     "steps": [
                         {
                             "kind": "data.scan",
-                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
+                            "embodiment_env_id": "ee_bhl_fixedhand_10dof_v1",
                             "params": {"path": "/data/kk/berkeley_ego_data"},
                             "resources": {"gpus": 0},
                         },
                         {
                             "kind": "data.slice",
-                            "contract_id": "ec_bhl_fixedhand_10dof_v1",
+                            "embodiment_env_id": "ee_bhl_fixedhand_10dof_v1",
                             "params": {
                                 "dataset_id": "ds_berkeley_ego",
                                 "query": {"limit": 1},

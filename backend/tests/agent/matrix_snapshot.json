@@ -1,7 +1,7 @@
 [
   {
     "approval": "none",
-    "description": "\u67e5\u5bb9\u91cf\u4f30\u7b97\u5668",
+    "description": "查容量估算器",
     "effect": "read",
     "name": "capacity.estimate",
     "rate_limit": "200/h"
@@ -10,21 +10,21 @@
     "approval": "permanent ban",
     "description": "",
     "effect": "forbidden",
-    "name": "contract.create",
-    "rate_limit": null
-  },
-  {
-    "approval": "permanent ban",
-    "description": "",
-    "effect": "forbidden",
-    "name": "contract.modify",
-    "rate_limit": null
-  },
-  {
-    "approval": "permanent ban",
-    "description": "",
-    "effect": "forbidden",
     "name": "deploy.release",
+    "rate_limit": null
+  },
+  {
+    "approval": "none",
+    "description": "只读扫描本体资产",
+    "effect": "read",
+    "name": "embodiment.scan",
+    "rate_limit": "50/h"
+  },
+  {
+    "approval": "permanent ban",
+    "description": "",
+    "effect": "forbidden",
+    "name": "embodiment_env.publish",
     "rate_limit": null
   },
   {
@@ -43,14 +43,14 @@
   },
   {
     "approval": "none",
-    "description": "\u68c0\u7d22\u4efb\u52a1",
+    "description": "检索任务",
     "effect": "read",
     "name": "query.jobs",
     "rate_limit": "200/h"
   },
   {
     "approval": "none",
-    "description": "\u68c0\u7d22\u6a21\u578b",
+    "description": "检索模型",
     "effect": "read",
     "name": "query.models",
     "rate_limit": "200/h"

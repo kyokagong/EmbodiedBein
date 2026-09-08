@@ -71,8 +71,9 @@ class RealBindings(BaseModel):
     firmware_n_joints: int | None = None
 
 
-class Contract(BaseModel):
+class EmbodimentEnv(BaseModel):
     id: str
+    embodiment_id: str
     robot_family: str
     morphology: str
     interface_version: int = 1
@@ -89,7 +90,7 @@ class Contract(BaseModel):
     limits: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _status_ok(self) -> Contract:
+    def _status_ok(self) -> EmbodimentEnv:
         return self
 
     def spec_hash(self) -> str:
@@ -153,15 +154,15 @@ class Contract(BaseModel):
         return CheckResult(passed=not vs, violations=vs)
 
 
-def load_contract(path: Path) -> Contract:
+def load_env(path: Path) -> EmbodimentEnv:
     data = yaml.safe_load(path.read_text())
-    return Contract.model_validate(data)
+    return EmbodimentEnv.model_validate(data)
 
 
-def load_contract_dir(directory: Path) -> list[Contract]:
+def load_env_dir(directory: Path) -> list[EmbodimentEnv]:
     if not directory.exists():
         return []
-    out: list[Contract] = []
-    for p in sorted(directory.glob("ec_*.yaml")):
-        out.append(load_contract(p))
+    out: list[EmbodimentEnv] = []
+    for p in sorted(directory.glob("ee_*.yaml")):
+        out.append(load_env(p))
     return out

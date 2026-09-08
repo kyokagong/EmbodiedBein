@@ -30,6 +30,13 @@
   </p>
 </header>
 
+<div class="note info">
+  <span class="note-t">词表</span>
+  Agent 永久禁止发布或修改<b>已发布本体环境</b>（旧工具名 contract.create/modify）。
+  草稿 clone 若开放工具则允许；门禁豁免与真机放行仍永久禁止。见
+  <a href="12-embodiment-environment.md">12.md §7</a>。
+</div>
+
 <h2 id="premise">8.1 前提：Agent 只是一个特殊的用户</h2>
 
 <div class="note decide">
@@ -676,7 +683,7 @@ MANIFEST = PluginManifest(
 <tr><td class="mono xs">export.policy / eval.sim2sim</td><td><span class="badge b-amber">中</span></td><td class="xs">不需要</td><td class="xs">10/天</td><td class="xs">产出未放行的包，不接触真机</td></tr>
 <tr><td class="mono xs">deploy.release（S0/S1/S2）</td><td><span class="badge b-red">禁止</span></td><td class="xs c-red">永久禁止</td><td class="xs">—</td><td class="xs"><b>Agent 永远不能放行到真机</b>，连「需审批」都不给——因为它无法验证现场条件</td></tr>
 <tr><td class="mono xs">gc.run / artifact.delete</td><td><span class="badge b-red">危险</span></td><td class="xs c-amber">需要</td><td class="xs">1/天</td><td class="xs">不可逆。Agent 只能<b>建议</b>回收清单，删除动作必须人工确认</td></tr>
-<tr><td class="mono xs">contract.create / modify</td><td><span class="badge b-red">禁止</span></td><td class="xs c-red">永久禁止</td><td class="xs">—</td><td class="xs">契约是所有门禁的基准，让 Agent 改它等于让它改考卷</td></tr>
+<tr><td class="mono xs">embodiment_env.publish / 改 active spec</td><td><span class="badge b-red">禁止</span></td><td class="xs c-red">永久禁止</td><td class="xs">—</td><td class="xs">已发布环境是门禁基准；旧名 contract.create/modify</td></tr>
 <tr><td class="mono xs">gate.override</td><td><span class="badge b-red">禁止</span></td><td class="xs c-red">永久禁止</td><td class="xs">—</td><td class="xs">门禁豁免只能由人做，且必须写理由</td></tr>
 <tr><td class="mono xs">report.write / notify</td><td><span class="badge b-green">低</span></td><td class="xs">不需要</td><td class="xs">10/天</td><td class="xs">写日报、发通知。信息类动作，最坏后果是噪音</td></tr>
 </tbody>
@@ -688,7 +695,7 @@ MANIFEST = PluginManifest(
 <div class="note danger">
   <span class="note-t">三条永久禁止线</span>
   <b>① 真机放行</b>：涉及物理安全，且前提条件（保护绳、场地、人在旁）平台无法验证。<br>
-  <b>② 修改契约</b>：契约是判断对错的基准，改基准等于取消检查。<br>
+  <b>② 修改已发布本体环境</b>：环境是判断对错的基准，改基准等于取消检查。草稿除外。<br>
   <b>③ 门禁豁免</b>：如果 Agent 能豁免门禁，那么门禁对 Agent 就不存在。<br>
   这三条不设「需审批」选项——因为审批疲劳是真实存在的，
   连续点 20 次「同意」之后第 21 次也会同意。<b>结构上禁止比流程上把关可靠。</b>

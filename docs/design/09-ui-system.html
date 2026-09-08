@@ -26,6 +26,14 @@
   </p>
 </header>
 
+<div class="note decide">
+  <span class="note-t">路由以 12 章为准</span>
+  产品导航「契约」改为「本体」：<code>/embodiments</code>。
+  3D 查看器升为本体详情 P0，不再是独立 P2 页。
+  详见 <a href="12-embodiment-environment.html#ui">12.5</a>。
+  可点击全套 CRUD：<a href="13-embodiment-crud-prototype.html">13 原型</a>。
+</div>
+
 <h2 id="personas">9.1 三类视角，两套界面</h2>
 
 <div class="tbl-wrap">
@@ -136,22 +144,24 @@
 <tbody>
 <tr><td class="mono xs">/</td><td class="xs">总览仪表盘</td><td><span class="badge b-green">P0</span></td><td class="xs">KPI 条、活动流、队列摘要、资源环</td><td class="xs">聚合 API + WS</td></tr>
 <tr><td class="mono xs">/data</td><td class="xs">数据集列表</td><td><span class="badge b-green">P0</span></td><td class="xs">虚拟表格、格式徽标、许可徽标</td><td class="xs">REST 分页</td></tr>
-<tr><td class="mono xs">/data/:id</td><td class="xs">数据集详情</td><td><span class="badge b-green">P0</span></td><td class="xs">统计图、校验结果、版本树</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/data/:id</td><td class="xs">数据集详情</td><td><span class="badge b-green">P0</span></td><td class="xs">统计图、校验结果、版本树 · <a href="11-workspace-views.html#ds-overview">高保真见 11.4</a></td><td class="xs">REST</td></tr>
 <tr><td class="mono xs">/data/:id/funnel</td><td class="xs">数据漏斗审计</td><td><span class="badge b-green">P0</span></td><td class="xs">漏斗图、拒绝原因表、敏感性滑块</td><td class="xs">funnel_reports</td></tr>
 <tr><td class="mono xs">/data/:id/episodes/:ep</td><td class="xs">Episode 预览器</td><td><span class="badge b-green">P0</span></td><td class="xs">视频播放器、动作曲线、时间轴联动</td><td class="xs">CAS 代理流</td></tr>
 <tr><td class="mono xs">/data/:id/slices</td><td class="xs">切片管理</td><td><span class="badge b-cyan">P1</span></td><td class="xs">查询构造器、命中预览</td><td class="xs">REST</td></tr>
 <tr><td class="mono xs">/data/convert</td><td class="xs">转换任务向导</td><td><span class="badge b-cyan">P1</span></td><td class="xs">分步表单、参数校验、预演</td><td class="xs">JobSpec 提交</td></tr>
-<tr><td class="mono xs">/models</td><td class="xs">模型列表</td><td><span class="badge b-green">P0</span></td><td class="xs">表格、族群筛选、契约徽标</td><td class="xs">REST</td></tr>
-<tr><td class="mono xs">/models/:id</td><td class="xs">模型版本详情</td><td><span class="badge b-green">P0</span></td><td class="xs">Model Card、契约校验、产物表</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/models</td><td class="xs">模型列表</td><td><span class="badge b-green">P0</span></td><td class="xs">表格、族群筛选、本体环境徽标</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/models/:id</td><td class="xs">模型版本详情</td><td><span class="badge b-green">P0</span></td><td class="xs">Model Card、环境校验、产物表</td><td class="xs">REST</td></tr>
 <tr><td class="mono xs">/models/:id/lineage</td><td class="xs">血缘图</td><td><span class="badge b-cyan">P1</span></td><td class="xs">Vue Flow DAG、节点下钻</td><td class="xs">lineage API</td></tr>
-<tr><td class="mono xs">/contracts</td><td class="xs">本体契约列表</td><td><span class="badge b-green">P0</span></td><td class="xs">契约卡片、维度摘要</td><td class="xs">REST</td></tr>
-<tr><td class="mono xs">/contracts/:id</td><td class="xs">契约详情与校验矩阵</td><td><span class="badge b-green">P0</span></td><td class="xs">观测布局图、G1–G5 状态、引用方列表</td><td class="xs">REST</td></tr>
-<tr><td class="mono xs">/assets</td><td class="xs">机器人资产（URDF/MJCF/USD）</td><td><span class="badge b-cyan">P1</span></td><td class="xs">一致性报告表、差异高亮</td><td class="xs">REST</td></tr>
-<tr><td class="mono xs">/assets/:id/viewer</td><td class="xs">3D 资产查看器</td><td><span class="badge b-violet">P2</span></td><td class="xs">three.js、关节树、限位可视化</td><td class="xs">静态资产</td></tr>
+<tr><td class="mono xs">/embodiments</td><td class="xs">本体列表</td><td><span class="badge b-green">P0</span></td><td class="xs">按本体聚合卡片、能力徽章、接入向导 · <a href="12-embodiment-environment.html#ui">12.5</a></td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/embodiments/:id</td><td class="xs">本体详情（含 3D）</td><td><span class="badge b-green">P0</span></td><td class="xs">URDF+STL 查看器、资产表、环境下的子卡片</td><td class="xs">REST + ebd 媒体</td></tr>
+<tr><td class="mono xs">/embodiments/:id/envs/:eeId</td><td class="xs">本体环境详情</td><td><span class="badge b-green">P0</span></td><td class="xs">观测条带、关节树、G1–G5、草稿 YAML · <a href="11-workspace-views.html#contract-detail">11.3</a></td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/contracts</td><td class="xs">兼容重定向</td><td><span class="badge b-gray">兼容</span></td><td class="xs">301 → /embodiments</td><td class="xs">—</td></tr>
+<tr><td class="mono xs">/assets</td><td class="xs">重定向到本体详情资产区</td><td><span class="badge b-cyan">P1</span></td><td class="xs">一致性报告；3D 升到 <code>/embodiments/:id</code> P0</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/assets/:id/viewer</td><td class="xs">兼容 → 本体页 3D</td><td><span class="badge b-gray">兼容</span></td><td class="xs">不再作为独立 P2 页</td><td class="xs">—</td></tr>
 <tr><td class="mono xs">/train/experiments</td><td class="xs">实验列表</td><td><span class="badge b-green">P0</span></td><td class="xs">分组表格、指标列可配置</td><td class="xs">REST</td></tr>
 <tr><td class="mono xs">/train/runs/:id</td><td class="xs">Run 详情（训练可视化）</td><td><span class="badge b-green">P0</span></td><td class="xs">多图表网格、日志流、产物预览、终止原因堆叠</td><td class="xs">WS + TSDB</td></tr>
 <tr><td class="mono xs">/train/runs/compare</td><td class="xs">Run 对比</td><td><span class="badge b-green">P0</span></td><td class="xs">曲线叠加、参数 diff、Pareto、显著性标注</td><td class="xs">TSDB 批量</td></tr>
-<tr><td class="mono xs">/train/submit</td><td class="xs">提交任务</td><td><span class="badge b-green">P0</span></td><td class="xs">JobSpec 表单、契约预检、命令行预览</td><td class="xs">校验 API</td></tr>
+<tr><td class="mono xs">/train/submit</td><td class="xs">提交任务</td><td><span class="badge b-green">P0</span></td><td class="xs">JobSpec 表单、环境×任务预检、命令行预览 · <a href="11-workspace-views.html#jobspec">高保真见 11.6</a></td><td class="xs">校验 API</td></tr>
 <tr><td class="mono xs">/train/queue</td><td class="xs">队列与资源</td><td><span class="badge b-green">P0</span></td><td class="xs">GPU 甘特图、队列列表、显存条</td><td class="xs">WS</td></tr>
 <tr><td class="mono xs">/train/pipelines</td><td class="xs">流水线列表与 DAG</td><td><span class="badge b-cyan">P1</span></td><td class="xs">Vue Flow、步骤状态、重跑入口</td><td class="xs">REST + WS</td></tr>
 <tr><td class="mono xs">/eval/suites</td><td class="xs">评估套件</td><td><span class="badge b-green">P0</span></td><td class="xs">套件定义、seed 注册表、冻结标记</td><td class="xs">REST</td></tr>
@@ -159,12 +169,12 @@
 <tr><td class="mono xs">/eval/compare</td><td class="xs">评估对比</td><td><span class="badge b-cyan">P1</span></td><td class="xs">配对比较、逐 seed 差异</td><td class="xs">Parquet join</td></tr>
 <tr><td class="mono xs">/eval/failures</td><td class="xs">失败库</td><td><span class="badge b-cyan">P1</span></td><td class="xs">聚类视图、标签、视频墙</td><td class="xs">REST</td></tr>
 <tr><td class="mono xs">/eval/leaderboard</td><td class="xs">排行榜</td><td><span class="badge b-cyan">P1</span></td><td class="xs">可排序表、基线标记</td><td class="xs">REST</td></tr>
-<tr><td class="mono xs">/deploy/bundles</td><td class="xs">策略包列表</td><td><span class="badge b-cyan">P1</span></td><td class="xs">签名状态、契约匹配、门禁徽标</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/deploy/bundles</td><td class="xs">策略包列表</td><td><span class="badge b-cyan">P1</span></td><td class="xs">签名状态、本体环境匹配、门禁徽标</td><td class="xs">REST</td></tr>
 <tr><td class="mono xs">/deploy/robots/:id</td><td class="xs">机器人详情与遥测</td><td><span class="badge b-cyan">P1</span></td><td class="xs">分级放行步骤、jitter/温度曲线、事件时间线</td><td class="xs">TSDB + REST</td></tr>
 <tr><td class="mono xs">/agent</td><td class="xs">Agent 控制台</td><td><span class="badge b-cyan">P1</span></td><td class="xs">对话流、工具调用轨迹、待审批、预算条</td><td class="xs">WS 流式</td></tr>
 <tr><td class="mono xs">/agent/audit</td><td class="xs">Agent 审计</td><td><span class="badge b-cyan">P1</span></td><td class="xs">可筛选日志表、护栏结果</td><td class="xs">REST</td></tr>
 <tr><td class="mono xs">/showcase/:token</td><td class="xs"><b>Showcase 只读分享页</b></td><td><span class="badge b-green">P0</span></td><td class="xs">里程碑时间线、成果卡、视频、趋势图</td><td class="xs">快照 JSON</td></tr>
-<tr><td class="mono xs">/settings/*</td><td class="xs">设置（配额、镜像、通知、密钥）</td><td><span class="badge b-violet">P2</span></td><td class="xs">表单、镜像能力矩阵</td><td class="xs">REST</td></tr>
+<tr><td class="mono xs">/settings/*</td><td class="xs">设置（配额、镜像、通知、密钥）</td><td><span class="badge b-violet">P2</span></td><td class="xs">表单、镜像能力矩阵 · <a href="11-workspace-views.html#settings">高保真见 11.5</a></td><td class="xs">REST</td></tr>
 </tbody>
 </table>
 </div>

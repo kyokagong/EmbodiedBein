@@ -27,12 +27,25 @@ class JobKind(StrEnum):
 
 
 CONTAINERLESS_KINDS = {JobKind.DATA_SCAN, JobKind.DATA_SLICE}
+TASK_REQUIRED_KINDS = {
+    JobKind.TRAIN_RL,
+    JobKind.TRAIN_SFT,
+    JobKind.TRAIN_RLFT,
+    JobKind.EVAL_SIM,
+    JobKind.EVAL_SIM2SIM,
+}
 
 
-class CodeRef(BaseModel):
-    repo: str
+class GitCodeRef(BaseModel):
+    kind: str = "git_external"
+    path: str
     commit: str | None = None
     branch: str | None = None
+
+
+class CodeRefs(BaseModel):
+    embodiment: GitCodeRef | None = None
+    stack: GitCodeRef | None = None
 
 
 class ResourceSpec(BaseModel):
@@ -61,11 +74,12 @@ class JobInputs(BaseModel):
 class JobSpec(BaseModel):
     api_version: str = "eb/v1"
     kind: JobKind
-    contract_id: str
+    embodiment_env_id: str
+    task_id: str | None = None
     name: str = ""
     experiment: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
-    code_ref: CodeRef | None = None
+    code_refs: CodeRefs | None = None
     image: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     overrides: list[str] = Field(default_factory=list)
@@ -80,7 +94,9 @@ class JobSpec(BaseModel):
     @model_validator(mode="after")
     def _name_default(self) -> JobSpec:
         if not self.name:
-            self.name = f"{self.kind}-{self.contract_id}"
+            self.name = f"{self.kind}-{self.embodiment_env_id}"
+        if self.kind in TASK_REQUIRED_KINDS and not self.task_id:
+            raise ValueError("train/eval Job 必须带 task_id")
         return self
 
     @property

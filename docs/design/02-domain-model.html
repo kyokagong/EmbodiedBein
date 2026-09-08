@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="EmbodiedBein 领域模型：核心实体与 ER、Embodiment Contract 规范、JobSpec、状态机、血缘模型、REST 资源树、事件总线与数据库 schema。">
-<title>02 · 领域模型、契约与接口｜EmbodiedBein</title>
+<meta name="description" content="EmbodiedBein 领域模型：核心实体与 ER、本体环境（旧称 Embodiment Contract）、JobSpec、状态机、血缘模型、REST 资源树、事件总线与数据库 schema。">
+<title>02 · 领域模型、本体环境与接口｜EmbodiedBein</title>
 <link rel="stylesheet" href="assets/eb/eb.css">
 </head>
 <body>
@@ -18,13 +18,22 @@
 
 <header class="hero">
   <p class="eyebrow">02 · Domain Model</p>
-  <h1>领域模型、契约与接口</h1>
+  <h1>领域模型、本体环境与接口</h1>
   <p class="hero-copy">
     这是全平台的<b>共享语言</b>。所有模块页都会引用这里定义的实体与状态机。
-    其中 <a href="#contract">Embodiment Contract</a> 是本设计最核心的原创机制，
-    它把具身领域最容易出错的「维度与频率」从散落的配置提升为受治理的一等实体。
+    接口数字的一等实体已从 Embodiment Contract 换成
+    <a href="12-embodiment-environment.html">本体环境</a>（归属某个本体；Job 引用 <code>ee_*</code>）。
+    本节保留 G1–G5 与 JobSpec 形状；分层、纳管、CRUD、RLinf 四元组以 12 章为准。
   </p>
 </header>
+
+<div class="note decide">
+  <span class="note-t">2026-08-24 替换</span>
+  「契约」不再是产品实体名。ER 图里的 <code>EmbodimentContract ★</code> 读作
+  <code>EmbodimentEnv ★</code>，父级增加 <code>Embodiment</code>。
+  词表与 SQL 过渡见 <a href="12-embodiment-environment.md">12.md</a>。
+  下文若仍写 contract / <code>ec_*</code>，一律视为 <code>ee_*</code> 的兼容别名。
+</div>
 
 <h2 id="er">2.1 实体总览</h2>
 
@@ -41,8 +50,8 @@
     <text class="svg-t-lane" x="12" y="20" style="fill:#5b8cff">本体域 Embodiment</text>
     <g transform="translate(12,28)">
       <rect class="svg-box" width="244" height="40" rx="7" style="stroke:#5b8cff;stroke-width:2"/>
-      <text class="svg-t" x="9" y="17">EmbodimentContract ★</text>
-      <text class="svg-t-mono" x="9" y="31">ec_* · obs/act/hz/joints 权威</text>
+      <text class="svg-t" x="9" y="17">EmbodimentEnv ★</text>
+      <text class="svg-t-mono" x="9" y="31">ee_* · 原 Contract · 12 章真源</text>
     </g>
     <g transform="translate(12,74)">
       <rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Robot</text><text class="svg-t-mono" x="9" y="30">rbt_*</text>
@@ -79,7 +88,7 @@
     <text class="svg-t-lane" x="12" y="20" style="fill:#b28dff">模型域 Model</text>
     <g transform="translate(12,28)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Model</text><text class="svg-t-mono" x="9" y="30">mdl_* · family</text></g>
     <g transform="translate(140,28)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">ModelCard</text><text class="svg-t-mono" x="9" y="30">来源 · 许可</text></g>
-    <g transform="translate(12,74)"><rect class="svg-box" width="244" height="38" rx="7" style="stroke:#b28dff;stroke-width:2"/><text class="svg-t" x="9" y="16">ModelVersion ★</text><text class="svg-t-mono" x="9" y="30">mv_* · contract_id 必填 · 谱系</text></g>
+    <g transform="translate(12,74)"><rect class="svg-box" width="244" height="38" rx="7" style="stroke:#b28dff;stroke-width:2"/><text class="svg-t" x="9" y="16">ModelVersion ★</text><text class="svg-t-mono" x="9" y="30">mv_* · embodiment_env_id 必填 · 谱系</text></g>
     <g transform="translate(12,120)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">Checkpoint</text><text class="svg-t-mono" x="9" y="30">step · artifact</text></g>
     <g transform="translate(140,120)"><rect class="svg-box" width="116" height="38" rx="7"/><text class="svg-t" x="9" y="16">MemProfile</text><text class="svg-t-mono" x="9" y="30">显存画像</text></g>
     <g transform="translate(12,166)"><rect class="svg-box" width="244" height="26" rx="7"/><text class="svg-t-mono" x="9" y="17">ExportedPolicy（onnx / torchscript）</text></g>
@@ -137,7 +146,7 @@
   <!-- 跨域关系 -->
   <g>
     <path class="svg-edge-hot" d="M 134 68 L 134 216" marker-end="url(#a3)"/>
-    <text class="svg-t-mono" x="138" y="120">契约约束一切</text>
+    <text class="svg-t-mono" x="138" y="120">已发布环境约束接口</text>
     <path class="svg-edge" d="M 260 130 L 260 216" marker-end="url(#a3)"/>
     <path class="svg-edge" d="M 420 130 L 420 216" marker-end="url(#a3)"/>
     <path class="svg-edge" d="M 700 130 L 660 216" marker-end="url(#a3)"/>
@@ -151,8 +160,8 @@
   <g transform="translate(10,486)">
     <rect width="1120" height="142" rx="12" fill="rgba(83,212,255,.05)" stroke="#284052"/>
     <text class="svg-t" x="16" y="24">五条不可违反的引用约束（数据库外键 + 应用层双重保证）</text>
-    <text class="svg-t-sm" x="16" y="46">① 任何 <tspan class="svg-t-mono">Job</tspan> 必须引用恰好一个 <tspan class="svg-t-mono">EmbodimentContract</tspan>；训练/评估/导出/部署共用同一个契约 id，跨契约的引用一律拒绝。</text>
-    <text class="svg-t-sm" x="16" y="66">② <tspan class="svg-t-mono">ModelVersion.contract_id</tspan> 必填。没有契约的权重不允许进入注册表——这类「野权重」只能作为 <tspan class="svg-t-mono">Artifact</tspan> 存在。</text>
+    <text class="svg-t-sm" x="16" y="46">① 任何 <tspan class="svg-t-mono">Job</tspan> 必须引用恰好一个已发布 <tspan class="svg-t-mono">EmbodimentEnv</tspan>；训练/评估另须兼容的 <tspan class="svg-t-mono">task_id</tspan>。详见 <tspan class="svg-t-mono">12</tspan>。</text>
+    <text class="svg-t-sm" x="16" y="66">② <tspan class="svg-t-mono">ModelVersion.embodiment_env_id</tspan> 必填。没有本体环境的权重不允许进入注册表——这类「野权重」只能作为 <tspan class="svg-t-mono">Artifact</tspan> 存在。</text>
     <text class="svg-t-sm" x="16" y="86">③ <tspan class="svg-t-mono">DatasetVersion</tspan> 一旦创建即不可变；任何修改都产生新版本。删除只是打 <tspan class="svg-t-mono">archived</tspan> 标记，血缘边永久保留。</text>
     <text class="svg-t-sm" x="16" y="106">④ <tspan class="svg-t-mono">PolicyBundle</tspan> 必须由通过 Gate A/B/C 的 <tspan class="svg-t-mono">Run</tspan> 产出，且引用的所有 Artifact 校验和必须与 manifest 一致，否则拒绝签名。</text>
     <text class="svg-t-sm" x="16" y="126">⑤ <tspan class="svg-t-mono">Deployment</tspan> 必须引用已签名的 Bundle、已标定的 <tspan class="svg-t-mono">RobotInstance</tspan>，以及一条有效的 <tspan class="svg-t-mono">Approval</tspan>。</text>
@@ -170,7 +179,7 @@
 <table class="compact">
 <thead><tr><th>前缀</th><th>实体</th><th>示例</th><th>说明</th></tr></thead>
 <tbody>
-<tr><td class="mono">ec_</td><td>EmbodimentContract</td><td class="mono xs">ec_bhl_humanoid_22dof_v1</td><td><b>人工命名</b>，语义化、稳定，可读性优先</td></tr>
+<tr><td class="mono">emb_ / ee_</td><td>Embodiment / EmbodimentEnv</td><td class="mono xs">emb_berkeley_humanoid_lite · ee_bhl_humanoid_22dof_v1</td><td><b>人工命名</b>。旧 <code>ec_*</code> 为 <code>ee_*</code> 只读别名</td></tr>
 <tr><td class="mono">ds_ / dsv_</td><td>Dataset / Version</td><td class="mono xs">ds_ego4d_fho · dsv_01JB3K…</td><td>Dataset 语义命名，Version 用 ULID</td></tr>
 <tr><td class="mono">mdl_ / mv_</td><td>Model / Version</td><td class="mono xs">mdl_pi05_reach · mv_01JB…</td><td>同上</td></tr>
 <tr><td class="mono">exp_ / job_ / run_</td><td>实验 / 任务 / 执行</td><td class="mono xs">job_01JB3KQ8…</td><td>ULID（26 字符，时间有序，可直接按 id 排序）</td></tr>
@@ -189,11 +198,18 @@
     <li>不泄露总量（自增会）</li>
     <li>Base32 无易混字符，口头/截图传达不易出错</li>
   </ul>
-  <p class="xs muted-2 mb0 mt1">契约与 Dataset 例外，采用人工语义命名——它们数量少、生命周期长、需要人反复引用。</p>
+  <p class="xs muted-2 mb0 mt1">本体、本体环境与 Dataset 采用人工语义命名——它们数量少、生命周期长、需要人反复引用。</p>
 </div>
 </div>
 
-<h2 id="contract">2.2 Embodiment Contract 规范</h2>
+<h2 id="contract">2.2 本体环境规范（原 Embodiment Contract）</h2>
+
+<div class="note info">
+  <span class="note-t">真源已迁到 12 章</span>
+  分层、BHL 纳管、草稿 CRUD、3D、RLinf 四元组见
+  <a href="12-embodiment-environment.html">12</a>。
+  下面保留四份接口数字与 G1–G5 表，作为实现对照；YAML 字段名过渡期内可仍出现在 <code>contracts/*.yaml</code>。
+</div>
 
 <div class="note info">
   <span class="note-t">这个机制解决什么</span>
@@ -273,7 +289,7 @@
   - firmware.reported_n_joints  == real_bindings.firmware_n_joints
 </code></pre>
 
-<h3 id="contract-instances">四个契约实例</h3>
+<h3 id="contract-instances">四个本体环境实例（BHL）</h3>
 
 <div class="tbl-wrap">
 <table>
@@ -374,6 +390,7 @@
   设立这个机制的目标是把「维度类错误」的平均发现时间从<b>数十分钟（要等仿真起来）</b>压到<b>秒级</b>，
   并让此类错误在提交阶段就<b>不可能</b>入队。平台应统计「G1–G5 拦截次数」作为核心价值指标之一，
   在 <a href="09-ui-system.html#showcase">Showcase</a> 里展示。
+  契约页要画的观测条带、关节树、G1–G5 引用矩阵见 <a href="11-workspace-views.html#contract">11 · 契约工作台</a>，本页不重复画面。
 </div>
 
 <h2 id="jobspec">2.3 JobSpec：统一的任务描述</h2>
@@ -400,7 +417,7 @@
   <span class="y">labels</span>: { owner: kk, purpose: baseline, agent_generated: <span class="s">"false"</span> }
 <span class="y">spec</span>:
   <span class="y">kind</span>: train.rl                        <span class="c"># ← 决定用哪个 Adapter，见下表</span>
-  <span class="y">contract_id</span>: ec_bhl_humanoid_22dof_v1  <span class="c"># 必填</span>
+  <span class="y">embodiment_env_id</span>: ee_bhl_humanoid_22dof_v1  <span class="c"># 必填；兼容读取 contract_id / ec_*</span>
   <span class="y">code_ref</span>:                             <span class="c"># 复现五元组之一</span>
     <span class="y">repo</span>: bhl
     <span class="y">commit</span>: <span class="s">"a1b2c3d"</span>                    <span class="c"># 或 branch，提交时解析为 commit 并冻结</span>
@@ -469,7 +486,7 @@ docker run --rm -d \
   <div class="tabpanel">
 <pre><code><span class="y">spec</span>:
   <span class="y">kind</span>: train.sft
-  <span class="y">contract_id</span>: ec_bhl_fixedhand_10dof_v1
+  <span class="y">embodiment_env_id</span>: ee_bhl_fixedhand_10dof_v1
   <span class="y">code_ref</span>: { repo: rlinf, commit: <span class="s">"9f8e7d6"</span> }
   <span class="y">image</span>: eb/rlinf:0.4.0-emb@sha256:…
   <span class="y">params</span>:
@@ -504,7 +521,7 @@ python examples/sft/train_vla_sft.py \
   <div class="tabpanel">
 <pre><code><span class="y">spec</span>:
   <span class="y">kind</span>: eval.sim2sim
-  <span class="y">contract_id</span>: ec_bhl_biped_12dof_v1
+  <span class="y">embodiment_env_id</span>: ee_bhl_biped_12dof_v1
   <span class="y">image</span>: eb/mujoco:latest@sha256:…
   <span class="y">params</span>:
     <span class="y">policy_artifact</span>: art_01JB…              <span class="c"># 指向 policy.onnx</span>
@@ -690,7 +707,11 @@ python examples/sft/train_vla_sft.py \
 <div>
 <pre class="tree"><code><span class="d">/api/v1</span>
 ├── auth/           login · refresh · me
-├── <span class="d">contracts/</span>              <span class="cm"># 本体契约（读多写少）</span>
+├── <span class="d">embodiments/</span>           <span class="cm"># 本体；见 12 章</span>
+│   └── {id}/scan · assets/file · envs/
+├── <span class="d">embodiment-envs/</span>        <span class="cm"># 本体环境 CRUD；publish / clone</span>
+├── <span class="d">tasks/</span>
+├── <span class="d">contracts/</span>              <span class="cm"># 兼容代理 → embodiment-envs</span>
 │   └── {id}/ · {id}/validate
 ├── <span class="d">robots/</span>
 │   ├── {id}/calibrations
@@ -802,21 +823,23 @@ python examples/sft/train_vla_sft.py \
 
 <pre><code><span class="c">-- 只列出体现设计意图的部分；完整 DDL 由 Alembic 管理</span>
 
-<span class="k">CREATE TABLE</span> embodiment_contracts (
-  id           text <span class="k">PRIMARY KEY</span>,                 <span class="c">-- ec_bhl_humanoid_22dof_v1</span>
-  spec         jsonb <span class="k">NOT NULL</span>,                    <span class="c">-- 整份 YAML 解析结果</span>
-  spec_hash    text  <span class="k">NOT NULL</span>,                    <span class="c">-- 变更检测；已被引用的契约禁止原地修改</span>
+<span class="c">-- 过渡：embodiment_contracts 可做成 embodiment_envs 的视图；见 12.md §6.2</span>
+<span class="k">CREATE TABLE</span> embodiment_envs (
+  id           text <span class="k">PRIMARY KEY</span>,                 <span class="c">-- ee_bhl_humanoid_22dof_v1</span>
+  embodiment_id text <span class="k">NOT NULL</span>,
+  spec         jsonb <span class="k">NOT NULL</span>,
+  spec_hash    text  <span class="k">NOT NULL</span>,                    <span class="c">-- 已发布禁止原地修改</span>
   status       text  <span class="k">NOT NULL DEFAULT</span> <span class="s">'draft'</span>,
+  aliases      text[] <span class="k">NOT NULL DEFAULT</span> '{}',     <span class="c">-- 含 ec_*</span>
   obs_dim      int <span class="k">GENERATED ALWAYS AS</span> ((spec-&gt;<span class="s">'observation'</span>-&gt;&gt;<span class="s">'dim'</span>)::int) <span class="k">STORED</span>,
   action_dim   int <span class="k">GENERATED ALWAYS AS</span> ((spec-&gt;<span class="s">'action'</span>-&gt;&gt;<span class="s">'dim'</span>)::int) <span class="k">STORED</span>,
   policy_hz    int <span class="k">GENERATED ALWAYS AS</span> ((spec-&gt;<span class="s">'control'</span>-&gt;&gt;<span class="s">'policy_hz'</span>)::int) <span class="k">STORED</span>
-  <span class="c">-- ↑ 生成列让「按维度筛选契约」无需展开 jsonb，同时避免冗余字段不同步</span>
 );
 
 <span class="k">CREATE TABLE</span> jobs (
   id            text <span class="k">PRIMARY KEY</span>,
   experiment_id text <span class="k">REFERENCES</span> experiments(id),
-  contract_id   text <span class="k">NOT NULL REFERENCES</span> embodiment_contracts(id),   <span class="c">-- 约束①</span>
+  contract_id   text <span class="k">NOT NULL REFERENCES</span> embodiment_envs(id),   <span class="c">-- 过渡列名；应用层等同 embodiment_env_id</span>
   kind          text <span class="k">NOT NULL</span>,
   spec          jsonb <span class="k">NOT NULL</span>,
   spec_hash     text <span class="k">NOT NULL</span>,
@@ -862,7 +885,7 @@ python examples/sft/train_vla_sft.py \
 <div class="note decide">
   <span class="note-t">为什么 spec 用 jsonb 而不是拆成列</span>
   JobSpec 的字段会随 Adapter 增加而频繁扩展。拆列意味着每加一个参数就要一次迁移。
-  折中方案：<b>需要索引/约束的少数字段提升为生成列或独立列</b>（contract_id、kind、status、priority），
+  折中方案：<b>需要索引/约束的少数字段提升为生成列或独立列</b>（embodiment_env_id、kind、status、priority），
   其余留在 jsonb 里并建 GIN 索引。这样既能查 <code>spec @&gt; '{"params":{"num_envs":4096}}'</code>，又不牺牲关键约束。
 </div>
 <div class="note warn">
@@ -881,10 +904,10 @@ python examples/sft/train_vla_sft.py \
 <thead><tr><th>对象</th><th>版本策略</th><th>破坏性变更如何处理</th></tr></thead>
 <tbody>
 <tr><td>REST API</td><td>路径版本 <code>/api/v1</code></td><td>新增字段与可选参数不升版本；删除/改语义则并行提供 <code>/v2</code>，<code>/v1</code> 保留一个大版本周期</td></tr>
-<tr><td>EmbodimentContract</td><td>id 内嵌版本号 <code>…_v1</code>，<b>已被引用后不可原地修改</b></td><td>建新契约 <code>_v2</code>，旧契约标 <code>deprecated</code>；两者可长期共存，历史 Run 永远指向创建时的契约</td></tr>
+<tr><td>EmbodimentEnv</td><td>id 内嵌版本号 <code>…_v1</code>，<b>已发布后不可原地修改</b></td><td>克隆 <code>_v2</code> 草稿再发布；旧环境 <code>deprecated</code>；历史 Run 永远指向创建时的 <code>ee_*</code>。<code>ec_*</code> 为别名</td></tr>
 <tr><td>JobSpec</td><td><code>api_version: eb/v1</code></td><td>Adapter 按 api_version 分派；老 spec 永远能被重放（复现要求）</td></tr>
 <tr><td>DatasetVersion</td><td>不可变，单调递增</td><td>不存在破坏性变更，只有新版本</td></tr>
-<tr><td>Release</td><td>语义化版本 <code>major.minor.patch</code></td><td>major 表示契约变更（不能直接替换上机包），minor 表示能力提升，patch 表示同契约下的策略改进</td></tr>
+<tr><td>Release</td><td>语义化版本 <code>major.minor.patch</code></td><td>major 表示本体环境变更（不能直接替换上机包），minor 表示能力提升，patch 表示同环境下的策略改进</td></tr>
 <tr><td>事件 schema</td><td>payload 内含 <code>v</code></td><td>只允许加字段；消费者必须容忍未知字段</td></tr>
 <tr><td>数据库</td><td>Alembic 线性迁移</td><td>先加列（可空）→ 双写 → 回填 → 切读 → 删旧列，四步走，不停机</td></tr>
 </tbody>

@@ -29,13 +29,13 @@ _POLICY_SUFFIXES = {".onnx", ".pt", ".pth"}
 def infer_contract(path: Path) -> tuple[str | None, dict[str, int]]:
     n = path.as_posix().lower()
     if "biped" in n:
-        return "ec_bhl_biped_12dof_v1", {"obs": 45, "act": 12}
+        return "ee_bhl_biped_12dof_v1", {"obs": 45, "act": 12}
     if "wbc" in n:
-        return "ec_bhl_wbc_22dof_v1", {"obs": 85, "act": 22}
+        return "ee_bhl_wbc_22dof_v1", {"obs": 85, "act": 22}
     if "video" in n or "hand" in n or "fixedhand" in n or "ego" in n:
-        return "ec_bhl_fixedhand_10dof_v1", {"obs": 10, "act": 10}
+        return "ee_bhl_fixedhand_10dof_v1", {"obs": 10, "act": 10}
     if "humanoid" in n:
-        return "ec_bhl_humanoid_22dof_v1", {"obs": 75, "act": 22}
+        return "ee_bhl_humanoid_22dof_v1", {"obs": 75, "act": 22}
     return None, {}
 
 
@@ -147,7 +147,7 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
                 id=new_id("mv"),
                 family_id=fam.id,
                 name=path.stem,
-                contract_id=cid,
+                embodiment_env_id=cid,
                 io_signature=io,
                 provenance="partial",
                 artifact_id=art.id,

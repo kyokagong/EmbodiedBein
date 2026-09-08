@@ -11,7 +11,7 @@ const note = ref("无网格文件，不渲染假模型。");
 
 onMounted(async () => {
   const items = (await api("/assets")).items || [];
-  asset.value = items.find((x: any) => x.id === route.params.id || x.contract_id === route.params.id) || items[0];
+  asset.value = items.find((x: any) => x.id === route.params.id || x.embodiment_env_id === route.params.id) || items[0];
   const path = asset.value?.mjcf || asset.value?.usd || "";
   if (!path) return;
   note.value = `已登记路径 ${path}。three.js 仅在浏览器能取到网格时加载。`;

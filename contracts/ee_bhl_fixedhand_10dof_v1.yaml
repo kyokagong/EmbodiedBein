@@ -1,4 +1,5 @@
-id: ec_bhl_fixedhand_10dof_v1
+id: ee_bhl_fixedhand_10dof_v1
+embodiment_id: emb_berkeley_humanoid_lite
 robot_family: berkeley_humanoid_lite
 morphology: fixed_hand
 interface_version: 1

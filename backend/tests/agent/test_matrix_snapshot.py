@@ -16,5 +16,5 @@ def test_matrix_snapshot():
     names = {r["name"] for r in matrix}
     assert names == {r["name"] for r in expected}
     for row in matrix:
-        if row["name"] in {"deploy.release", "contract.create", "contract.modify", "gate.override"}:
+        if row["name"] in {"deploy.release", "embodiment_env.publish", "gate.override"}:
             assert row["effect"] == "forbidden"

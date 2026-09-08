@@ -1,6 +1,11 @@
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file deploy/.env
 export COMPOSE_PROJECT_NAME := eb
 
+# Host ports from deploy/.env (compose still has :-defaults if a key is missing).
+env_port = $(or $(shell sed -n 's/^$(1)=//p' deploy/.env 2>/dev/null),$(2))
+EB_PORT_API := $(call env_port,EB_PORT_API,8000)
+EB_PORT_VITE := $(call env_port,EB_PORT_VITE,5173)
+
 .PHONY: up down ps logs restart-api migrate psql backup images \
 	dev-web test lint seed env smoke-job
 
@@ -34,7 +39,7 @@ backup:
 	$(COMPOSE) exec -T postgres pg_dump -U eb eb | gzip > backup/eb-$$(date +%F).sql.gz
 
 dev-web:
-	cd frontend && npm ci && npm run dev
+	cd frontend && npm ci && EB_PORT_API=$(EB_PORT_API) npm run dev -- --port $(EB_PORT_VITE) --strictPort
 
 test:
 	cd backend && uv run pytest -q
@@ -55,8 +60,8 @@ images:
 
 smoke-job:
 	@echo "Submit biped smoke via API (requires make up and eb-dev-key)."
-	curl -sS http://127.0.0.1:8000/api/v1/jobs \
+	curl -sS http://127.0.0.1:$(EB_PORT_API)/api/v1/jobs \
 	  -H 'Authorization: Bearer eb-dev-key' \
 	  -H 'Content-Type: application/json' \
-	  -d '{"spec":{"kind":"train.rl","name":"biped-smoke","contract_id":"ec_bhl_biped_12dof_v1","params":{"task":"Velocity-Berkeley-Humanoid-Lite-Biped-v0","num_envs":64,"max_iterations":5,"seed":0},"resources":{"gpus":1,"shm_gb":2}}}'
+	  -d '{"spec":{"kind":"train.rl","name":"biped-smoke","embodiment_env_id":"ee_bhl_biped_12dof_v1","task_id":"tsk_bhl_velocity_biped","params":{"task":"Velocity-Berkeley-Humanoid-Lite-Biped-v0","num_envs":64,"max_iterations":5,"seed":0},"resources":{"gpus":1,"shm_gb":2}}}'
 	@echo

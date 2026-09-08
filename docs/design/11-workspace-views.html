@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein：数据、本体环境、配置三类工作台的高保真视图规格。">
+<title>11 · 数据 · 本体环境 · 配置视图｜EmbodiedBein</title>
+<link rel="stylesheet" href="assets/eb/eb.css">
+<style>
+  .obs-strip { display:flex; height:36px; border-radius:8px; overflow:hidden; border:1px solid var(--line); font: 600 11px/36px var(--mono); }
+  .obs-strip span { text-align:center; color:#071018; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 4px; }
+  .obs-legend { display:flex; flex-wrap:wrap; gap:.35rem .9rem; margin:.7rem 0 0; font-size:.78rem; color:var(--muted); }
+  .obs-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:.35rem; vertical-align:-1px; }
+  .joint-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 18px; font: 12px/1.55 var(--mono); }
+  .joint-grid b { color:var(--muted-2); font-size:.7rem; letter-spacing:.08em; }
+  .idx { color:var(--muted-2); display:inline-block; width:1.6em; }
+  .lock { font-size:.72rem; color:var(--amber); border:1px solid rgba(255,200,87,.35); padding:.05rem .4rem; border-radius:999px; margin-left:.4rem; }
+  .gate-cell { text-align:center; font-weight:700; }
+  .form-grid { display:grid; grid-template-columns:160px 1fr 140px; gap:.45rem .8rem; align-items:center; font-size:.85rem; }
+  .form-grid .lbl { color:var(--muted); }
+  .form-grid .hint { color:var(--muted-2); font-size:.72rem; }
+  .fake-in { background:#0a1620; border:1px solid var(--line); border-radius:8px; padding:.35rem .6rem; font: 13px var(--mono); }
+  .tabrow { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 1rem; }
+  .tabrow a { padding:.28rem .7rem; border:1px solid var(--line); border-radius:999px; font-size:.78rem; color:var(--muted); }
+  .tabrow a.on { border-color:var(--cyan); color:var(--cyan); background:rgba(83,212,255,.08); }
+  .empty-box { border:1px dashed var(--line); border-radius:12px; padding:1.4rem 1rem; text-align:center; color:var(--muted); background:#0a1520; }
+  .empty-box b { display:block; color:var(--text); margin-bottom:.35rem; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<div id="eb-topbar"></div>
+
+<div class="layout">
+<nav class="toc" id="eb-toc" aria-label="本页目录"></nav>
+<main class="content" id="main">
+
+<header class="hero">
+  <p class="eyebrow">11 · Workspace Views</p>
+  <h1>数据、本体环境、配置：<br>页面上到底要看见什么。</h1>
+  <p class="hero-copy">
+    <a href="12-embodiment-environment.html">12</a> 定义本体 / 本体环境 / 任务与 CRUD；
+    <a href="02-domain-model.html">02</a> 仍给出 G1–G5 对照表；
+    <a href="03-data.html">03</a> 定义了六层数据与漏斗机制；
+    <a href="09-ui-system.html">09</a> 列出了路由名。
+    本章补<b>画面规格</b>：观测条带、关节树、漏斗与表单。
+    已发布环境的数字仍不可改；草稿编辑与 3D 以 12 章为准。
+  </p>
+  <div class="chips">
+    <span class="chip is-data"><span class="chip-dot"></span>数据 <b>概览 · 漏斗 · Episode · 切片 · 转换</b></span>
+    <span class="chip is-model"><span class="chip-dot"></span>本体环境 <b>观测条带 · 关节树 · G 矩阵</b></span>
+    <span class="chip is-infra"><span class="chip-dot"></span>配置 <b>设置五页 · JobSpec 表单</b></span>
+  </div>
+</header>
+
+<div class="note warn">
+  <span class="note-t">本章与实现的关系</span>
+  现在前端：契约详情是 <code>JSON.stringify(spec)</code>；漏斗是六张 KPI 卡；Episode 有视频位但无三联联动；设置只显示版本号。
+  验收标准是<b>对照下面的原型实现</b>，而不是再发明一套「先出 JSON 也好」。
+  禁止用种子 155,369 冒充当前扫描结果；禁止用纯色 canvas 冒充缺媒体的播放器。
+  列表与 3D / 草稿编辑以 <a href="12-embodiment-environment.html">12</a> 覆盖本章「不可新建」的旧句。
+  可点击工作台：<a href="13-embodiment-crud-prototype.html">13 原型</a>。
+</div>
+
+<h2 id="why">11.1 缺口从哪来</h2>
+
+<p class="lede">
+  设计文档把「必须有」写进了页面清单，但只给了漏斗、Episode、数据集<b>列表</b>三张高保真稿。
+  契约详情、数据集<b>概览统计</b>、切片构造器、转换向导、设置五页、提交表单的命令行预览，都停在一句话。
+</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:22%">打开的页</th><th style="width:28%">现在实际看到</th><th style="width:22%">09 清单承诺</th><th>本章补什么</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>/embodiments/:id/envs/:eeId</code><br><span class="xs muted">兼容 /contracts/:id</span></td>
+  <td class="xs">obs/act/Hz 一行 + YAML JSON</td>
+  <td class="xs">观测布局图、G1–G5、引用方</td>
+  <td class="xs">拼接条带、关节树、频率自洽、引用矩阵；已发布 YAML 只读；草稿见 12</td>
+</tr>
+<tr>
+  <td><code>/data/:id</code></td>
+  <td class="xs">名称、许可、版本表</td>
+  <td class="xs">统计图、校验结果、版本树</td>
+  <td class="xs">长度分布、任务不平衡、G2 清单、版本树</td>
+</tr>
+<tr>
+  <td><code>/data/:id/funnel</code></td>
+  <td class="xs">六层数字卡，无图</td>
+  <td class="xs">漏斗图、拒绝原因、敏感性滑块</td>
+  <td class="xs">对照 <a href="03-data.html#proto-funnel">03 漏斗原型</a>落地；另规定「扫描 17/9」与「编译 155k→35」是两个数据集</td>
+</tr>
+<tr>
+  <td><code>/data/:id/episodes/:ep</code></td>
+  <td class="xs">视频或「缺媒体」+ 一条 action 折线</td>
+  <td class="xs">视频、动作曲线、时间轴联动</td>
+  <td class="xs">对照 <a href="03-data.html#preview">03 三联预览</a>；补 playhead 同步与缺媒体空态</td>
+</tr>
+<tr>
+  <td><code>/data/:id/slices</code> · <code>/data/convert</code></td>
+  <td class="xs">几乎空白</td>
+  <td class="xs">查询构造器、分步向导</td>
+  <td class="xs">过滤器 + 命中预览；五步转换向导</td>
+</tr>
+<tr>
+  <td><code>/settings/*</code></td>
+  <td class="xs">版本一行</td>
+  <td class="xs">配额、镜像、通知、密钥</td>
+  <td class="xs">五页表单 + 能力矩阵 + 明确禁区</td>
+</tr>
+<tr>
+  <td><code>/train/submit</code></td>
+  <td class="xs">几个数字框</td>
+  <td class="xs">JobSpec 表单、契约预检、命令行预览</td>
+  <td class="xs">按 kind 切换字段、G1 字段级 diff、Adapter 命令预览</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="reflect">11.2 五轮反思：还漏了什么</h2>
+
+<p>写画面之前把「会漏的」先列出来。每一轮都对照 02/03/09 与四个契约 YAML 复核过。</p>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th style="width:8%">轮</th><th style="width:28%">发现</th><th>结论（写进本页）</th></tr></thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td class="xs">契约页若只画「75 维一条向量」，WBC 的 +10 臂参考、双 action term、fixed-hand 的 <code>concat:false</code> 会再次被藏进 JSON。</td>
+  <td class="xs">四个契约各有一张「不规则点」卡片；详情默认打开 humanoid，可切换。</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td class="xs">漏斗有两套真实数字：设计输入的 Ego4D 编译 155,369→35，与当前 scanner 的 manifests <b>17 文件 / 9 episode</b>。混在一页会让人以为扫描坏了。</td>
+  <td class="xs">必须是两个 Dataset 实体。扫描页允许 0；禁止把 155k 当默认填充。</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td class="xs">「配置」至少三层：平台设置、单次 JobSpec、本体环境 YAML。已发布环境<b>不可改数字</b>；草稿可改。</td>
+  <td class="xs">设置 ≠ 改已发布环境。详情页：active 加锁，draft 可编辑。见 12。</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td class="xs">03.8 配额/GC、index 里的镜像能力矩阵、UDP 端口、固件关节数，从未进入任何表单。</td>
+  <td class="xs">设置·配额、设置·镜像、契约·真机绑定只读区。</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td class="xs">空态比有数据更常见：无视频、403、扫描中、镜像缺失、G3 形状不符。空态若画成假图，检测时无法分辨。</td>
+  <td class="xs">每类空态有固定文案。缺媒体不绘制播放器皮肤。</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="note info">
+  <span class="note-t">第二轮之后又补上的遗漏</span>
+  关节名必须按 YAML <code>joint_order</code> 列出（顺序错位是「动作看起来随机」的根因）；
+  频率条要能一眼看出 <code>1/(sim_dt × decimation) == policy_hz</code>；
+  G3 矩阵的列是四个契约、行是已注册 ONNX，单元格写<b>实测 shape</b> 不是勾选幻想；
+  Episode 的 playhead 必须同时驱动视频、关节曲线、距离曲线；
+  设置里的端口/<code>EB_*</code> 默认只读，改端口走 <code>deploy/.env</code> + 重启，避免 UI 改了容器没改。
+  另外：44 GB 全量 scan 会超时，所以设置必须有<b>扫描根目录 / 超时 / 排除规则</b>；
+  契约页要列出 YAML 里每条 <code>assertions</code> 的通过/失败，不能只显示一枚「自洽通过」徽章；
+  MinIO 密码不进可写表单；时区固定 <code>Asia/Shanghai</code> 写在只读页。
+</div>
+
+<h2 id="contract">11.3 本体环境工作台</h2>
+
+<p class="lede">
+  列表按<b>本体</b>聚合（BHL 一张卡、四个 <code>ee_*</code>），路由 <code>/embodiments</code>。
+  下面原型仍用四张环境卡说明「2 秒内要读懂的数字」；产品实现不要把它们当成四个互不相关的顶层对象。
+</p>
+
+<h3 id="contract-list">列表 <span class="mono xs">/embodiments</span> <span class="xs muted">（兼容 /contracts）</span></h3>
+
+<p>
+  四张卡片，不是表格。每张必须能在 2 秒内回答：这是哪套身体、几维观测、几维动作、多少 Hz、能不能拿去训 / 导出 / 上机。
+  状态只允许 <code>draft | active | deprecated</code>，与 YAML 一致。
+</p>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/contracts</div>
+    <span class="proto-tag">原型 · 四个真契约</span>
+  </div>
+  <div class="proto-body no-side">
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">契约</p>
+          <h3 class="app-h">本体　<span class="badge b-green">1 本体 · 4 环境 active</span> <span class="lock">已发布数字不可改 · 草稿见 12</span></h3>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card">
+          <p class="card-title mono xs">ec_bhl_humanoid_22dof_v1</p>
+          <p class="kpi-value" style="font-size:1.6rem">75 <small>/ 22</small> <small>@25 Hz</small></p>
+          <p class="xs muted mb0">运控全身 · Velocity-…-v0 · 单 action term · scale 0.25</p>
+        </div>
+        <div class="card">
+          <p class="card-title mono xs">ec_bhl_biped_12dof_v1</p>
+          <p class="kpi-value" style="font-size:1.6rem">45 <small>/ 12</small> <small>@25 Hz</small></p>
+          <p class="xs muted mb0">真机 C++ 默认 <code>N_JOINTS=12</code> · Velocity-…-Biped-v0</p>
+        </div>
+        <div class="card">
+          <p class="card-title mono xs">ec_bhl_wbc_22dof_v1 <span class="badge b-amber">不规则</span></p>
+          <p class="kpi-value" style="font-size:1.6rem">85 <small>/ 22</small> <small>@50 Hz</small></p>
+          <p class="xs muted mb0">+10 臂参考 · 双 action（臂 to_limits 10 + 腿 position 12）· command_dim 13</p>
+        </div>
+        <div class="card">
+          <p class="card-title mono xs">ec_bhl_fixedhand_10dof_v1 <span class="badge b-violet">多模态</span></p>
+          <p class="kpi-value" style="font-size:1.6rem">10+img <small>/ 10</small> <small>@20 Hz</small></p>
+          <p class="xs muted mb0"><code>concat: false</code> · camera_top 224×224×3 · 绝对关节位置 · Reach/Push</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 id="contract-detail">详情：观测条带 + 关节树 + 频率 <span class="mono xs">/embodiments/…/envs/:eeId</span></h3>
+
+<p>
+  主视图不是 YAML。已发布环境的 YAML 折叠只读；草稿编辑见
+  <a href="12-embodiment-environment.html#ui">12.5</a>。
+  人眼要对的是：<b>拼接顺序</b>、<b>关节顺序</b>、<b>频率自洽</b>、<b>谁在引用它</b>。
+</p>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/embodiments/emb_berkeley_humanoid_lite/envs/ee_bhl_humanoid_22dof_v1</div>
+    <span class="proto-tag">原型 · humanoid 75/22/25</span>
+  </div>
+  <div class="proto-body">
+    <aside class="app-side">
+      <p class="app-side-t">本体环境</p>
+      <nav class="app-nav">
+        <a class="on" href="#contract-detail"><span class="ico">▣</span>humanoid 22</a>
+        <a href="#irregular"><span class="ico">▣</span>biped 12</a>
+        <a href="#irregular"><span class="ico">▣</span>WBC 22</a>
+        <a href="#irregular"><span class="ico">▣</span>fixed-hand 10</a>
+      </nav>
+      <p class="app-side-t">本页</p>
+      <nav class="app-nav">
+        <a class="on" href="#contract-detail"><span class="ico">·</span>布局</a>
+        <a href="#g-matrix"><span class="ico">·</span>G1–G5 矩阵</a>
+        <a href="#contract-detail"><span class="ico">·</span>引用方</a>
+        <a href="#contract-detail"><span class="ico">·</span>YAML 只读</a>
+      </nav>
+    </aside>
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">契约 / ec_bhl_humanoid_22dof_v1</p>
+          <h3 class="app-h">全身运控　<span class="badge b-green">active</span> <span class="badge b-cyan">自洽通过</span></h3>
+        </div>
+        <div class="app-actions">
+          <button class="btn">复制 id</button>
+          <button class="btn" disabled>编辑 YAML</button>
+        </div>
+      </div>
+
+      <div class="grid g4 mb2">
+        <div class="kpi accent-cyan"><p class="kpi-label">obs</p><p class="kpi-value">75</p><p class="kpi-foot">sum(layout)=75</p></div>
+        <div class="kpi accent-violet"><p class="kpi-label">act / dof</p><p class="kpi-value">22</p><p class="kpi-foot">scale 0.25 · position</p></div>
+        <div class="kpi accent-amber"><p class="kpi-label">policy</p><p class="kpi-value">25 <small>Hz</small></p><p class="kpi-foot">dt 0.005 × dec 8</p></div>
+        <div class="kpi"><p class="kpi-label">上机延迟上限</p><p class="kpi-value">12 <small>ms</small></p><p class="kpi-foot">周期 40 ms 的 30%</p></div>
+      </div>
+
+      <div class="panel-sm mb2">
+        <p class="panel-sm-t">观测拼接顺序　<span class="more">从左到右 = 张量 index 0 → 74；不可重排</span></p>
+        <div class="obs-strip" title="observation.layout">
+          <span style="flex:3;background:#53d4ff">cmd 3</span>
+          <span style="flex:3;background:#55d6be">ang 3</span>
+          <span style="flex:3;background:#5b8cff">grav 3</span>
+          <span style="flex:22;background:#b28dff">q 22</span>
+          <span style="flex:22;background:#ffc857">dq 22</span>
+          <span style="flex:22;background:#ff884d">a₋₁ 22</span>
+        </div>
+        <div class="obs-legend">
+          <span><i style="background:#53d4ff"></i>0–2 velocity_commands · command</span>
+          <span><i style="background:#55d6be"></i>3–5 base_ang_vel · imu</span>
+          <span><i style="background:#5b8cff"></i>6–8 projected_gravity · imu</span>
+          <span><i style="background:#b28dff"></i>9–30 joint_pos_rel · encoder</span>
+          <span><i style="background:#ffc857"></i>31–52 joint_vel_rel · encoder</span>
+          <span><i style="background:#ff884d"></i>53–74 last_action · policy</span>
+        </div>
+        <p class="xs muted-2 mb0 mt1">悬停一段显示 <code>term / source / index 范围</code>。点击一段滚到对应关节或命令字段。G3 失败时，不符的段边框变红并标注 ONNX 实际维数。</p>
+      </div>
+
+      <div class="grid g-2-1 mb2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">joint_order（权威顺序）　<span class="more">与 URDF / CAN 映射同源</span></p>
+          <div class="joint-grid">
+            <div>
+              <b>ARM · 10 · idx 0–9</b><br>
+              <span class="idx">0</span>arm_left_shoulder_pitch<br>
+              <span class="idx">1</span>arm_left_shoulder_roll<br>
+              <span class="idx">2</span>arm_left_shoulder_yaw<br>
+              <span class="idx">3</span>arm_left_elbow_pitch<br>
+              <span class="idx">4</span>arm_left_elbow_roll<br>
+              <span class="idx">5</span>arm_right_shoulder_pitch<br>
+              <span class="idx">6</span>arm_right_shoulder_roll<br>
+              <span class="idx">7</span>arm_right_shoulder_yaw<br>
+              <span class="idx">8</span>arm_right_elbow_pitch<br>
+              <span class="idx">9</span>arm_right_elbow_roll
+            </div>
+            <div>
+              <b>LEG · 12 · idx 10–21</b><br>
+              <span class="idx">10</span>leg_left_hip_roll<br>
+              <span class="idx">11</span>leg_left_hip_yaw<br>
+              <span class="idx">12</span>leg_left_hip_pitch<br>
+              <span class="idx">13</span>leg_left_knee_pitch<br>
+              <span class="idx">14</span>leg_left_ankle_pitch<br>
+              <span class="idx">15</span>leg_left_ankle_roll<br>
+              <span class="idx">16</span>leg_right_hip_roll<br>
+              <span class="idx">17</span>leg_right_hip_yaw<br>
+              <span class="idx">18</span>leg_right_hip_pitch<br>
+              <span class="idx">19</span>leg_right_knee_pitch<br>
+              <span class="idx">20</span>leg_right_ankle_pitch<br>
+              <span class="idx">21</span>leg_right_ankle_roll
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="panel-sm mb1">
+            <p class="panel-sm-t">频率自洽</p>
+            <dl class="dl">
+              <dt>sim_dt</dt><dd class="mono">0.005 s</dd>
+              <dt>decimation</dt><dd class="mono">8</dd>
+              <dt>1/(dt×dec)</dt><dd class="mono c-green">25.0 Hz = policy_hz</dd>
+              <dt>control_hz</dt><dd class="mono">200</dd>
+            </dl>
+          </div>
+          <div class="panel-sm">
+            <p class="panel-sm-t">绑定（只读）</p>
+            <dl class="dl">
+              <dt>isaac_task</dt><dd class="mono xs">Velocity-Berkeley-Humanoid-Lite-v0</dd>
+              <dt>experiment</dt><dd class="mono">humanoid</dd>
+              <dt>UDP</dt><dd class="mono xs">10000 / 10001 / 10002 / 10011</dd>
+              <dt>firmware_n_joints</dt><dd class="mono">22</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-sm mb2">
+        <p class="panel-sm-t">自洽断言（启动时 + 每次打开详情再跑一遍）</p>
+        <table class="compact">
+          <thead><tr><th>断言</th><th>结果</th></tr></thead>
+          <tbody>
+            <tr><td class="mono xs">observation.dim == sum(layout.dim) × history_length</td><td class="c-green">75 = 75 × 1</td></tr>
+            <tr><td class="mono xs">action.dim == dof</td><td class="c-green">22 = 22</td></tr>
+            <tr><td class="mono xs">1/(sim_dt × decimation) == policy_hz</td><td class="c-green">25 = 25</td></tr>
+            <tr><td class="mono xs">len(joint_order) == dof</td><td class="c-green">22 = 22</td></tr>
+          </tbody>
+        </table>
+        <p class="xs muted-2 mb0">history_length 当前四个契约都是 1；若将来 &gt;1，条带上方加「×N 帧」标记，总维数用乘积。</p>
+      </div>
+
+      <div class="note warn mb0" style="font-size:.8rem">
+        <span class="note-t">编辑按钮为什么是 disabled</span>
+        改 obs_dim / joint_order / scale 等于同时改仿真、导出 YAML 和真机固件约定。
+        平台 Agent 与 UI 都没有这条路。要改，走仓库里的 <code>contracts/*.yaml</code> 发版，旧 id 标 <code>deprecated</code>。
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 id="irregular">三个必须单独画的不规则点</h3>
+
+<div class="grid g3">
+<div class="card">
+  <p class="card-title">biped · 45/12/25</p>
+  <p class="small">
+    观测条带同构，但 q/dq/a₋₁ 各 12 不是 22。关节树<b>只有腿</b>。
+    真机默认目标：固件 <code>N_JOINTS=12</code>。G5 必须把 22-DOF 策略标成红叉。
+  </p>
+  <div class="obs-strip" style="height:22px;font-size:10px;line-height:22px">
+    <span style="flex:3;background:#53d4ff">3</span>
+    <span style="flex:3;background:#55d6be">3</span>
+    <span style="flex:3;background:#5b8cff">3</span>
+    <span style="flex:12;background:#b28dff">q 12</span>
+    <span style="flex:12;background:#ffc857">dq 12</span>
+    <span style="flex:12;background:#ff884d">a 12</span>
+  </div>
+</div>
+<div class="card">
+  <p class="card-title">WBC · 85/22/50</p>
+  <p class="small">
+    条带在 cmd 后插入 <b>arm_reference 10</b>（index 3–12），总长 85。
+    动作不是一条：臂 <code>to_limits</code> idx 0–9，腿 <code>position ×0.25</code> idx 10–21。
+    另有 <code>command_dim=13</code>。policy 50 Hz（dt 0.005 × dec 4）。
+  </p>
+  <div class="obs-strip" style="height:22px;font-size:10px;line-height:22px">
+    <span style="flex:3;background:#53d4ff">3</span>
+    <span style="flex:10;background:#ff7ac0">arm_ref 10</span>
+    <span style="flex:3;background:#55d6be">3</span>
+    <span style="flex:3;background:#5b8cff">3</span>
+    <span style="flex:22;background:#b28dff">22</span>
+    <span style="flex:22;background:#ffc857">22</span>
+    <span style="flex:22;background:#ff884d">22</span>
+  </div>
+  <div class="obs-strip mt1" style="height:18px;font-size:10px;line-height:18px">
+    <span style="flex:10;background:#ff7ac0">action.arm 10 to_limits</span>
+    <span style="flex:12;background:#ff884d">action.leg 12 position</span>
+  </div>
+</div>
+<div class="card">
+  <p class="card-title">fixed-hand · 10+img / 10 / 20</p>
+  <p class="small">
+    <b>不要画成一条 10+150528 的向量</b>。<code>concat: false</code>：上轨 state[10]，下轨 <code>camera_top[224,224,3] uint8</code>。
+    动作是绝对关节位置，没有 scale 0.25。20 Hz = dt 0.005 × dec 10。
+  </p>
+  <div class="obs-strip" style="height:22px;font-size:10px;line-height:22px">
+    <span style="flex:1;background:#b28dff">state 10</span>
+  </div>
+  <div class="obs-strip mt1" style="height:22px;font-size:10px;line-height:22px">
+    <span style="flex:1;background:#5b8cff">camera_top 224×224×3　不拼接</span>
+  </div>
+</div>
+</div>
+
+<h3 id="g-matrix">G1–G5 引用矩阵</h3>
+
+<p>
+  详情页下半是「谁用了这条契约」。单元格必须是<b>最近一次真实校验</b>：G3 写 ONNX 实测维，失败写 expected/actual。
+  没有产物就显示「—」，不要打绿勾。
+</p>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead>
+<tr>
+  <th>引用方</th>
+  <th>卡口</th>
+  <th class="t-num">humanoid 75/22</th>
+  <th class="t-num">biped 45/12</th>
+  <th class="t-num">WBC 85/22</th>
+  <th class="t-num">fixedhand 10+img</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td class="xs">数据集 dsv（G2）</td><td>G2</td>
+  <td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">—</td>
+  <td class="gate-cell c-green">state 10 @20 ✓</td>
+</tr>
+<tr>
+  <td class="xs">ONNX 导出（G3）</td><td>G3</td>
+  <td class="gate-cell muted">未注册</td>
+  <td class="gate-cell c-green">45 → 12 ✓</td>
+  <td class="gate-cell muted">未注册</td>
+  <td class="gate-cell muted">未注册</td>
+</tr>
+<tr>
+  <td class="xs">Job 提交（G1）</td><td>G1</td>
+  <td class="gate-cell c-green">task 匹配</td>
+  <td class="gate-cell c-green">task 匹配</td>
+  <td class="gate-cell c-red">task 写错会 400</td>
+  <td class="gate-cell c-green">Reach/Push</td>
+</tr>
+<tr>
+  <td class="xs">策略包 YAML（G4）</td><td>G4</td>
+  <td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">无 .ebp</td>
+  <td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">—</td>
+</tr>
+<tr>
+  <td class="xs">真机固件（G5）</td><td>G5</td>
+  <td class="gate-cell c-amber">未扫描总线</td>
+  <td class="gate-cell c-amber">未扫描总线</td>
+  <td class="gate-cell muted">仅仿真</td>
+  <td class="gate-cell muted">仅仿真</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+  <p class="xs muted-2 mb0 mt1">
+    引用方列表（可点进实体）：Jobs / Runs / DatasetVersions / Models / Bundles。
+    计数为 0 时显示空表，不编造 Showcase 里的演示数字。
+    API：<code>GET /contracts/:id</code> 含 layout/assertions/frequency；<code>GET /contracts/:id/refs</code> 含 matrix。
+  </p>
+
+<h2 id="data">11.4 数据工作台</h2>
+
+<p>
+  漏斗与 Episode 的交互意图已经在 <a href="03-data.html#proto-funnel">03.4</a> / <a href="03-data.html#preview">03.6</a> 写过，本章不重复那两张大原型。
+  这里补 03 没画的<b>数据集概览</b>、把两套漏斗数字拆开、把切片/转换/质量画成可实现的控件，并规定空态。
+</p>
+
+<h3 id="ds-overview">数据集详情概览 <span class="mono xs">/data/:id</span></h3>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/data/ds_berkeley_ego_scan</div>
+    <span class="proto-tag">原型 · 当前扫描仓，不是 155k</span>
+  </div>
+  <div class="proto-body">
+    <aside class="app-side">
+      <p class="app-side-t">当前数据集</p>
+      <nav class="app-nav">
+        <a class="on" href="#ds-overview"><span class="ico">·</span>概览</a>
+        <a href="#funnel-two"><span class="ico">·</span>漏斗</a>
+        <a href="#episode-sync"><span class="ico">·</span>样本</a>
+        <a href="#quality"><span class="ico">·</span>校验</a>
+        <a href="#slices"><span class="ico">·</span>切片</a>
+      </nav>
+    </aside>
+    <div class="app-main">
+      <div class="app-bar">
+        <div>
+          <p class="app-crumb">数据 / ds_berkeley_ego_scan / dsv_…scan</p>
+          <h3 class="app-h">berkeley_ego_data 扫描　<span class="badge b-amber">L1 原始</span> <span class="badge b-red">NC</span></h3>
+        </div>
+        <div class="app-actions">
+          <button class="btn">重新扫描</button>
+          <button class="btn primary">从本版本切片</button>
+        </div>
+      </div>
+      <div class="grid g4 mb2">
+        <div class="kpi"><p class="kpi-label">manifest 文件</p><p class="kpi-value">17</p><p class="kpi-foot">scanner 实测，非种子</p></div>
+        <div class="kpi accent-cyan"><p class="kpi-label">episode</p><p class="kpi-value">9</p><p class="kpi-foot">valid_episode 层</p></div>
+        <div class="kpi accent-amber"><p class="kpi-label">体积</p><p class="kpi-value">44 <small>GB</small></p><p class="kpi-foot">源仓只读挂载</p></div>
+        <div class="kpi accent-violet"><p class="kpi-label">G2</p><p class="kpi-value">待定</p><p class="kpi-foot">无机器人动作维</p></div>
+      </div>
+      <div class="grid g2">
+        <div class="panel-sm">
+          <p class="panel-sm-t">episode 时长分布　<span class="more">单位秒；无数据则空图，不画正态假曲线</span></p>
+          <div class="chart" data-chart='{"type":"bars","w":480,"h":140,"cats":["4–6","6–8","8–10","10+"],"series":[{"name":"n","color":"#55d6be","data":[2,4,2,1]}]}'></div>
+        </div>
+        <div class="panel-sm">
+          <p class="panel-sm-t">版本树</p>
+          <ul class="small mb0">
+            <li><code>dsv_scan</code> ← HEAD 扫描 · Merkle 根 · 只读源</li>
+            <li class="muted">尚无 retarget / canonical 子版本——不要画虚线「即将生成」</li>
+          </ul>
+          <p class="xs muted-2 mb0 mt1">许可：Ego4D NC 传染。导出按钮在本页直接 disable，tooltip 写原因。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 id="funnel-two">漏斗：两套数字，两个数据集</h3>
+
+<div class="grid g2">
+<div class="card">
+  <p class="card-title">A · 扫描漏斗（现在就能画）</p>
+  <p class="small">
+    层名与 <a href="03-data.html#layers">03.1 六层</a>对齐：source → raw → valid_episode → retargeted → canonical → slice。
+    当前典型值：source 文件 17、valid_episode 9、其后为 0。
+    拒绝原因来自 scanner 日志（缺 parquet、视频帧数≠行数、无动作维），<b>不是</b> unknown_verb。
+  </p>
+  <div class="chart" data-chart='{"type":"funnel","w":480,"labelW":140,"rowH":28,"stages":[
+    {"name":"source 文件","v":17},
+    {"name":"raw 可读","v":17},
+    {"name":"valid_episode","v":9},
+    {"name":"retargeted","v":0,"color":"#718b9d"},
+    {"name":"canonical","v":0,"color":"#718b9d"},
+    {"name":"slice","v":0,"color":"#718b9d"}]}'></div>
+</div>
+<div class="card">
+  <p class="card-title">B · 编译漏斗（另一份 Dataset）</p>
+  <p class="small">
+    仅当 <code>data.convert</code> / 上游编译流水线产出 <code>funnel_reports</code> 后出现。
+    数字用 03.4 的 155,369 → 35。页面结构照抄 <a href="03-data.html#proto-funnel">03 原型</a>：漏斗、拒绝原因、敏感性、下钻缩略图。
+  </p>
+  <p class="xs muted-2 mb0">
+    若 B 尚未跑过：漏斗页显示空态「尚无编译报告」，主按钮是「提交转换任务」，
+    <b>禁止</b>把 155,369 填进 A 的 KPI。
+  </p>
+</div>
+</div>
+
+<h3 id="episode-sync">Episode：三联联动与缺媒体</h3>
+
+<div class="grid g2">
+<div class="card">
+  <p class="card-title">有媒体时（fixed-hand / 脚本专家）</p>
+  <ul class="small mb0">
+    <li>布局与同步规则见 <a href="03-data.html#preview">03.6</a>：画面 | 关节曲线（限位虚线）| 末端距离。</li>
+    <li>一条 playhead：视频 <code>timeupdate</code> 写曲线竖线；拖曲线写 <code>video.currentTime</code>。</li>
+    <li>只匹配文件名包含该 episode id 的视频；禁止用目录里另一个 mp4 顶上。</li>
+    <li>视频走 ebd Range / 代理 H.264，不走 FastAPI 读盘。</li>
+    <li>曲线按契约着色：10 条臂关节一组图例，可单独静音。</li>
+  </ul>
+</div>
+<div class="card">
+  <p class="card-title">无媒体时（当前 ego 扫描常见）</p>
+  <div class="empty-box">
+    <b>缺媒体</b>
+    没有视频文件，不渲染播放器外壳，不用纯色 canvas 占位。
+    若 parquet 有 action/state，仍画曲线与时间轴；两者都没有则只保留 episode id、校验结果、源路径。
+  </div>
+  <p class="xs muted-2 mb0 mt1">Ego 长视频未生成 proxy 时，同样走这条空态，并提供「生成代理片段」Job，而不是卡在浏览器里 seek VP9。</p>
+</div>
+</div>
+
+<h3 id="slices">切片构造器 <span class="mono xs">/data/:id/slices</span></h3>
+
+<p>切片是不可变 DatasetVersion。构造器必须先预览命中数，再提交 <code>data.slice</code> Job。</p>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/data/ds_reach_push_v3/slices</div>
+    <span class="proto-tag">原型 · 查询构造器</span>
+  </div>
+  <div class="proto-body no-side">
+    <div class="app-main">
+      <div class="grid g-2-1">
+        <div class="panel-sm">
+          <p class="panel-sm-t">过滤器（AND）</p>
+          <div class="form-grid">
+            <span class="lbl">task</span><span class="fake-in">reach</span><span class="hint">枚举自 meta</span>
+            <span class="lbl">成功</span><span class="fake-in">true</span><span class="hint">来自校验规则</span>
+            <span class="lbl">时长 (s)</span><span class="fake-in">4 – 10</span><span class="hint">闭区间</span>
+            <span class="lbl">契约 G2</span><span class="fake-in">ec_bhl_fixedhand_10dof_v1</span><span class="hint">不兼容则不可提交</span>
+            <span class="lbl">饱和帧</span><span class="fake-in">&lt; 5%</span><span class="hint">03.7 警告级</span>
+          </div>
+          <p class="xs muted mt1 mb0">
+            原型示意有索引时的命中数。实现：有 episode 索引才显示命中；没有则 <code>hits=null</code> 并写明「缺少 episode 索引」，
+            <b>禁止</b>用 1,128 / 2,400 这类占位数字冒充预览。
+          </p>
+        </div>
+        <div class="panel-sm">
+          <p class="panel-sm-t">命中预览（最多 12 缩略图）</p>
+          <div class="mediagrid">
+            <div class="media"><span class="tagline">ep 12 reach</span></div>
+            <div class="media"><span class="tagline">ep 18 reach</span></div>
+            <div class="media"><span class="tagline">ep 41 reach</span></div>
+            <div class="media"><span class="tagline">ep 55 reach</span></div>
+          </div>
+          <button class="btn primary mt1">提交 data.slice</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 id="convert">转换向导 <span class="mono xs">/data/convert</span></h3>
+
+<div class="flow">
+  <div class="flow-node"><b>1 源</b><small>已登记 DatasetVersion</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node"><b>2 映射</b><small>动词表 / 关节重定向</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node"><b>3 预览 5 条</b><small>失败样本优先</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node"><b>4 干跑漏斗</b><small>预计留存</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node" style="border-color:#53e5a3"><b>5 提交 Job</b><small>data.convert / retarget</small></div>
+</div>
+<p class="small">
+  每步都做 G2 预检。retarget 需要 pinocchio 等工具镜像；镜像不存在则停在第 5 步之前，
+  错误是 <code>infra_failed</code> 级别的诚实失败，不生成空轨迹。
+  许可传染在第 1 步就写进目标 Dataset 草稿。
+</p>
+
+<h3 id="quality">质量校验面板</h3>
+
+<p>
+  规则全集见 <a href="03-data.html#quality">03.7</a>。本页只要一张<b>按严重级汇总 + 可下钻</b>的表，不要再复制规则说明。
+</p>
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>严重级</th><th class="t-num">条数</th><th>本数据集现状（扫描仓示例）</th><th>点击后</th></tr></thead>
+<tbody>
+<tr><td><span class="badge b-red">阻断</span></td><td class="t-num">0 或 N</td><td class="xs">有则列出：帧数≠行数、NaN、G2 维数</td><td class="xs">跳到对应 episode</td></tr>
+<tr><td><span class="badge b-amber">警告</span></td><td class="t-num">N</td><td class="xs">分辨率混用、饱和帧、任务 29:6</td><td class="xs">打开切片建议</td></tr>
+<tr><td><span class="badge b-gray">提示</span></td><td class="t-num">N</td><td class="xs">超长 episode</td><td class="xs">仅记录</td></tr>
+<tr><td><span class="badge b-red">许可</span></td><td class="t-num">1</td><td class="xs">NC 已标记 → 导出禁用</td><td class="xs">打开许可说明</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="settings">11.5 平台设置 <span class="mono xs">/settings/*</span></h2>
+
+<p>
+  设置是<b>这台机器怎么跑平台</b>，不是改契约、也不是改某次训练。
+  09 只写了「配额、镜像、通知、密钥」。落地时拆成五页：前四页可写（密钥明文只显示一次），第五页只读。
+</p>
+
+<div class="tabrow">
+  <a class="on" href="#set-quota">配额与生命周期</a>
+  <a href="#set-images">镜像能力</a>
+  <a href="#set-notify">通知</a>
+  <a href="#set-keys">密钥</a>
+  <a href="#set-runtime">运行时只读</a>
+</div>
+
+<h3 id="set-quota">配额与生命周期</h3>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/settings/quota</div>
+    <span class="proto-tag">原型 · 可写，立即生效到 GC 预演</span>
+  </div>
+  <div class="proto-body no-side">
+    <div class="app-main">
+      <div class="form-grid">
+        <span class="lbl">数据根配额</span><span class="fake-in">200 GB</span><span class="hint">/var/lib/eb</span>
+        <span class="lbl">水位告警</span><span class="fake-in">80% / 90%</span><span class="hint">80 通知 · 90 拒绝新 Job</span>
+        <span class="lbl">checkpoint 保留</span><span class="fake-in">top-k = 3</span><span class="hint">按 eval 主指标，不是按时间</span>
+        <span class="lbl">视频代理</span><span class="fake-in">H.264 720p · 可重建</span><span class="hint">不进备份</span>
+        <span class="lbl">Agent 周 GPU 时</span><span class="fake-in">12 h</span><span class="hint">超限停工具，不静默</span>
+        <span class="lbl">当前占用</span><span class="fake-in">46.3 GB · 23%</span><span class="hint">只读条</span>
+        <span class="lbl">扫描根</span><span class="fake-in">/data/kk/berkeley_ego_data</span><span class="hint">只读挂载，不可改成可写</span>
+        <span class="lbl">扫描超时</span><span class="fake-in">120 s</span><span class="hint">全量 44G 超时必须诚实失败</span>
+        <span class="lbl">排除</span><span class="fake-in">**/.git/** · **/__pycache__/**</span><span class="hint">glob 列表</span>
+      </div>
+      <div class="app-actions mt2">
+        <button class="btn">GC 预演（只列表）</button>
+        <button class="btn primary">保存配额</button>
+      </div>
+      <p class="xs muted-2 mb0 mt1">GC 预演列出将删的 checkpoint / proxy，必须二次确认才真正删。源仓 <code>/data/kk/*</code> 不在配额内、也不可被 GC。</p>
+    </div>
+  </div>
+</div>
+
+<h3 id="set-images">镜像能力矩阵</h3>
+
+<p>
+  行是任务镜像，列是平台要问的能力。单元格来自镜像标签 / <code>ebctl doctor</code>，不是手填「可用」。
+  镜像不存在时整行灰色，提交该类 Job 会 <code>infra_failed</code>。
+</p>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr>
+  <th>镜像</th><th>digest 短</th><th>GPU / Vulkan</th><th>Isaac python.sh</th><th>RLinf / Ray</th><th>MuJoCo</th><th>pinocchio</th><th>ffmpeg</th>
+</tr></thead>
+<tbody>
+<tr>
+  <td class="mono xs">eb-isaac</td><td class="mono xs">…</td>
+  <td class="gate-cell c-green">是</td><td class="gate-cell c-green">是</td>
+  <td class="gate-cell muted">—</td><td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">—</td><td class="gate-cell c-green">是</td>
+</tr>
+<tr>
+  <td class="mono xs">eb-rlinf</td><td class="mono xs">…</td>
+  <td class="gate-cell c-green">是</td><td class="gate-cell muted">—</td>
+  <td class="gate-cell c-green">是</td><td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">—</td><td class="gate-cell muted">—</td>
+</tr>
+<tr>
+  <td class="mono xs">eb-mujoco</td><td class="mono xs">…</td>
+  <td class="gate-cell muted">否</td><td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">—</td><td class="gate-cell c-green">是</td>
+  <td class="gate-cell muted">—</td><td class="gate-cell muted">—</td>
+</tr>
+<tr>
+  <td class="mono xs">eb-tools</td><td class="mono xs">缺失</td>
+  <td class="gate-cell muted">—</td><td class="gate-cell muted">—</td>
+  <td class="gate-cell muted">—</td><td class="gate-cell muted">—</td>
+  <td class="gate-cell c-red">无</td><td class="gate-cell c-green">是</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="xs muted">ENTRYPOINT 必须为空数组（见 Isaac ADR）。矩阵旁显示最近一次 <code>ebd doctor</code> 时间。无「标记为可用」按钮。</p>
+
+<h3 id="set-notify">通知</h3>
+
+<div class="form-grid" style="max-width:720px">
+  <span class="lbl">Webhook URL</span><span class="fake-in">https://…</span><span class="hint">可选；空则只站内铃</span>
+  <span class="lbl">事件</span><span class="fake-in">job.failed · disk.watermark · agent.budget · scan.done</span><span class="hint">多选</span>
+  <span class="lbl">安静时段</span><span class="fake-in">23:00–08:00 Asia/Shanghai</span><span class="hint">失败仍投递</span>
+</div>
+<p class="small">没有邮件服务器就不画 SMTP。不要做「成功也每分钟推」——默认只推失败与水位。</p>
+
+<h3 id="set-keys">密钥</h3>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>名称</th><th>前缀</th><th>角色</th><th>最近使用</th><th></th></tr></thead>
+<tbody>
+<tr><td>本机 UI</td><td class="mono">eb-dev-…</td><td>owner</td><td class="xs">当前会话</td><td class="xs">轮换</td></tr>
+<tr><td>Agent 内部</td><td class="mono">eb-agent-…</td><td>agent</td><td class="xs">—</td><td class="xs">不可提升为 owner</td></tr>
+</tbody>
+</table>
+</div>
+<ul class="small">
+  <li>创建时明文只显示一次，之后只见前缀。</li>
+  <li>登录页不预填账号密码（默认仍是 <code>kk</code> / <code>embodied</code>，需手输）。</li>
+  <li>没有「把 Agent key 改成可改契约」的开关。</li>
+</ul>
+
+<h3 id="set-runtime">运行时只读</h3>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>项</th><th>当前值（示例）</th><th>怎么改</th></tr></thead>
+<tbody>
+<tr><td>版本</td><td class="mono">0.1.0 · api/ebd digest</td><td class="xs">发版，不是表单</td></tr>
+<tr><td>API 端口</td><td class="mono">EB_PORT_API → 8000</td><td class="xs"><code>deploy/.env</code> 后 compose 重启</td></tr>
+<tr><td>Redis</td><td class="mono">容器内 6380；宿主机 EB_PORT_REDIS</td><td class="xs">禁止改成 6379（Ray）</td></tr>
+<tr><td>UDS</td><td class="mono">/run/eb/ebd.sock · ebd-http.sock</td><td class="xs">不可改</td></tr>
+<tr><td>GPU</td><td class="mono">ebd 探测的真卡；无卡则 0</td><td class="xs">UI 不提供「假装 4 卡」</td></tr>
+<tr><td>源仓挂载</td><td class="mono">/data/kk 只读</td><td class="xs">compose 已声明；GC 不可扫进去</td></tr>
+<tr><td>时区</td><td class="mono">Asia/Shanghai</td><td class="xs">图表与通知统一；UI 不提供切换</td></tr>
+<tr><td>MinIO</td><td class="mono">127.0.0.1:9000 · 用户 ebadmin</td><td class="xs">密码不在表单显示</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note warn">
+  <span class="note-t">设置页禁区（结构上不要出现控件）</span>
+  改契约数字、gate.override、给 Agent 开 shell/文件系统/出网/SQL、把 docker.sock 交给 api、
+  把 Redis 改回 6379、在 UI 里打开源仓写权限、用假 GPU 计数让队列变绿。
+  这些不是「灰掉的高级选项」，是<b>不要画</b>。
+</div>
+
+<h2 id="jobspec">11.6 任务配置：提交表单 <span class="mono xs">/train/submit</span></h2>
+
+<p>
+  这是第三层「配置」：一次 Job 的意图。字段随 <code>kind</code> 切换，右侧永远有 G1 结果、容量估算、Adapter 将执行的命令预览。
+  预览是 snapshot 测试的同一条字符串，不能手改命令——要改就改左边的 JobSpec。
+</p>
+
+<div class="proto">
+  <div class="proto-chrome">
+    <div class="proto-dots"><i></i><i></i><i></i></div>
+    <div class="proto-url">eb.local/train/submit?kind=train.rl</div>
+    <span class="proto-tag">原型 · kind 切换字段</span>
+  </div>
+  <div class="proto-body no-side">
+    <div class="app-main">
+      <div class="grid g-2-1">
+        <div class="panel-sm">
+          <p class="panel-sm-t">JobSpec</p>
+          <div class="form-grid">
+            <span class="lbl">kind</span><span class="fake-in">train.rl</span><span class="hint">亦：export.policy / eval.sim / data.*</span>
+            <span class="lbl">contract_id</span><span class="fake-in">ec_bhl_biped_12dof_v1</span><span class="hint">切换时同步 task</span>
+            <span class="lbl">task</span><span class="fake-in">Velocity-…-Biped-v0</span><span class="hint">必须 ∈ sim_bindings</span>
+            <span class="lbl">num_envs</span><span class="fake-in">64</span><span class="hint">冒烟；生产 4096</span>
+            <span class="lbl">max_iterations</span><span class="fake-in">5</span><span class="hint">冒烟；生产 6000</span>
+            <span class="lbl">seed</span><span class="fake-in">0</span><span class="hint">复现五元组之一</span>
+            <span class="lbl">gpus</span><span class="fake-in">1 整卡</span><span class="hint">Isaac 不共享</span>
+            <span class="lbl">dataset</span><span class="fake-in">（RL 可空）</span><span class="hint">SFT/IL 必填且 G2 通过</span>
+          </div>
+        </div>
+        <div>
+          <div class="panel-sm mb1">
+            <p class="panel-sm-t">G1 预检</p>
+            <p class="xs mb0"><span class="st st-ok">通过</span> task 匹配 biped 契约 · 镜像 eb-isaac 存在 · 容量 fit 24G</p>
+            <p class="xs muted-2 mb0 mt1">失败示例：WBC 契约 + Velocity task → 字段 <code>task</code> 红，hint「可能选错了 contract_id」。</p>
+          </div>
+          <div class="panel-sm">
+            <p class="panel-sm-t">命令预览（只读）</p>
+            <pre class="xs mb0" style="white-space:pre-wrap">/isaac-sim/python.sh scripts/rsl_rl/train.py --task Velocity-Berkeley-Humanoid-Lite-Biped-v0 --num_envs 64 --max_iterations 5 --seed 0</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="small">
+  kind 切换时字段集：
+  <code>train.rl</code> 如上（Isaac：num_envs / max_iterations；<b>不要</b>把 Hydra 点号键暴露成自由文本框，避免静默覆盖契约）；
+  <code>train.sft / train.rlft</code>：RLinf 侧改选 <code>config_name</code> + <code>cluster.component_placement</code> 预设（单机 4 卡模板），仍走 Adapter，命令预览是 <code>python -m rlinf.train …</code>；
+  <code>export.policy</code> 要 run_id / checkpoint，容量公式用 Isaac 导出档，不要用 VLA 的 P_train；
+  <code>eval.sim</code> 要 suite + seed 列表；
+  <code>data.convert|slice|retarget</code> 跳到 11.4 向导但最终仍是同一 JobSpec 提交口。
+</p>
+
+<h2 id="empty">11.7 空态、加载、禁区一览</h2>
+
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>场景</th><th>画面</th><th>禁止</th></tr></thead>
+<tbody>
+<tr><td class="xs">漏斗尚未扫描</td><td class="xs">空漏斗 +「运行扫描」</td><td class="xs">填充 155,369</td></tr>
+<tr><td class="xs">漏斗层为 0</td><td class="xs">该级宽度为 0 或灰条，数字 0</td><td class="xs">省略该级假装漏斗还在变窄</td></tr>
+<tr><td class="xs">Episode 无视频</td><td class="xs">「缺媒体」文案</td><td class="xs">假播放器 / 纯色 canvas</td></tr>
+<tr><td class="xs">HOI4D 403</td><td class="xs">列表行 st-err「403 受阻」</td><td class="xs">显示 0 episode 当成功登记</td></tr>
+<tr><td class="xs">G3 无 ONNX</td><td class="xs">矩阵「未注册」</td><td class="xs">绿勾</td></tr>
+<tr><td class="xs">镜像不存在</td><td class="xs">能力矩阵灰行；提交 infra_failed</td><td class="xs">stub 成功</td></tr>
+<tr><td class="xs">已发布环境 YAML</td><td class="xs">折叠只读；草稿可编辑（12）</td><td class="xs">对 active 提供保存按钮</td></tr>
+<tr><td class="xs">设置 · GPU</td><td class="xs">ebd 真值，可为 0</td><td class="xs">「演示 4 卡」开关</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="api">11.8 这几页需要的 API 形状（不新增领域实体）</h2>
+
+<p>控制面已有资源则只补字段，不另造一套。</p>
+
+<div class="tbl-wrap">
+<table class="compact">
+<thead><tr><th>页</th><th>读</th><th>写</th></tr></thead>
+<tbody>
+<tr>
+  <td class="xs">环境详情</td>
+  <td class="xs"><code>GET /embodiment-envs/:id</code>；兼容 <code>/contracts/:id</code>。需 layout index_range、self_check、refs</td>
+  <td class="xs">仅 draft：PUT yaml / PATCH；publish / clone 见 12</td>
+</tr>
+<tr>
+  <td class="xs">数据集概览</td>
+  <td class="xs">版本、license、gate_status、体积、时长直方图、task 计数、G2 摘要</td>
+  <td class="xs">触发 scan / slice（走 Job）</td>
+</tr>
+<tr>
+  <td class="xs">漏斗</td>
+  <td class="xs"><code>funnel_reports</code>：stages[].n、rejected[].reason/count、sensitivity[]（仅编译流水线有）</td>
+  <td class="xs">「按该规则重编译」→ Job</td>
+</tr>
+<tr>
+  <td class="xs">Episode</td>
+  <td class="xs">media_url（可空）、action_series、state_series、annots、quality flags；媒体 Range 走 ebd</td>
+  <td class="xs">标记问题、加入切片草稿</td>
+</tr>
+<tr>
+  <td class="xs">设置</td>
+  <td class="xs"><code>GET /system/settings</code>：quota、images[]、notify、keys 前缀、runtime 只读</td>
+  <td class="xs"><code>PATCH</code> quota/notify；<code>POST</code> keys；runtime 不可 PATCH</td>
+</tr>
+<tr>
+  <td class="xs">切片预览</td>
+  <td class="xs"><code>POST /datasets/:id/slice/preview</code>：无 episode 索引时 <code>hits=null</code> + warning</td>
+  <td class="xs"><code>POST /jobs</code> kind=data.slice</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="open">11.9 需要你拍板的三件事</h2>
+
+<div class="note info">
+  <span class="note-t">写设计时我按下面的默认值写了原型。若你要改，改的是默认，不是整章作废。</span>
+  <ol class="small mb0">
+    <li><b>设置可写范围</b>：默认「配额 / 通知 / 密钥」可写；端口、UDS、Redis、GPU 列表只读。是否允许在 UI 改 <code>EB_PORT_*</code>（仍要重启才生效）？</li>
+    <li><b>契约 YAML 全文</b>：默认折叠只读，可视化为主。是否根本不在 UI 展示 YAML（只给 git 路径）？</li>
+    <li><b>漏斗数据集怎么命名</b>：扫描仓与 Ego4D 编译仓是否保持两个 id（推荐），还是一个数据集两个 version 类型？</li>
+  </ol>
+</div>
+
+<div class="note good">
+  <span class="note-t">实现顺序建议（仍服从 10 章里程碑）</span>
+  契约详情可视化 → 数据集概览统计 + 漏斗图落地（A 扫描数字）→ Episode playhead 同步 → 设置只读运行时 + 配额 → 切片/转换向导 → 提交表单命令预览。
+  先让「打开就能看懂身体和数据」，再做可写设置。
+</div>
+
+<div id="eb-pager"></div>
+</main>
+</div>
+
+<div id="eb-foot"></div>
+<script src="assets/eb/eb.js"></script>
+</body>
+</html>

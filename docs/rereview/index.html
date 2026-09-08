@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="EmbodiedBein 终版再审方案：单机 4×4090 深度闭环的 RLinf 具身训练工作台。">
+<title>终版再审总览看板｜EmbodiedBein Re-Review</title>
+<link rel="stylesheet" href="../design/assets/eb/eb.css">
+<style>
+  :root {
+    --bg-dark: #071018;
+    --bg-card: #0c1c2b;
+    --bg-card-hover: #12283d;
+    --border-card: #1b354e;
+    --cyan: #53d4ff;
+    --teal: #55d6be;
+    --purple: #b28dff;
+    --amber: #ffc857;
+    --red: #ff5c77;
+    --green: #4ade80;
+    --text-main: #e2edf5;
+    --text-muted: #8ea5b6;
+  }
+  #eb-toc { display: none; }
+  body { background: var(--bg-dark); color: var(--text-main); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .layout { display: block; }
+  .content { max-width: 1140px; margin: 0 auto; padding: 1.5rem 1.5rem 5rem; }
+  
+  .top-nav { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 2rem; align-items: center; }
+  .top-nav a { padding: .4rem .9rem; border: 1px solid var(--border-card); border-radius: 999px; font-size: .82rem; color: var(--text-muted); text-decoration: none; transition: all .2s; }
+  .top-nav a:hover, .top-nav a.active { border-color: var(--cyan); color: var(--cyan); background: rgba(83,212,255,.08); text-shadow: 0 0 10px rgba(83,212,255,.3); }
+  .top-nav .cta-btn { margin-left: auto; background: var(--cyan); color: #071018; font-weight: 700; border-color: var(--cyan); }
+  .top-nav .cta-btn:hover { color: #071018; filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(83,212,255,.3); }
+  
+  .hero-box { background: linear-gradient(135deg, rgba(19,41,61,.7) 0%, rgba(12,28,43,.9) 100%); border: 1px solid var(--border-card); border-radius: 16px; padding: 2.2rem; margin-bottom: 2rem; position: relative; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+  .hero-box::after { content: ""; position: absolute; right: -50px; top: -50px; width: 300px; height: 300px; background: radial-gradient(circle, rgba(83,212,255,.12) 0%, transparent 70%); pointer-events: none; }
+  .hero-eyebrow { font-size: .8rem; text-transform: uppercase; letter-spacing: .12em; color: var(--cyan); margin: 0 0 .5rem; font-weight: 700; }
+  .hero-box h1 { font-size: 2rem; margin: 0 0 .8rem; letter-spacing: -.03em; color: #fff; }
+  .hero-desc { font-size: 1rem; line-height: 1.6; color: var(--text-muted); max-width: 860px; margin: 0 0 1.5rem; }
+  .hero-tags { display: flex; gap: 8px; flex-wrap: wrap; }
+  .hero-tag { font-size: .75rem; padding: .25rem .6rem; border-radius: 6px; background: rgba(255,255,255,.05); border: 1px solid var(--border-card); color: var(--text-main); }
+  
+  .section-title { font-size: 1.3rem; margin: 2.5rem 0 1rem; color: #fff; display: flex; align-items: center; gap: 10px; }
+  .section-title::before { content: ""; display: inline-block; width: 4px; height: 18px; background: var(--cyan); border-radius: 2px; }
+  
+  .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 1.5rem; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 1.5rem; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 1.5rem; }
+  
+  .module-card { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 12px; padding: 1.2rem; transition: all .2s; text-decoration: none; color: inherit; display: flex; flex-direction: column; }
+  .module-card:hover { background: var(--bg-card-hover); border-color: var(--cyan); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.3); text-decoration: none; }
+  .mod-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; margin-bottom: .8rem; }
+  .mod-title { font-size: 1rem; font-weight: 700; color: #fff; margin: 0 0 .3rem; }
+  .mod-subtitle { font-size: .75rem; color: var(--cyan); margin: 0 0 .6rem; }
+  .mod-desc { font-size: .78rem; color: var(--text-muted); line-height: 1.5; margin: 0; flex-grow: 1; }
+  .mod-link { font-size: .75rem; color: var(--cyan); margin-top: .8rem; font-weight: 600; }
+  
+  .diff-table { width: 100%; border-collapse: collapse; font-size: .84rem; margin-bottom: 2rem; background: var(--bg-card); border-radius: 12px; overflow: hidden; border: 1px solid var(--border-card); }
+  .diff-table th { background: #0e2235; padding: .8rem 1rem; text-align: left; color: var(--cyan); font-weight: 600; border-bottom: 1px solid var(--border-card); }
+  .diff-table td { padding: .8rem 1rem; border-bottom: 1px solid rgba(255,255,255,.05); color: var(--text-muted); vertical-align: top; }
+  .diff-table tr:last-child td { border-bottom: none; }
+  .diff-table td b { color: #fff; }
+  .diff-table td.highlight { color: #fff; background: rgba(83,212,255,.03); }
+  .badge-tag { display: inline-block; padding: .15rem .45rem; border-radius: 4px; font-size: .72rem; font-family: monospace; }
+  .badge-drop { background: rgba(255,92,119,.15); color: var(--red); border: 1px solid rgba(255,92,119,.3); }
+  .badge-keep { background: rgba(85,214,190,.15); color: var(--teal); border: 1px solid rgba(85,214,190,.3); }
+  .badge-add { background: rgba(83,212,255,.15); color: var(--cyan); border: 1px solid rgba(83,212,255,.3); }
+
+  .flow-box { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 14px; padding: 1.5rem; margin-bottom: 2rem; text-align: center; }
+  
+  .doc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .doc-card { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 10px; padding: 1rem; text-decoration: none; color: inherit; transition: all .2s; }
+  .doc-card:hover { border-color: var(--cyan); background: var(--bg-card-hover); text-decoration: none; }
+  .doc-card-h { font-size: .9rem; font-weight: 700; color: #fff; margin: 0 0 .3rem; }
+  .doc-card-p { font-size: .76rem; color: var(--text-muted); margin: 0; line-height: 1.4; }
+
+  @media (max-width: 900px) {
+    .grid-5 { grid-template-columns: 1fr 1fr; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main class="content">
+
+<nav class="top-nav">
+  <a class="active" href="index.html">总览大屏</a>
+  <a href="prototype/workbench.html">🖥️ 打开交互式工作台</a>
+  <a href="00-executive-summary.md">00 综合结论</a>
+  <a href="01-embodiment-deep-review.md">01 本体</a>
+  <a href="02-data-deep-review.md">02 数据</a>
+  <a href="03-env-and-images-deep-review.md">03 环境</a>
+  <a href="04-training-and-rlinf-deep-review.md">04 训练</a>
+  <a href="05-models-and-lineage-deep-review.md">05 模型</a>
+  <a href="06-metadata-and-storage-deep-review.md">06 元数据与存储</a>
+  <a href="07-multiround-reflection.md">07 七轮反思</a>
+  <a href="08-migration-and-implementation-plan.md">08 实施计划</a>
+  <a class="cta-btn" href="prototype/workbench.html">进入工作台原型 →</a>
+</nav>
+
+<div class="hero-box">
+  <p class="hero-eyebrow">EmbodiedBein · Final Re-Review Architecture</p>
+  <h1>单机 4×4090 深度闭环的 RLinf 具身训练工作台</h1>
+  <p class="hero-desc">
+    基于用户核心诉求、设计真源与运行态深度再审。彻底剥离多余的 13 项重度流水线概念，全面聚焦于：
+    <b>本地代码直挂本体（多 URDF 3D 渲染）、多源异步数据接入、Isaac Lab 镜像与驱动自检、RLinf 表单秒级开训与多卡隔离、基座与产物 DAG 全景血缘</b>。
+  </p>
+  <div class="hero-tags">
+    <span class="hero-tag">4× RTX 4090 宿主自洽</span>
+    <span class="hero-tag">磁盘物理目录为真源</span>
+    <span class="hero-tag">PostgreSQL 元数据索引</span>
+    <span class="hero-tag">RLinf + Ray 端口隔离</span>
+    <span class="hero-tag">Three.js 3D 关节联动</span>
+    <span class="hero-tag">无门禁概念阻断</span>
+  </div>
+</div>
+
+<h2 class="section-title">五大核心模块深视</h2>
+<div class="grid-5">
+  <a class="module-card" href="01-embodiment-deep-review.md">
+    <div class="mod-icon" style="background:rgba(83,212,255,.15);color:var(--cyan);">🤖</div>
+    <p class="mod-title">1. 本体</p>
+    <p class="mod-subtitle">代码接入 · 多 URDF 3D</p>
+    <p class="mod-desc">本地路径直挂接入，自动提取 Humanoid/Biped/WBC/FixedHand 4 种形态，提供 3D 网格代理与关节姿态滑杆联动。</p>
+    <span class="mod-link">查看详规 →</span>
+  </a>
+
+  <a class="module-card" href="02-data-deep-review.md">
+    <div class="mod-icon" style="background:rgba(85,214,190,.15);color:var(--teal);">📦</div>
+    <p class="mod-title">2. 数据</p>
+    <p class="mod-subtitle">三源接入 · 视频流点播</p>
+    <p class="mod-desc">支持本地直挂、HuggingFace (HF_TOKEN) 与 HTTP 异步流式下载，支持磁盘配额预检、大目录惰性树与 Episode 视频流。</p>
+    <span class="mod-link">查看详规 →</span>
+  </a>
+
+  <a class="module-card" href="03-env-and-images-deep-review.md">
+    <div class="mod-icon" style="background:rgba(255,200,87,.15);color:var(--amber);">⚡</div>
+    <p class="mod-title">3. 环境</p>
+    <p class="mod-subtitle">Isaac Lab · 镜像与诊断</p>
+    <p class="mod-desc">唯一绑定 Isaac Lab 仿真运行时，Docker 守护进程实探镜像 Digest 与 Pull 进度，提供 GPU/CUDA/Vulkan/EGL 硬件体检。</p>
+    <span class="mod-link">查看详规 →</span>
+  </a>
+
+  <a class="module-card" href="04-training-and-rlinf-deep-review.md">
+    <div class="mod-icon" style="background:rgba(83,212,255,.15);color:var(--cyan);">🚀</div>
+    <p class="mod-title">4. 训练</p>
+    <p class="mod-subtitle">RLinf 适配 · 多卡隔离</p>
+    <p class="mod-desc">内置三大具身模板，表单生成 Hydra 覆盖与等价 docker run，Ray 动态端口与多卡隔离，毫秒级日志与 TSDB 指标图。</p>
+    <span class="mod-link">查看详规 →</span>
+  </a>
+
+  <a class="module-card" href="05-models-and-lineage-deep-review.md">
+    <div class="mod-icon" style="background:rgba(178,141,255,.15);color:var(--purple);">🧬</div>
+    <p class="mod-title">5. 模型</p>
+    <p class="mod-subtitle">基座/产物 · 全要素 DAG</p>
+    <p class="mod-desc">基座模型与训练 Checkpoint 双轨入库（支持手动选点与自动 latest），织造本体+数据+基座+任务的多维 DAG 血缘图谱。</p>
+    <span class="mod-link">查看详规 →</span>
+  </a>
+</div>
+
+<h2 class="section-title">全系统全景流转架构</h2>
+<div class="flow-box">
+  <svg viewBox="0 0 1060 170" width="100%" height="170" role="img" aria-label="五模块主工作流">
+    <g transform="translate(10, 20)">
+      <!-- 节点 1: 本体 -->
+      <g transform="translate(0, 20)">
+        <rect width="180" height="90" rx="10" fill="#0e2235" stroke="#53d4ff" stroke-width="1.5"/>
+        <text x="90" y="32" fill="#53d4ff" font-size="14" font-weight="bold" text-anchor="middle">1. 本体 (Embodiment)</text>
+        <text x="90" y="55" fill="#8ea5b6" font-size="11" text-anchor="middle">指定路径 /data/kk/BHL</text>
+        <text x="90" y="74" fill="#4ade80" font-size="10" font-family="monospace" text-anchor="middle">4×URDF / 86 Meshes</text>
+      </g>
+      <!-- 节点 2: 数据 -->
+      <g transform="translate(220, 20)">
+        <rect width="180" height="90" rx="10" fill="#0e2235" stroke="#55d6be" stroke-width="1.5"/>
+        <text x="90" y="32" fill="#55d6be" font-size="14" font-weight="bold" text-anchor="middle">2. 数据 (Dataset)</text>
+        <text x="90" y="55" fill="#8ea5b6" font-size="11" text-anchor="middle">本地直挂 / HF / HTTP</text>
+        <text x="90" y="74" fill="#4ade80" font-size="10" font-family="monospace" text-anchor="middle">44GB EgoData 视频点播</text>
+      </g>
+      <!-- 节点 3: 环境 -->
+      <g transform="translate(440, 20)">
+        <rect width="180" height="90" rx="10" fill="#0e2235" stroke="#ffc857" stroke-width="1.5"/>
+        <text x="90" y="32" fill="#ffc857" font-size="14" font-weight="bold" text-anchor="middle">3. 环境 (Environment)</text>
+        <text x="90" y="55" fill="#8ea5b6" font-size="11" text-anchor="middle">Isaac Lab + 镜像</text>
+        <text x="90" y="74" fill="#4ade80" font-size="10" font-family="monospace" text-anchor="middle">eb/rlinf:0.4.0 (Ready)</text>
+      </g>
+      <!-- 节点 4: 训练 -->
+      <g transform="translate(660, 20)">
+        <rect width="180" height="90" rx="10" fill="#0e2235" stroke="#53d4ff" stroke-width="2"/>
+        <text x="90" y="32" fill="#53d4ff" font-size="14" font-weight="bold" text-anchor="middle">4. 训练 (TrainJob)</text>
+        <text x="90" y="55" fill="#8ea5b6" font-size="11" text-anchor="middle">RLinf 表单 + 多卡挂载</text>
+        <text x="90" y="74" fill="#ffc857" font-size="10" font-family="monospace" text-anchor="middle">Ray Head :6390 隔离</text>
+      </g>
+      <!-- 节点 5: 模型 -->
+      <g transform="translate(880, 20)">
+        <rect width="170" height="90" rx="10" fill="#0e2235" stroke="#b28dff" stroke-width="1.5"/>
+        <text x="85" y="32" fill="#b28dff" font-size="14" font-weight="bold" text-anchor="middle">5. 模型 (Model & DAG)</text>
+        <text x="85" y="55" fill="#8ea5b6" font-size="11" text-anchor="middle">基座 + 产物 Checkpoint</text>
+        <text x="85" y="74" fill="#4ade80" font-size="10" font-family="monospace" text-anchor="middle">一键/自动入库 + 血缘</text>
+      </g>
+
+      <!-- 连接箭头 -->
+      <path d="M 180 65 L 220 65" stroke="#53d4ff" stroke-width="2" marker-end="url(#arr)"/>
+      <path d="M 400 65 L 440 65" stroke="#55d6be" stroke-width="2" marker-end="url(#arr)"/>
+      <path d="M 620 65 L 660 65" stroke="#ffc857" stroke-width="2" marker-end="url(#arr)"/>
+      <path d="M 840 65 L 880 65" stroke="#53d4ff" stroke-width="2" marker-end="url(#arr)"/>
+    </g>
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 8 5 L 0 9 z" fill="#53d4ff" />
+      </marker>
+    </defs>
+  </svg>
+</div>
+
+<h2 class="section-title">重构决策与全生命周期对照表</h2>
+<table class="diff-table">
+  <thead>
+    <tr>
+      <th style="width:16%">领域实体</th>
+      <th style="width:26%">历史真源设计 (docs/design)</th>
+      <th style="width:26%">初版重设计 (docs/redesign)</th>
+      <th style="width:32%">终版再审方案 (docs/rereview)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>本体 (Embodiment)</b></td>
+      <td>手写 YAML 契约，G1~G5 刚性校验，单一 3D 渲染</td>
+      <td>路径登记 + 粗正则扫描</td>
+      <td class="highlight"><span class="badge-tag badge-add">强化</span> 本地直挂 + 自动识别 4 款 URDF 变体 + 3D 网格安全代理 + 关节树位姿滑杆联动</td>
+    </tr>
+    <tr>
+      <td><b>数据 (Dataset)</b></td>
+      <td>6 层漏斗 (L0-L5) + CAS 复制 + 许可传染门禁</td>
+      <td>路径登记 + 简单树状图</td>
+      <td class="highlight"><span class="badge-tag badge-add">强化</span> 三源接入 (本地/HF/HTTP) + 异步下载状态机 + 磁盘容量预检 + Episode 视频流</td>
+    </tr>
+    <tr>
+      <td><b>环境与镜像</b></td>
+      <td>多仿真器插件体系 + 契约绑定</td>
+      <td>静态文本，缺失硬件诊断</td>
+      <td class="highlight"><span class="badge-tag badge-add">强化</span> 专一聚焦 Isaac Lab + Docker 实探与 Pull 进度 + GPU/CUDA/Vulkan/EGL 诊断 Doctor</td>
+    </tr>
+    <tr>
+      <td><b>训练 (Training)</b></td>
+      <td>实验/提交/队列 3 级复杂概念 + 双栈并列</td>
+      <td>单层列表 + 基础表单</td>
+      <td class="highlight"><span class="badge-tag badge-add">强化</span> 纯粹 RLinf 工作台 + 表单智能计算多卡拓扑 + Ray 端口动态隔离 + 实时 Hydra 预览</td>
+    </tr>
+    <tr>
+      <td><b>模型与血缘</b></td>
+      <td>ModelCard 必填 + CAS 寻址</td>
+      <td>单向线性父子链</td>
+      <td class="highlight"><span class="badge-tag badge-add">强化</span> 基座与产物双轨 + Checkpoint 手选与自动 latest + 全要素 DAG 交互图谱</td>
+    </tr>
+    <tr>
+      <td><b>非核心模块</b></td>
+      <td>评估套件、真机部署、ToolBus Agent 全量接入</td>
+      <td>从导航移出，但未定退化策略</td>
+      <td class="highlight"><span class="badge-tag badge-keep">休眠</span> 移出主导航与前置卡口，代码下沉为内部工具库，绝不阻断主训练闭环</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 class="section-title">再审设计文档库</h2>
+<div class="doc-list">
+  <a class="doc-card" href="00-executive-summary.md">
+    <p class="doc-card-h">00 · 综合再审结论</p>
+    <p class="doc-card-p">三方版本全面对比，十大初版遗漏深度剖析与解决总结。</p>
+  </a>
+  <a class="doc-card" href="01-embodiment-deep-review.md">
+    <p class="doc-card-h">01 · 本体模块深度详规</p>
+    <p class="doc-card-p">多 URDF 变体解析、3D 网格安全代理与关节限位交互设计。</p>
+  </a>
+  <a class="doc-card" href="02-data-deep-review.md">
+    <p class="doc-card-h">02 · 数据模块深度详规</p>
+    <p class="doc-card-p">HF/HTTP 异步下载引擎、磁盘配额防护与大文件树性能优化。</p>
+  </a>
+  <a class="doc-card" href="03-env-and-images-deep-review.md">
+    <p class="doc-card-h">03 · 环境与镜像详规</p>
+    <p class="doc-card-p">Isaac Lab 运行时、Docker 实探、Vulkan/EGL 硬件体检。</p>
+  </a>
+  <a class="doc-card" href="04-training-and-rlinf-deep-review.md">
+    <p class="doc-card-h">04 · 训练与 RLinf 详规</p>
+    <p class="doc-card-p">RLinf 模板体系、Ray 端口隔离、多卡拓扑与实时日志 TSDB。</p>
+  </a>
+  <a class="doc-card" href="05-models-and-lineage-deep-review.md">
+    <p class="doc-card-h">05 · 模型与 DAG 血缘详规</p>
+    <p class="doc-card-p">基座/产物双轨管理、Checkpoint 识别与全要素 DAG 图谱。</p>
+  </a>
+  <a class="doc-card" href="06-metadata-and-storage-deep-review.md">
+    <p class="doc-card-h">06 · 元数据与存储详规</p>
+    <p class="doc-card-p">PostgreSQL 完整 DDL、磁盘目录布局与 UID/GID 权限自洽。</p>
+  </a>
+  <a class="doc-card" href="07-multiround-reflection.md">
+    <p class="doc-card-h">07 · 七轮深度反思</p>
+    <p class="doc-card-p">并发碰撞、权限死锁、3D 降级、配置容错等极限推演反思。</p>
+  </a>
+  <a class="doc-card" href="08-migration-and-implementation-plan.md">
+    <p class="doc-card-h">08 · 实施落地计划</p>
+    <p class="doc-card-p">4 周冲刺实施路线图，代码库平滑演进与冒烟验收标准。</p>
+  </a>
+</div>
+
+</main>
+</body>
+</html>

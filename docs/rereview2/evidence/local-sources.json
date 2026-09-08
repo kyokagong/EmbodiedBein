@@ -1,0 +1,828 @@
+{
+  "review_date": "2026-09-08",
+  "method": "read-only filesystem and AST inspection; no imports, no git, no training runs",
+  "limitations": [
+    "Source hashes identify inspected content, not installed runtime capability.",
+    "Document inventory hashes do not imply every historical paragraph was independently validated.",
+    "Large model weights and raw datasets were not hashed."
+  ],
+  "sources": [
+    {
+      "path": "/data/kk/EmbodiedBein/AGENTS.md",
+      "bytes": 8703,
+      "sha256": "8d97ef13ab8660d7126880d8c6a0aa2f3029184a92afe27e16721ddc8e012640",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/api/app.py",
+      "bytes": 3329,
+      "sha256": "a3c34debb7f5b39531fc328c5a7e5d751bc792378864bdcafb800a219f77514f",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/api/routes.py",
+      "bytes": 37989,
+      "sha256": "8f20816d12a5756e1c54738edf47500c293689a87fc8e7b656c7e02fcab8619c",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/api/routes_data.py",
+      "bytes": 6341,
+      "sha256": "1532d64ffb2efc3885f57137c5062e32ee6331a6b356212c63e243ef5a5b8538",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/api/routes_train.py",
+      "bytes": 9874,
+      "sha256": "c74cb322279170f82b8cf16180cc007e85628e1b045a6b2f73528f0a74b636eb",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/api/routes_model.py",
+      "bytes": 2843,
+      "sha256": "c9f2b8f71d9e684837dfd4aa0cf9af3c486e6b5bea7482350135281a71188849",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/api/routes_env.py",
+      "bytes": 3483,
+      "sha256": "2da7a120c12786b9e4b535af09141f72760b33162f4f2d4fd4d6c0944e970a57",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/domain/data_view.py",
+      "bytes": 7153,
+      "sha256": "22ea1a758179605cbe94d056d54d7ae77ef412c146c5f613d62ea9b105f9758b",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/domain/job.py",
+      "bytes": 3244,
+      "sha256": "8e2677f2e1670eef7928d6fb436af721b6fdf5da77435ebf16500cf33de8e3f0",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/domain/rlinf_form.py",
+      "bytes": 3531,
+      "sha256": "c55c9f0b7086a930810275cf531aa7522cef6d726295c44048ebb183598c0a47",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/adapters/rlinf.py",
+      "bytes": 3956,
+      "sha256": "28bbb3177a451616b5a2ef13112737fed7380d9aeab6aa1d59c0bd0c36d1b8b2",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/adapters/__init__.py",
+      "bytes": 1906,
+      "sha256": "17f3820a2944299af6f14450bd07fdd62d5ae76bcefb6266ca0c8714af3604ed",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/orchestrator/service.py",
+      "bytes": 16362,
+      "sha256": "6433f8644f721178c406d635d0682d9298345696a57932f9421f3822e414167b",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/orchestrator/collect.py",
+      "bytes": 5875,
+      "sha256": "fe6f920995c4c334448c91b24edb1ed801e8ed3f5407b6aeb5f85d40eab2c30d",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/pipelines.py",
+      "bytes": 3332,
+      "sha256": "0e1ea617a78b648ed7a3b24927ae0646a6c33c4bbcdb952d172b8831fa311f11",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/scheduler/loop.py",
+      "bytes": 7655,
+      "sha256": "0fc18b77ec7911a6915b2c618c4005b06f657329b64fc7dff5409b2ccdaef317",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/store/models.py",
+      "bytes": 19856,
+      "sha256": "d06869600149ab3616916d7d2d0c1b2213d2db2d35ae2a42b5f88f7d5c91c248",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/backend/eb/harness/toolbus.py",
+      "bytes": 4707,
+      "sha256": "7069bf4a0d668c40a98aeacbbb6ac1f9009597842baa5fb11e4faa3742ba0ef2",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/frontend/src/views/Shell.vue",
+      "bytes": 1377,
+      "sha256": "a70af66d93c311d9d95d0fee2f2d51134be56ca51739bf62dba3a5d26184338f",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/frontend/src/router/index.ts",
+      "bytes": 3988,
+      "sha256": "676db8de3181dbbf36809435225f51ca90c936052c7376707507de8b63625698",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/rust/crates/eb-runner/src/lib.rs",
+      "bytes": 11397,
+      "sha256": "7cbacc87951417ddac1067112b2e5c9f209682cf158ea5125508b1052ccba91a",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/rlinf/config.py",
+      "bytes": 81106,
+      "sha256": "b943e548f89104b4a55a2b4e2ac597fdd04ff23804d2923efd9df60b0e1ac2d0",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/rlinf/models/__init__.py",
+      "bytes": 12188,
+      "sha256": "9a26146812b43980c45ed1f1ee28080f85662f27f9504987423c5d1f1a6b379b",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/rlinf/workers/sft/fsdp_vla_sft_worker.py",
+      "bytes": 8337,
+      "sha256": "922a5b984d3942dd8345376e6d2ed277fd25391ded7d4dcbfdb60393f4080c35",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/examples/sft/train_vla_sft.py",
+      "bytes": 2855,
+      "sha256": "55e1751e87db8de1ee780c483ca05162c2fe994578fa53d35caa7a1b98197436",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/rlinf/envs/__init__.py",
+      "bytes": 5634,
+      "sha256": "946f27afc8aac6c040340c75e1bda8cf4558e5acb36ab2dc9c9c0f72174f772c",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/rlinf/envs/isaaclab/__init__.py",
+      "bytes": 1068,
+      "sha256": "bec7e108213e9b617a5fbe8ad4c14962341254ac1c1983e136b9ed3a901af46d",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/examples/embodiment/collect_berkeley_reach.py",
+      "bytes": 17054,
+      "sha256": "e2d7cbd6004eb02ab5d5ccecee7beef6157f01d640ec210fdb0a99adbc544f55",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/RLinf/examples/sft/config/berkeley_reach_sft_openpi_pi05.yaml",
+      "bytes": 3198,
+      "sha256": "0403559e31949f06b045d69d879c5804bf1ee125417bd5c5906ba5602b2fd90f",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/README.md",
+      "bytes": 5269,
+      "sha256": "1c92658b624d63b908809507c64f77bcfdfabb1bacfa00a6b171543bb9e64679",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/docs/docs/resources/available_robots.md",
+      "bytes": 751,
+      "sha256": "67a72293243f1f7560a999815a34f83466c39d2ea2922a9ac349d186e9f953b9",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/docs/docs/docs/features/state_machine.md",
+      "bytes": 3680,
+      "sha256": "824349822631cf564834ad28cc88453116a1b933346b9b4d8c18928cbbc90649",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/docs/docs/docs/features/lerobot_recorder.md",
+      "bytes": 2461,
+      "sha256": "a884138781e614a9a59348b43fe6098c4e237db0b9ec7ae01f7a03c6ab1a51b5",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/docs/docs/docs/features/mimicgen_env.md",
+      "bytes": 3433,
+      "sha256": "2301a6d2b25796d6db60e2359df35ea693f84c6685e61856b2150ca448f212ba",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/scripts/datagen/state_machine/generate.py",
+      "bytes": 13007,
+      "sha256": "72c67c6e363bf9e610dc872d781b1f20073ce140b69b375f50798cc1315fef42",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/scripts/convert/isaaclab2lerobotv3.py",
+      "bytes": 6387,
+      "sha256": "7010571563bd4772030eeae6b0a6796e565c3b0c40e12c99db364156fb6f6fd4",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/leisaac/source/leisaac/leisaac/enhance/datasets/lerobot_dataset_handler.py",
+      "bytes": 4561,
+      "sha256": "ce3a42e77fe3f1595271d67c684269257d2d1d8cfb3f4fc0b9b90e30bff98187",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/IsaacLab/source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/velocity/config/g1/__init__.py",
+      "bytes": 1880,
+      "sha256": "6f9f656de8f4ad0f75f0a0773ff8be337424811ab8d5e3bc9e674d95b39fac54",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/contracts/ee_bhl_fixedhand_10dof_v1.yaml",
+      "bytes": 1039,
+      "sha256": "119043976eae5ddf662178e8202e117242d0dcffcc58df0cb2e7b5ed0e70cc76",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/contracts/ee_bhl_humanoid_22dof_v1.yaml",
+      "bytes": 1919,
+      "sha256": "7806802b0401bb030ee1ca6125e2406556d0fac78c92eb37e1d29599a677385f",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/contracts/ee_bhl_wbc_22dof_v1.yaml",
+      "bytes": 1878,
+      "sha256": "3d336f62fbbdd66c1af0bd2cd4e90d461f9cfb5a330cbe81de5cd05d89e2aee7",
+      "role": "static_source_evidence"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/contracts/ee_bhl_biped_12dof_v1.yaml",
+      "bytes": 1582,
+      "sha256": "2677c990bb1e54119f9751495be012b06dd7709628155875e9cc3287985e8b28",
+      "role": "static_source_evidence"
+    }
+  ],
+  "historical_document_inventory": [
+    {
+      "path": "docs/design/01-architecture.html",
+      "bytes": 62796,
+      "sha256": "c2ec20703b0f218b5811d5d4919e1b5ee8f5c5b2f6b2958e8492c7ca4b0d2481",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/02-domain-model.html",
+      "bytes": 68634,
+      "sha256": "af74790d02533ae3108564cb94947fd5c6bc5c520795e0baf99c74f5cd7dfd87",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/03-data.html",
+      "bytes": 51492,
+      "sha256": "9aa71f0c5dba90d51d583c1c99a5636ed7a081bcb61205af298914f26b948d97",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/04-model.html",
+      "bytes": 60575,
+      "sha256": "8e6ae8c6f73ae756c9b713d22cd213c4dbab4f007d0f3be666ead17303c7d16d",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/05-training.html",
+      "bytes": 53919,
+      "sha256": "e17e55b67b0838205f94e6b8cebfe03bcffba725f0411c9e2b8c9772271b7109",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/06-evaluation.html",
+      "bytes": 40298,
+      "sha256": "4e10440d27a9c2bd529869b36f82604c04c69e3cdc60e52cc6ee6c701a59e657",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/07-deploy.html",
+      "bytes": 34299,
+      "sha256": "b5c9c76b64566362d3b3000b3d740b3e6e2ad0f07696afcda239f31ba42ac319",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/08-agent.html",
+      "bytes": 65417,
+      "sha256": "af91250b865e8d6dea309419a11769b680f893ce7f25ac64ed5560daf5fa4be6",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/09-ui-system.html",
+      "bytes": 34790,
+      "sha256": "75376e0a1cb61233c4b284a69f71fd2b4ddc136733ff86d08e8b8cecb7792a4d",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/10-roadmap.html",
+      "bytes": 33795,
+      "sha256": "f041394ff192e31a0fccebb9bf7d86b95347e22c048bba3e25fa36bda4dea860",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/11-workspace-views.html",
+      "bytes": 50799,
+      "sha256": "06c979731bb119e214b1498c51e2d7874f9dd6f92c45bd85d8e621727c69bbb0",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/12-embodiment-environment.html",
+      "bytes": 14766,
+      "sha256": "eb829f3f2ea904fa1aa360b3962c973a137758122c714d28c32796f3f487975a",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/12-embodiment-environment.md",
+      "bytes": 26024,
+      "sha256": "d1e9f7c4353090d7063489d86bbcf0ce77e241a849b4937883a7c923b84961ed",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/13-embodiment-crud-prototype.html",
+      "bytes": 50741,
+      "sha256": "95f8d3a181d96fe1d92a0ba4b405c6b32f4cc2693415986b0ab7deee6dd0c9e8",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/design/index.html",
+      "bytes": 47928,
+      "sha256": "8a24fb62980d002d6611628c4747a27af50852d6a80c2add55cd8304be683a7a",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/01-architecture-and-dataplane.md",
+      "bytes": 7033,
+      "sha256": "a6a09aa53ebbe114d78d04644c2fdf5e052ce46d607b1b5c5bd22f9de6bdf94b",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/02-domain-embodiment-and-tasks.md",
+      "bytes": 7000,
+      "sha256": "abc3c38b7fbaa1d58cf04a4f517ad851345fc513e200cd6ea7c6c85a809a2dad",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/03-data-subsystem.md",
+      "bytes": 6585,
+      "sha256": "bd3b8a6b70a367912416f23b3a262cd0bb265e5f2d79085327a1770f3f59157e",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/04-models-and-capacity.md",
+      "bytes": 5942,
+      "sha256": "951f778b8d7ff3fdedf2e850c7427e5aaa006a4cc2ff4c2f99dbbdcd48f43b50",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/05-training-and-orchestration.md",
+      "bytes": 5802,
+      "sha256": "8b66709ff80a4c6987eca975715ec1019c19cde06a34749e5f45cc7901ee98bb",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/06-evaluation-and-gates.md",
+      "bytes": 5114,
+      "sha256": "1944a1caf2c14878ce6b0a653d806cba02e6cc627add12f9f0ba5c599524521a",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/07-deploy-and-telemetry.md",
+      "bytes": 4589,
+      "sha256": "acb1b779f321dbdeccfb3b63bc7ef54added327e8877d5420e0fd13bef8729ac",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/08-agent-and-toolbus.md",
+      "bytes": 6027,
+      "sha256": "c7446c46ea6b9da2a5addcbbfc1d1e1ed88dd17d73ede1a7a436939af0a1ad3c",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/09-ui-and-showcase.md",
+      "bytes": 9565,
+      "sha256": "0646cab65f68c563b2429eb2bd7906602000933af8577f1cae228ccabf9ea80b",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/10-comprehensive-gap-and-roadmap.md",
+      "bytes": 10270,
+      "sha256": "994c0ad0815649e5bcc2c2b2c647a2b87c6256b7f969c3bc768b0a2a2b1d8244",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/README.md",
+      "bytes": 7543,
+      "sha256": "5e4aa96942c4d0f353b9653c227294671ed72f471f3fe82d09b3ef7e43c872da",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/review/index.html",
+      "bytes": 18048,
+      "sha256": "d07eb99238849a302959b31be1293a391297c9525800cabfe0223925845de431",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/00-delta.md",
+      "bytes": 4991,
+      "sha256": "dc19e8dad3cce1ad820d8052e67025367766c6471bc0f877b99369c6a683d777",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/01-overview.md",
+      "bytes": 4022,
+      "sha256": "e7ad52b29e952e19ed8422a957addce8b054856623e234dcafaa1c60458a926d",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/02-metadata-and-storage.md",
+      "bytes": 6710,
+      "sha256": "1cf1a7a04cf35f3a7604fd1774e5edb01fc19241bdf45f93785cedd84a5ef4b5",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/03-modules.md",
+      "bytes": 9186,
+      "sha256": "9cc6cba001317f862e97333b19d2ff142ae13f69a29370b66c3c9440f915e8cb",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/04-architecture.md",
+      "bytes": 3153,
+      "sha256": "a748dd1a51d9699a3e2850c4b783ec250951e6b36b93a3fe343deec46f70798d",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/05-self-review.md",
+      "bytes": 4927,
+      "sha256": "8eeafccb6fbd7f07ee98dc22ed92168c09fb3ee1ff34f5094c784ee72371694a",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/README.md",
+      "bytes": 1576,
+      "sha256": "a9aca5aaafb929615538c7083d9c2b2e4f7cf6028b656c4fda7344a2a71f2447",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/index.html",
+      "bytes": 7553,
+      "sha256": "db466a5b1bae3b60a7bd448bd531c29d0aea9ae8fdef4c19c25cfac9f0c62b3b",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/redesign/prototype/workbench.html",
+      "bytes": 29032,
+      "sha256": "7a4b79b3183c21a7584e4b2e3f6b29b64b6a28ec4edd98de56479ea723d0f367",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/00-executive-summary.md",
+      "bytes": 8829,
+      "sha256": "51aac5290113d5eba0ec5edfb5acbd16a5dbcc46870749b51fdbeeb947760cbf",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/01-embodiment-deep-review.md",
+      "bytes": 8035,
+      "sha256": "635bb83a4d7100870bc3d4345b03069923dce2e1b8cff526104beeb3f08471d2",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/02-data-deep-review.md",
+      "bytes": 6987,
+      "sha256": "2e30fe2b690d6f564af9342f3f39538753890b3f056932813f320a47fd84ed2f",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/03-env-and-images-deep-review.md",
+      "bytes": 7863,
+      "sha256": "578d34b324e0edaf47e94a23df784a5171cc36f40a96aa3febb235b6b7ea6134",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/04-training-and-rlinf-deep-review.md",
+      "bytes": 10711,
+      "sha256": "1235176ad671b70acb9f226ee70e56d5c7bd3a629d6cda24452e85f6f0dcfe53",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/05-models-and-lineage-deep-review.md",
+      "bytes": 8561,
+      "sha256": "52da91a9eadbdecbf97904b53d83a38bfec124da697619c558d5367254104f7b",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/06-metadata-and-storage-deep-review.md",
+      "bytes": 9311,
+      "sha256": "5652334762822ef747b22180bc50ffd97b3ef1fe8e4fe14a0301ce3ce0636f71",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/07-multiround-reflection.md",
+      "bytes": 7967,
+      "sha256": "fa3deed11b036db5d7596696038865987d884b9f3dc4646c931cfd25abb10640",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/08-migration-and-implementation-plan.md",
+      "bytes": 4772,
+      "sha256": "cf4e84135aff9d8806d4913cdca7c9678fc7485ae1e462dea643b890979223a9",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/09-code-transformation-plan.md",
+      "bytes": 4217,
+      "sha256": "1dca70b73bc1e2361fc4519858c59f2b9dbeb5ce90233f64082434ffc5e7466e",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/README.md",
+      "bytes": 3760,
+      "sha256": "a4caf2dcddca974f1976061b00ed7a08896e40d9e7beeb6b05cae71c1a5a2c3b",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/index.html",
+      "bytes": 18971,
+      "sha256": "51a75d26fc546a803c9c8902b0a9365717c8c306ad928b10460452f473001c9e",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/rereview/prototype/workbench.html",
+      "bytes": 68394,
+      "sha256": "1bcaeab115f4819929968ec9091123163b0f0fa51f8a7a5753578975e13311e0",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/progress/2026-08-21-first-version.md",
+      "bytes": 24781,
+      "sha256": "3be6a352c09633abc67745f41348bde4bee610ff2cfa59c630ca0db3543c7f48",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/progress/2026-08-21-make-features-real.md",
+      "bytes": 6368,
+      "sha256": "34712c7f4163f0a954990a204fd33140a867b58b0333a935fdac75bba5e0d51b",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/progress/2026-08-21-status.md",
+      "bytes": 9024,
+      "sha256": "aaefbfbce5da21928bcf4e9d60ea6dd0f90d24f64462719e3583b49a7314a9ce",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/progress/README.md",
+      "bytes": 1023,
+      "sha256": "a9bdeb42733e6b0e4685161a6291fd8127763a6533914b81774cd12d876a41dd",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/adr/0001-isaac-image.md",
+      "bytes": 1700,
+      "sha256": "0c61c57bb79cc66687892a333794972e068bb13e95563887b328f98ebce7a342",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/adr/0002-cas-layout.md",
+      "bytes": 696,
+      "sha256": "5560e4690ab8e3fa782d32408db82f2088a26eb8d3de3c50018b3a439d78e431",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/plans/2026-08-21-make-features-real.md",
+      "bytes": 33483,
+      "sha256": "3a9aca00b2535a491ae5c58791a8e94a458855ca2dcb875ec765683274c98a03",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    },
+    {
+      "path": "docs/plans/README.md",
+      "bytes": 614,
+      "sha256": "950d7def767c05559349ce9df31ae5637c5805b8d13663b40c4e70ecf85b71c7",
+      "role": "document_inventory_not_claim_of_line_by_line_review"
+    }
+  ],
+  "rlinf_builder_registry": [
+    {
+      "key": "openvla",
+      "symbol": "OPENVLA",
+      "category": "embodied",
+      "line": 187
+    },
+    {
+      "key": "openvla_oft",
+      "symbol": "OPENVLA_OFT",
+      "category": "embodied",
+      "line": 193
+    },
+    {
+      "key": "molmoact2",
+      "symbol": "MOLMOACT2",
+      "category": "embodied",
+      "line": 199
+    },
+    {
+      "key": "openpi",
+      "symbol": "OPENPI",
+      "category": "embodied",
+      "line": 205
+    },
+    {
+      "key": "openpi_rlinf",
+      "symbol": "OPENPI_RLINF",
+      "category": "embodied",
+      "line": 211
+    },
+    {
+      "key": "dexbotic_pi",
+      "symbol": "DEXBOTIC_PI",
+      "category": "embodied",
+      "line": 217
+    },
+    {
+      "key": "dexbotic_dm0",
+      "symbol": "DEXBOTIC_DM0",
+      "category": "embodied",
+      "line": 223
+    },
+    {
+      "key": "mlp_policy",
+      "symbol": "MLP_POLICY",
+      "category": "embodied",
+      "line": 229
+    },
+    {
+      "key": "rlt_mlp_policy",
+      "symbol": "RLT_MLP_POLICY",
+      "category": "embodied",
+      "line": 235
+    },
+    {
+      "key": "rlt_td3_mlp_policy",
+      "symbol": "RLT_TD3_MLP_POLICY",
+      "category": "embodied",
+      "line": 241
+    },
+    {
+      "key": "gr00t",
+      "symbol": "GR00T",
+      "category": "embodied",
+      "line": 247
+    },
+    {
+      "key": "cnn_policy",
+      "symbol": "CNN_POLICY",
+      "category": "embodied",
+      "line": 253
+    },
+    {
+      "key": "flow_policy",
+      "symbol": "FLOW_POLICY",
+      "category": "embodied",
+      "line": 259
+    },
+    {
+      "key": "lingbotvla",
+      "symbol": "LINGBOTVLA",
+      "category": "embodied",
+      "line": 265
+    },
+    {
+      "key": "abot_m0",
+      "symbol": "ABOT_M0",
+      "category": "embodied",
+      "line": 271
+    },
+    {
+      "key": "starvla",
+      "symbol": "STARVLA",
+      "category": "embodied",
+      "line": 277
+    },
+    {
+      "key": "dreamzero",
+      "symbol": "DREAMZERO",
+      "category": "embodied",
+      "line": 283
+    },
+    {
+      "key": "cosmos3",
+      "symbol": "COSMOS3",
+      "category": "embodied",
+      "line": 289
+    },
+    {
+      "key": "cfg_model",
+      "symbol": "CFG_MODEL",
+      "category": "embodied",
+      "line": 295
+    },
+    {
+      "key": "recap_value_model",
+      "symbol": "RECAP_VALUE_MODEL",
+      "category": "embodied",
+      "line": 301
+    },
+    {
+      "key": "steam_value_model",
+      "symbol": "STEAM_VALUE_MODEL",
+      "category": "embodied",
+      "line": 307
+    },
+    {
+      "key": "sd3",
+      "symbol": "SD3",
+      "category": "diffusion",
+      "line": 313
+    },
+    {
+      "key": "wan22_ti2v_5b",
+      "symbol": "WAN22_TI2V_5B",
+      "category": "diffusion",
+      "line": 319
+    },
+    {
+      "key": "gr00t_n1d6",
+      "symbol": "GR00T_N1D6",
+      "category": "embodied",
+      "line": 325
+    },
+    {
+      "key": "gr00t_n1d7",
+      "symbol": "GR00T_N1D7",
+      "category": "embodied",
+      "line": 331
+    },
+    {
+      "key": "evo1",
+      "symbol": "EVO1",
+      "category": "embodied",
+      "line": 337
+    }
+  ],
+  "sft_dataloader_branches": [
+    {
+      "key": "openpi_rlinf",
+      "line": 34,
+      "status": "source_branch_only_not_runtime_verified"
+    },
+    {
+      "key": "openpi",
+      "line": 42,
+      "status": "source_branch_only_not_runtime_verified"
+    },
+    {
+      "key": "lingbotvla",
+      "line": 81,
+      "status": "source_branch_only_not_runtime_verified"
+    },
+    {
+      "key": "dreamzero",
+      "line": 89,
+      "status": "source_branch_only_not_runtime_verified"
+    },
+    {
+      "key": "cosmos3",
+      "line": 97,
+      "status": "source_branch_only_not_runtime_verified"
+    },
+    {
+      "key": "evo1",
+      "line": 103,
+      "status": "source_branch_only_not_runtime_verified"
+    }
+  ],
+  "model_config_paths": [
+    "examples/embodiment/config/model/abot_m0.yaml",
+    "examples/embodiment/config/model/cnn_policy.yaml",
+    "examples/embodiment/config/model/dexbotic_dm0.yaml",
+    "examples/embodiment/config/model/dexbotic_pi.yaml",
+    "examples/embodiment/config/model/dreamzero_5b.yaml",
+    "examples/embodiment/config/model/evo1.yaml",
+    "examples/embodiment/config/model/flow_policy.yaml",
+    "examples/embodiment/config/model/gr00t.yaml",
+    "examples/embodiment/config/model/gr00t_n1d6.yaml",
+    "examples/embodiment/config/model/gr00t_n1d7.yaml",
+    "examples/embodiment/config/model/lingbotvla.yaml",
+    "examples/embodiment/config/model/mlp_policy.yaml",
+    "examples/embodiment/config/model/molmoact2.yaml",
+    "examples/embodiment/config/model/openvla.yaml",
+    "examples/embodiment/config/model/openvla_oft.yaml",
+    "examples/embodiment/config/model/pi0.yaml",
+    "examples/embodiment/config/model/pi0_5.yaml",
+    "examples/embodiment/config/model/pi0_5_rlinf.yaml",
+    "examples/embodiment/config/model/starvla.yaml",
+    "examples/sft/config/model/cosmos3.yaml",
+    "examples/sft/config/model/dreamzero_14b.yaml",
+    "examples/sft/config/model/dreamzero_5b.yaml",
+    "examples/sft/config/model/evo1.yaml",
+    "examples/sft/config/model/lingbotvla.yaml",
+    "examples/sft/config/model/pi0.yaml",
+    "examples/sft/config/model/pi0_5.yaml",
+    "examples/sft/config/model/pi0_5_pytorch_dual_franka.yaml",
+    "examples/sft/config/model/pi0_5_rlinf.yaml",
+    "examples/sft/config/model/pi0_rlinf.yaml"
+  ]
+}

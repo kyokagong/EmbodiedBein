@@ -10,7 +10,7 @@
   var PAGES = [
     { file: 'index.html',           nav: '总览',   num: '00', title: '平台总览与设计导航' },
     { file: '01-architecture.html', nav: '架构',   num: '01', title: '系统架构与技术选型' },
-    { file: '02-domain-model.html', nav: '领域模型', num: '02', title: '领域模型、契约与接口' },
+    { file: '02-domain-model.html', nav: '领域模型', num: '02', title: '领域模型、本体环境与接口' },
     { file: '03-data.html',         nav: '数据',   num: '03', title: '数据管理模块' },
     { file: '04-model.html',        nav: '模型',   num: '04', title: '模型与本体资产管理' },
     { file: '05-training.html',     nav: '训练',   num: '05', title: '任务编排与训练可视化' },
@@ -18,7 +18,10 @@
     { file: '07-deploy.html',       nav: '部署',   num: '07', title: '策略发布与真机部署' },
     { file: '08-agent.html',        nav: 'Agent', num: '08', title: '平台 Agent 与自动闭环' },
     { file: '09-ui-system.html',    nav: 'UI',    num: '09', title: 'UI 设计系统与协作展示' },
-    { file: '10-roadmap.html',      nav: '路线图', num: '10', title: '实施路线图与风险登记' }
+    { file: '10-roadmap.html',      nav: '路线图', num: '10', title: '实施路线图与风险登记' },
+    { file: '11-workspace-views.html', nav: '视图', num: '11', title: '数据、本体环境、配置工作台视图' },
+    { file: '12-embodiment-environment.html', nav: '本体', num: '12', title: '本体与本体环境' },
+    { file: '13-embodiment-crud-prototype.html', nav: '原型', num: '13', title: '本体环境 CRUD 原型' }
   ];
 
   var EB = window.EB = {};

@@ -5,7 +5,8 @@ from eb.domain.job import JobKind, JobSpec
 def test_isaac_adapter_snapshot():
     spec = JobSpec(
         kind=JobKind.TRAIN_RL,
-        contract_id="ec_bhl_biped_12dof_v1",
+        embodiment_env_id="ee_bhl_biped_12dof_v1",
+        task_id="tsk_bhl_velocity_biped",
         name="biped-vel-s0",
         params={
             "task": "Velocity-Berkeley-Humanoid-Lite-Biped-v0",
@@ -37,7 +38,8 @@ def test_isaac_adapter_snapshot():
 def test_export_policy_uses_committed_play_cli():
     spec = JobSpec(
         kind=JobKind.EXPORT_POLICY,
-        contract_id="ec_bhl_biped_12dof_v1",
+        embodiment_env_id="ee_bhl_biped_12dof_v1",
+        task_id="tsk_bhl_velocity_biped",
         name="biped-export",
         params={"task": "Velocity-Berkeley-Humanoid-Lite-Biped-v0", "num_envs": 16, "seed": 0},
         overrides=["--load_run", "2026-08-20_biped-smoke", "--checkpoint", "model_4.pt"],

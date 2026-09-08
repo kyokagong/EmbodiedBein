@@ -4,7 +4,9 @@
 
 | 文档 | 说明 |
 |---|---|
-| [2026-08-21 第一版状态与后续计划](./2026-08-21-first-version.md) | 当前实现范围、缺口、按优先级排列的优化计划 |
+| [2026-08-21 当前状态](./2026-08-21-status.md) | **最新**：`feat/make-features-real` 对照 M0–M5；短训已通；剩余缺口 |
+| [2026-08-21 make-features-real 验收证据](./2026-08-21-make-features-real.md) | 本机命令输出（GPU、短训、TSDB、CAS ONNX、infra_failed） |
+| [2026-08-21 第一版状态与后续计划](./2026-08-21-first-version.md) | 骨架期基线（stub / busybox / Page.vue）；**不再代表当前代码** |
 
 判定约定：
 

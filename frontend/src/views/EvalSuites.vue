@@ -8,6 +8,6 @@ onMounted(async () => { rows.value = (await api("/evals/suites")).items || []; }
 <template>
   <div>
     <h2>评估套件</h2>
-    <EbTable :columns="[{key:'id',label:'id'},{key:'name',label:'name'},{key:'contract_id',label:'contract'},{key:'frozen',label:'frozen'}]" :rows="rows" />
+    <EbTable :columns="[{key:'id',label:'id'},{key:'name',label:'name'},{key:'embodiment_env_id',label:'env'},{key:'frozen',label:'frozen'}]" :rows="rows" />
   </div>
 </template>

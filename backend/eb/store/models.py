@@ -41,9 +41,31 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class EmbodimentContractRow(Base):
-    __tablename__ = "embodiment_contracts"
+class EmbodimentRow(Base):
+    __tablename__ = "embodiments"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    display_name: Mapped[str] = mapped_column(Text)
+    source: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, default="active")
+    seed: Mapped[bool] = mapped_column(Boolean, default=False)
+    tags: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    root_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_urdf: Mapped[str | None] = mapped_column(Text, nullable=True)
+    urdf_variants: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    joint_tree: Mapped[list[Any] | dict[str, Any]] = mapped_column(JSONB, default=list)
+    gym_ids: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    interface_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class EmbodimentEnvRow(Base):
+    __tablename__ = "embodiment_envs"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    embodiment_id: Mapped[str] = mapped_column(Text, ForeignKey("embodiments.id"))
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
     spec_hash: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, default="draft")
@@ -52,11 +74,29 @@ class EmbodimentContractRow(Base):
     policy_hz: Mapped[int | None] = mapped_column(Integer)
 
 
+class TaskRow(Base):
+    __tablename__ = "tasks"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    spec_hash: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="draft")
+
+
+class RobotAssetRow(Base):
+    __tablename__ = "robot_assets"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    embodiment_id: Mapped[str] = mapped_column(Text, ForeignKey("embodiments.id"))
+    version_label: Mapped[str] = mapped_column(Text)
+    paths: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(Text, default="")
+    __table_args__ = (UniqueConstraint("embodiment_id", "version_label"),)
+
+
 class Experiment(Base):
     __tablename__ = "experiments"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text)
-    contract_id: Mapped[str | None] = mapped_column(Text)
+    embodiment_env_id: Mapped[str | None] = mapped_column(Text)
     meta: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -65,7 +105,7 @@ class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     experiment_id: Mapped[str | None] = mapped_column(Text, ForeignKey("experiments.id"))
-    contract_id: Mapped[str] = mapped_column(Text, ForeignKey("embodiment_contracts.id"))
+    embodiment_env_id: Mapped[str] = mapped_column(Text, ForeignKey("embodiment_envs.id"))
     kind: Mapped[str] = mapped_column(Text)
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
     spec_hash: Mapped[str] = mapped_column(Text)
@@ -120,9 +160,18 @@ class Dataset(Base):
     name: Mapped[str] = mapped_column(Text)
     format: Mapped[str] = mapped_column(Text, default="unknown")
     license: Mapped[str | None] = mapped_column(Text)
-    contract_id: Mapped[str | None] = mapped_column(Text)
+    embodiment_env_id: Mapped[str | None] = mapped_column(Text)
     meta: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    source_kind: Mapped[str] = mapped_column(Text, default="path")
+    source_uri: Mapped[str] = mapped_column(Text, default="")
+    dest_path: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(Text, default="ready")
+    total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    download_progress: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    summary_stats: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class DatasetVersion(Base):
@@ -130,7 +179,7 @@ class DatasetVersion(Base):
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     dataset_id: Mapped[str] = mapped_column(Text, ForeignKey("datasets.id"))
     version: Mapped[str] = mapped_column(Text)
-    compatible_contracts: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    compatible_envs: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     funnel: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     content_hash: Mapped[str | None] = mapped_column(Text)
@@ -151,7 +200,7 @@ class ModelVersion(Base):
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     family_id: Mapped[str] = mapped_column(Text, ForeignKey("model_families.id"))
     name: Mapped[str] = mapped_column(Text)
-    contract_id: Mapped[str | None] = mapped_column(Text)
+    embodiment_env_id: Mapped[str | None] = mapped_column(Text)
     io_signature: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     mem_profile: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     card: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
@@ -195,7 +244,7 @@ class EvalSuite(Base):
     __tablename__ = "eval_suites"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text)
-    contract_id: Mapped[str] = mapped_column(Text)
+    embodiment_env_id: Mapped[str] = mapped_column(Text)
     seeds: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     frozen: Mapped[bool] = mapped_column(Boolean, default=True)
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
@@ -216,7 +265,7 @@ class Bundle(Base):
     __tablename__ = "bundles"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     model_version_id: Mapped[str | None] = mapped_column(Text)
-    contract_id: Mapped[str] = mapped_column(Text)
+    embodiment_env_id: Mapped[str] = mapped_column(Text)
     stage: Mapped[str] = mapped_column(Text, default="S0")
     signed: Mapped[bool] = mapped_column(Boolean, default=False)
     manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
@@ -227,7 +276,7 @@ class Robot(Base):
     __tablename__ = "robots"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text)
-    contract_id: Mapped[str] = mapped_column(Text)
+    embodiment_env_id: Mapped[str] = mapped_column(Text)
     calibration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -268,6 +317,75 @@ class Pipeline(Base):
     name: Mapped[str] = mapped_column(Text)
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TrainJob(Base):
+    __tablename__ = "train_jobs"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="queued")
+    template_id: Mapped[str] = mapped_column(Text)
+    image_digest: Mapped[str] = mapped_column(Text, default="")
+    embodiment_id: Mapped[str] = mapped_column(Text)
+    dataset_ids: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    base_model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gpus_allocated: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    ray_port: Mapped[int] = mapped_column(Integer, default=6390)
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    hydra_overrides: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    run_dir: Mapped[str] = mapped_column(Text)
+    auto_register_latest: Mapped[bool] = mapped_column(Boolean, default=False)
+    metrics_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SimImage(Base):
+    __tablename__ = "sim_images"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    tag: Mapped[str] = mapped_column(Text, default="latest")
+    digest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    role: Mapped[str] = mapped_column(Text, default="train")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(Text, default="missing")
+    pull_progress: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    __table_args__ = (UniqueConstraint("name", "tag"),)
+
+
+class SystemSettingsRow(Base):
+    __tablename__ = "system_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    allowed_path_prefixes: Mapped[list[Any]] = mapped_column(JSONB, default=lambda: ["/data/kk", "/var/lib/eb"])
+    rlinf_repo_path: Mapped[str] = mapped_column(Text, default="/data/kk/RLinf")
+    default_train_image: Mapped[str] = mapped_column(Text, default="eb/rlinf:0.4.0-emb")
+    hf_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    disk_alert_threshold_gb: Mapped[int] = mapped_column(Integer, default=20)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class WeightModel(Base):
+    __tablename__ = "weight_models"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text, default="trained")
+    path: Mapped[str] = mapped_column(Text)
+    framework: Mapped[str] = mapped_column(Text, default="pytorch")
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    embodiment_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    train_job_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metrics_at_checkpoint: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class FailureKnowledge(Base):

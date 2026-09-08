@@ -16,10 +16,18 @@ from eb.agent.playbooks import dispatch as playbook_dispatch
 from eb.agent.tools import AgentCtx  # noqa: F401  — register tools
 from eb.api.deps import PrincipalDep, SessionDep
 from eb.capacity import estimate_job
-from eb.domain.contract import Contract
+from eb.domain.contract import EmbodimentEnv
+from eb.domain.data_view import (
+    dataset_overview,
+    episode_media,
+    license_gate,
+    normalize_funnel,
+    quality_summary,
+    slice_preview,
+)
 from eb.domain.fsm import JobStatus
 from eb.domain.job import JobSpec
-from eb.gates.engine import GateContext, evaluate_gate_dsl, g1_submit, g3_model
+from eb.gates.engine import evaluate_gate_dsl, g3_model
 from eb.harness.toolbus import ToolBus
 from eb.ids import new_id
 from eb.orchestrator.service import Orchestrator
@@ -33,7 +41,7 @@ from eb.store.models import (
     Bundle,
     Dataset,
     DatasetVersion,
-    EmbodimentContractRow,
+    EmbodimentEnvRow,
     EvalReport,
     EvalSuite,
     Experiment,
@@ -41,6 +49,7 @@ from eb.store.models import (
     LineageEdge,
     ModelFamily,
     ModelVersion,
+    WeightModel,
     Pipeline,
     Robot,
     Run,
@@ -92,35 +101,36 @@ async def me(principal: PrincipalDep) -> dict:
     return {"principal": principal.id, "actor_type": principal.actor_type}
 
 
-@api_v1.get("/contracts")
-async def list_contracts(session: SessionDep, principal: PrincipalDep) -> dict:
-    rows = (await session.scalars(select(EmbodimentContractRow))).all()
-    return {"items": [_contract_out(r) for r in rows]}
-
-
-@api_v1.get("/contracts/{cid}")
-async def get_contract(cid: str, session: SessionDep, principal: PrincipalDep) -> dict:
-    row = await session.get(EmbodimentContractRow, cid)
-    if not row:
-        raise HTTPException(404)
-    ctr = Contract.model_validate(row.spec)
-    return {**_contract_out(row), "self_check": ctr.validate_self().model_dump()}
-
-
-@api_v1.post("/contracts/{cid}/validate")
-async def validate_contract(cid: str, body: JobBody, session: SessionDep, principal: PrincipalDep) -> dict:
-    row = await session.get(EmbodimentContractRow, cid)
-    if not row:
-        raise HTTPException(404)
-    spec = JobSpec.model_validate({**body.spec, "contract_id": cid})
-    result = g1_submit(spec, Contract.model_validate(row.spec), GateContext(dataset_versions=[]))
-    return result.model_dump()
-
-
 @api_v1.get("/datasets")
 async def list_datasets(session: SessionDep, principal: PrincipalDep) -> dict:
     rows = (await session.scalars(select(Dataset))).all()
-    return {"items": [_row(r, ["id", "name", "format", "license", "contract_id"]) for r in rows]}
+    items = []
+    for r in rows:
+        q = select(DatasetVersion).where(DatasetVersion.dataset_id == r.id).order_by(DatasetVersion.created_at)
+        vers = (await session.scalars(q)).all()
+        vdicts = [
+            _row(v, ["id", "version", "stats", "funnel", "compatible_envs", "content_hash"])
+            for v in vers
+        ]
+        overview = dataset_overview(
+            name=r.name, fmt=r.format, license=r.license, embodiment_env_id=r.embodiment_env_id, versions=vdicts
+        )
+        items.append(
+            {
+                **_row(r, ["id", "name", "format", "license", "embodiment_env_id", "meta"]),
+                **overview,
+                "versions": vdicts,
+                "source_kind": getattr(r, "source_kind", "path"),
+                "source_uri": getattr(r, "source_uri", "") or "",
+                "dest_path": getattr(r, "dest_path", "") or "",
+                "status": getattr(r, "status", "ready"),
+                "bytes": getattr(r, "total_bytes", 0) or 0,
+                "total_bytes": getattr(r, "total_bytes", 0) or 0,
+                "download_progress": getattr(r, "download_progress", None) or {},
+                "error_message": getattr(r, "error_message", None),
+            }
+        )
+    return {"items": items}
 
 
 @api_v1.get("/datasets/{did}")
@@ -128,10 +138,33 @@ async def get_dataset(did: str, session: SessionDep, principal: PrincipalDep) ->
     ds = await session.get(Dataset, did)
     if not ds:
         raise HTTPException(404)
-    vers = (await session.scalars(select(DatasetVersion).where(DatasetVersion.dataset_id == did))).all()
+    q = select(DatasetVersion).where(DatasetVersion.dataset_id == did).order_by(DatasetVersion.created_at)
+    vers = (await session.scalars(q)).all()
+    fields = ["id", "version", "stats", "funnel", "compatible_envs", "content_hash"]
+    vdicts = [_row(v, fields) for v in vers]
+    overview = dataset_overview(
+        name=ds.name, fmt=ds.format, license=ds.license, embodiment_env_id=ds.embodiment_env_id, versions=vdicts
+    )
+    latest = vdicts[-1] if vdicts else {}
+    quality = quality_summary(
+        overview["funnel"],
+        license=ds.license,
+        compatible_envs=(latest.get("compatible_envs") if latest else None),
+        stats=latest.get("stats") if latest else {},
+    )
+    dest = getattr(ds, "dest_path", None) or ((ds.meta or {}).get("root") if ds.meta else None)
     return {
-        **_row(ds, ["id", "name", "format", "license", "contract_id", "meta"]),
-        "versions": [_row(v, ["id", "version", "stats", "funnel", "compatible_contracts"]) for v in vers],
+        **_row(ds, ["id", "name", "format", "license", "embodiment_env_id", "meta"]),
+        "versions": vdicts,
+        "overview": overview,
+        "quality": quality,
+        "license_gate": license_gate(ds.license),
+        "source_kind": getattr(ds, "source_kind", None) or "path",
+        "source_uri": getattr(ds, "source_uri", None) or "",
+        "dest_path": dest,
+        "status": getattr(ds, "status", None) or "ready",
+        "error_message": getattr(ds, "error_message", None),
+        "total_bytes": getattr(ds, "total_bytes", None) or 0,
     }
 
 
@@ -140,7 +173,17 @@ async def dataset_funnel(did: str, vid: str, session: SessionDep, principal: Pri
     v = await session.get(DatasetVersion, vid)
     if not v or v.dataset_id != did:
         raise HTTPException(404)
-    return v.funnel or {}
+    ds = await session.get(Dataset, did)
+    raw = dict(v.funnel or {})
+    meta = (ds.meta if ds else {}) or {}
+    if meta.get("funnel_kind"):
+        raw["kind"] = meta["funnel_kind"]
+    out = normalize_funnel(raw)
+    if out["empty"]:
+        out["empty_reason"] = (
+            "尚无编译报告" if out["kind"] == "compile" else "尚无扫描结果或各层均为 0"
+        )
+    return out
 
 
 @api_v1.get("/datasets/{did}/versions/{vid}/episodes/{ep}")
@@ -148,62 +191,92 @@ async def episode_preview(did: str, vid: str, ep: str, session: SessionDep, prin
     v = await session.get(DatasetVersion, vid)
     if not v or v.dataset_id != did:
         raise HTTPException(404)
-    root = Path("/data/kk/berkeley_ego_data")
-    videos = list(root.rglob("*.mp4")) if root.exists() else []
-    video = None
-    for p in videos:
-        if ep in p.as_posix() or ep in p.stem:
-            video = p
-            break
-    if video is None and videos:
-        try:
-            idx = int(ep)
-            video = videos[idx % len(videos)]
-        except ValueError:
-            video = videos[0]
-    if video is None:
-        return {"id": ep, "video_cas": None, "action_series": [], "missing": "缺媒体"}
-    from eb.onnx_io import sha256_file
+    ds = await session.get(Dataset, did)
+    root = Path(((ds.meta if ds else {}) or {}).get("root") or "/data/kk/berkeley_ego_data")
+    payload = episode_media(root, ep)
+    if payload.get("path"):
+        from eb.onnx_io import sha256_file
 
-    digest = sha256_file(video)
-    cas = get_settings().data_root / "cas" / digest[:2] / digest
-    cas.parent.mkdir(parents=True, exist_ok=True)
-    if not cas.exists():
-        cas.write_bytes(video.read_bytes()[: 8 * 1024 * 1024])  # first 8MB for preview
-    return {
-        "id": ep,
-        "path": str(video),
-        "video_cas": digest,
-        "media_url": f"/media/{digest[:2]}/{digest}",
-        "action_series": [{"step": i, "value": 0.0} for i in range(20)],
-        "note": "动作曲线需对应 jsonl；无并列轨迹时显示占位零线并标明缺动作",
-    }
+        video = Path(payload["path"])
+        digest = sha256_file(video)
+        cas = get_settings().data_root / "cas" / digest[:2] / digest
+        cas.parent.mkdir(parents=True, exist_ok=True)
+        if not cas.exists():
+            cas.write_bytes(video.read_bytes()[: 8 * 1024 * 1024])
+        payload["video_cas"] = digest
+        payload["media_url"] = f"/media/{digest[:2]}/{digest}"
+    return payload
+
+
+@api_v1.post("/datasets/{did}/slice/preview")
+async def dataset_slice_preview(did: str, body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
+    ds = await session.get(Dataset, did)
+    if not ds:
+        raise HTTPException(404)
+    ver = await session.scalar(select(DatasetVersion).where(DatasetVersion.dataset_id == did))
+    stats = (ver.stats if ver else {}) or {}
+    return slice_preview(stats, body or {})
 
 
 @api_v1.get("/models")
 async def list_models(session: SessionDep, principal: PrincipalDep) -> dict:
     fams = (await session.scalars(select(ModelFamily))).all()
     vers = (await session.scalars(select(ModelVersion))).all()
+    from eb.store.models import WeightModel
+
+    weights = (await session.scalars(select(WeightModel))).all()
     return {
         "families": [_row(f, ["id", "name", "family"]) for f in fams],
-        "versions": [_row(v, ["id", "family_id", "name", "contract_id", "provenance", "tags", "io_signature"]) for v in vers],
+        "versions": [_row(v, ["id", "family_id", "name", "embodiment_env_id", "provenance", "tags", "io_signature"]) for v in vers],
+        "items": [
+            {
+                "id": w.id,
+                "name": w.name,
+                "kind": w.kind,
+                "path": w.path,
+                "embodiment_id": w.embodiment_id,
+                "train_job_id": w.train_job_id,
+                "parent_model_id": w.parent_model_id,
+            }
+            for w in weights
+        ],
     }
 
 
 @api_v1.get("/models/{mid}")
 async def get_model(mid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     v = await session.get(ModelVersion, mid)
-    if not v:
+    if v:
+        out = _row(v, ["id", "family_id", "name", "embodiment_env_id", "io_signature", "mem_profile", "card", "tags", "provenance"])
+        if v.embodiment_env_id:
+            crow = await session.get(EmbodimentEnvRow, v.embodiment_env_id)
+            if crow:
+                ctr = EmbodimentEnv.model_validate(crow.spec)
+                io = v.io_signature or {}
+                out["env_check"] = g3_model(io.get("obs"), io.get("act"), ctr).model_dump()
+                out["env"] = {"obs_dim": ctr.observation.dim, "action_dim": ctr.action.dim, "policy_hz": ctr.control.policy_hz}
+        return out
+    w = await session.get(WeightModel, mid)
+    if not w:
         raise HTTPException(404)
-    out = _row(v, ["id", "family_id", "name", "contract_id", "io_signature", "mem_profile", "card", "tags", "provenance"])
-    if v.contract_id:
-        crow = await session.get(EmbodimentContractRow, v.contract_id)
-        if crow:
-            ctr = Contract.model_validate(crow.spec)
-            io = v.io_signature or {}
-            out["contract_check"] = g3_model(io.get("obs"), io.get("act"), ctr).model_dump()
-            out["contract"] = {"obs_dim": ctr.observation.dim, "action_dim": ctr.action.dim, "policy_hz": ctr.control.policy_hz}
-    return out
+    edges = (
+        await session.scalars(select(LineageEdge).where((LineageEdge.src_id == mid) | (LineageEdge.dst_id == mid)))
+    ).all()
+    return {
+        "id": w.id,
+        "name": w.name,
+        "kind": w.kind,
+        "path": w.path,
+        "framework": w.framework,
+        "size_bytes": w.size_bytes,
+        "embodiment_id": w.embodiment_id,
+        "train_job_id": w.train_job_id,
+        "parent_model_id": w.parent_model_id,
+        "metrics_at_checkpoint": w.metrics_at_checkpoint or {},
+        "created_at": w.created_at.isoformat() if w.created_at else None,
+        "edges": [_row(e, ["src_type", "src_id", "dst_type", "dst_id", "relation"]) for e in edges],
+        "is_weight": True,
+    }
 
 
 @api_v1.get("/models/{mid}/lineage")
@@ -215,7 +288,7 @@ async def model_lineage(mid: str, session: SessionDep, principal: PrincipalDep) 
 @api_v1.get("/experiments")
 async def list_experiments(session: SessionDep, principal: PrincipalDep) -> dict:
     rows = (await session.scalars(select(Experiment))).all()
-    return {"items": [_row(r, ["id", "name", "contract_id"]) for r in rows]}
+    return {"items": [_row(r, ["id", "name", "embodiment_env_id"]) for r in rows]}
 
 
 @api_v1.post("/jobs")
@@ -250,8 +323,22 @@ async def eq_cmd(jid: str, session: SessionDep, principal: PrincipalDep) -> dict
     job = await session.get(Job, jid)
     if not job:
         raise HTTPException(404)
-    spec = JobSpec.model_validate({**job.spec, "kind": job.kind, "contract_id": job.contract_id})
+    spec = JobSpec.model_validate({**job.spec, "kind": job.kind, "embodiment_env_id": job.embodiment_env_id})
     return {"command": orch.preview_command(spec, "run_preview")}
+
+
+@api_v1.post("/jobs/preview-command")
+async def preview_job_command(body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.adapters import equivalent_command
+    spec_dict = dict(body.get("spec") or body)
+    if spec_dict.get("kind", "").startswith(("train.", "eval.")) and not spec_dict.get("task_id"):
+        spec_dict["task_id"] = "tsk_bhl_velocity_biped"
+    try:
+        spec = JobSpec.model_validate(spec_dict)
+        cmd = equivalent_command(spec, "run_preview")
+        return {"command": cmd, "ok": True}
+    except Exception as e:
+        return {"command": f"# spec 待完善: {e}", "ok": False, "error": str(e)}
 
 
 @api_v1.post("/jobs/{jid}/cancel")
@@ -345,44 +432,95 @@ async def run_logs(rid: str, session: SessionDep, principal: PrincipalDep, tail:
 @api_v1.get("/evals/suites")
 async def list_suites(session: SessionDep, principal: PrincipalDep) -> dict:
     rows = (await session.scalars(select(EvalSuite))).all()
-    return {"items": [_row(r, ["id", "name", "contract_id", "seeds", "frozen"]) for r in rows]}
+    return {"items": [_row(r, ["id", "name", "embodiment_env_id", "seeds", "frozen"]) for r in rows]}
 
 
 @api_v1.get("/evals/reports")
 async def list_reports(session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.eval.wilson import wilson_ci
     rows = (await session.scalars(select(EvalReport))).all()
-    return {"items": [_row(r, ["id", "suite_id", "model_version_id", "metrics", "gate_results"]) for r in rows]}
+    items = []
+    for r in rows:
+        item = _row(r, ["id", "suite_id", "model_version_id", "metrics", "gate_results"])
+        metrics = item.get("metrics") or {}
+        sr = metrics.get("success_rate")
+        n = metrics.get("n_trials") or metrics.get("n") or 64
+        if sr is not None:
+            item["wilson_ci"] = wilson_ci(round(float(sr) * n), n)
+        items.append(item)
+    return {"items": items}
 
 
 @api_v1.get("/evals/reports/{eid}")
 async def get_report(eid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.eval.wilson import wilson_ci
     row = await session.get(EvalReport, eid)
     if not row:
         raise HTTPException(404)
-    return _row(row, ["id", "suite_id", "model_version_id", "metrics", "gate_results"])
+    item = _row(row, ["id", "suite_id", "model_version_id", "metrics", "gate_results"])
+    metrics = item.get("metrics") or {}
+    sr = metrics.get("success_rate")
+    n = metrics.get("n_trials") or metrics.get("n") or 64
+    if sr is not None:
+        item["wilson_ci"] = wilson_ci(round(float(sr) * n), n)
+    return item
+
+
+@api_v1.get("/evals/reports/{eid}/cross-domain-drift")
+async def get_cross_domain_drift(eid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.eval.cross_domain import compute_observation_drift
+    row = await session.get(EvalReport, eid)
+    if not row:
+        raise HTTPException(404)
+    suite = await session.get(EvalSuite, row.suite_id) if row.suite_id else None
+    ee_id = suite.embodiment_env_id if suite else "ee_bhl_biped_12dof_v1"
+    env_row = await session.get(EmbodimentEnvRow, ee_id)
+    layout = []
+    if env_row and env_row.spec:
+        layout = (env_row.spec.get("observation") or {}).get("layout") or []
+    if not layout:
+        layout = [
+            {"name": "base_ang_vel", "dim": 3},
+            {"name": "projected_gravity", "dim": 3},
+            {"name": "command", "dim": 3},
+            {"name": "joint_pos_rel", "dim": 12},
+            {"name": "joint_vel_rel", "dim": 12},
+            {"name": "last_action", "dim": 12},
+        ]
+    return compute_observation_drift(ee_id, layout)
 
 
 @api_v1.get("/evals/leaderboard")
 async def leaderboard(session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.eval.wilson import wilson_ci
     rows = (await session.scalars(select(EvalReport))).all()
+    items = []
+    for r in rows:
+        item = _row(r, ["id", "suite_id", "model_version_id", "metrics", "gate_results"])
+        metrics = item.get("metrics") or {}
+        sr = metrics.get("success_rate")
+        n = metrics.get("n_trials") or metrics.get("n") or 64
+        if sr is not None:
+            item["wilson_ci"] = wilson_ci(round(float(sr) * n), n)
+        items.append(item)
     items = sorted(
-        rows,
-        key=lambda r: float((r.metrics or {}).get("success_rate") or (r.metrics or {}).get("mean_reward") or 0),
+        items,
+        key=lambda it: float((it.get("metrics") or {}).get("success_rate") or (it.get("metrics") or {}).get("mean_reward") or 0),
         reverse=True,
     )
-    return {"items": [_row(r, ["id", "suite_id", "model_version_id", "metrics", "gate_results"]) for r in items]}
+    return {"items": items}
 
 
 @api_v1.get("/assets")
 async def list_assets(session: SessionDep, principal: PrincipalDep) -> dict:
-    rows = (await session.scalars(select(EmbodimentContractRow))).all()
+    rows = (await session.scalars(select(EmbodimentEnvRow))).all()
     items = []
     for r in rows:
         spec = r.spec or {}
         bind = spec.get("sim_bindings") or {}
         items.append(
             {
-                "contract_id": r.id,
+                "embodiment_env_id": r.id,
                 "mjcf": bind.get("mjcf"),
                 "usd": bind.get("usd"),
                 "isaac_task": bind.get("isaac_task"),
@@ -394,13 +532,13 @@ async def list_assets(session: SessionDep, principal: PrincipalDep) -> dict:
 @api_v1.post("/bundles/build")
 async def build_bundle(body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
     from eb.bundle.pack import build_ebp
-    from eb.domain.contract import Contract as Ctr
+    from eb.domain.contract import EmbodimentEnv as Ctr
 
     onnx = Path(body.get("onnx") or "/data/kk/Berkeley-Humanoid-Lite/checkpoints/policy_biped_25hz_a.onnx")
-    cid = body.get("contract_id") or "ec_bhl_biped_12dof_v1"
-    row = await session.get(EmbodimentContractRow, cid)
+    cid = body.get("embodiment_env_id") or "ee_bhl_biped_12dof_v1"
+    row = await session.get(EmbodimentEnvRow, cid)
     if not row:
-        raise HTTPException(404, "contract")
+        raise HTTPException(404, "embodiment env")
     ctr = Ctr.model_validate(row.spec)
     deploy = body.get("deploy") or {
         "num_observations": ctr.observation.dim,
@@ -408,7 +546,7 @@ async def build_bundle(body: dict, session: SessionDep, principal: PrincipalDep)
         "action_scale": ctr.action.scale,
     }
     dest, manifest, can_sign = build_ebp(
-        contract_id=cid,
+        embodiment_env_id=cid,
         onnx_path=onnx,
         deploy_yaml=deploy,
         gates_passed=body.get("gates_passed") or [],
@@ -417,20 +555,20 @@ async def build_bundle(body: dict, session: SessionDep, principal: PrincipalDep)
     )
     b = Bundle(
         id=new_id("bnd"),
-        contract_id=cid,
+        embodiment_env_id=cid,
         stage="S0",
         signed=False,
         manifest={**manifest, "cas": str(dest), "can_sign": can_sign},
     )
     session.add(b)
     await session.commit()
-    return _row(b, ["id", "contract_id", "stage", "signed", "manifest"])
+    return _row(b, ["id", "embodiment_env_id", "stage", "signed", "manifest"])
 
 
 @api_v1.get("/bundles")
 async def list_bundles(session: SessionDep, principal: PrincipalDep) -> dict:
     rows = (await session.scalars(select(Bundle))).all()
-    return {"items": [_row(r, ["id", "contract_id", "stage", "signed", "manifest"]) for r in rows]}
+    return {"items": [_row(r, ["id", "embodiment_env_id", "stage", "signed", "manifest"]) for r in rows]}
 
 
 @api_v1.get("/bundles/next")
@@ -440,7 +578,7 @@ async def next_bundle(session: SessionDep, principal: PrincipalDep) -> dict:
         row = await session.scalar(select(Bundle))
     if not row:
         raise HTTPException(404, "no bundle")
-    return _row(row, ["id", "contract_id", "stage", "signed", "manifest"])
+    return _row(row, ["id", "embodiment_env_id", "stage", "signed", "manifest"])
 
 
 @api_v1.post("/bundles/{bid}/sign")
@@ -463,7 +601,7 @@ async def sign_bundle(bid: str, session: SessionDep, principal: PrincipalDep, re
 @api_v1.get("/robots")
 async def list_robots(session: SessionDep, principal: PrincipalDep) -> dict:
     rows = (await session.scalars(select(Robot))).all()
-    return {"items": [_row(r, ["id", "name", "contract_id", "calibration"]) for r in rows]}
+    return {"items": [_row(r, ["id", "name", "embodiment_env_id", "calibration"]) for r in rows]}
 
 
 @api_v1.post("/releases/{rid}/promote")
@@ -566,12 +704,12 @@ async def get_share(token: str, session: SessionDep) -> dict:
 
 @api_v1.post("/shares")
 async def create_share(body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
-    n_contracts = await session.scalar(select(func.count()).select_from(EmbodimentContractRow)) or 0
+    n_envs = await session.scalar(select(func.count()).select_from(EmbodimentEnvRow)) or 0
     n_models = await session.scalar(select(func.count()).select_from(ModelVersion)) or 0
     n_jobs = await session.scalar(select(func.count()).select_from(Job)) or 0
     snapshot = body.get("snapshot") or {
         "kpis": [
-            {"label": "契约", "value": str(n_contracts), "foot": "embodiment contracts"},
+            {"label": "本体环境", "value": str(n_envs), "foot": "embodiment envs"},
             {"label": "模型", "value": str(n_models), "foot": "model versions"},
             {"label": "任务", "value": str(n_jobs), "foot": "jobs"},
         ]
@@ -592,6 +730,81 @@ async def images(principal: PrincipalDep) -> dict:
     return {"items": ["eb/isaac-lab:2.3.2", "eb/rlinf:0.4.0-emb", "eb/mujoco:latest", "eb/tools:latest"]}
 
 
+@api_v1.get("/system/quotas")
+async def get_system_quotas(session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.harness.budget import weekly_limit, used_hours
+    w_limit = weekly_limit()
+    u_hours = used_hours()
+    return {
+        "disk": {
+            "data_root": str(get_settings().data_root),
+            "watermark_warn_pct": 80,
+            "watermark_block_pct": 90,
+            "cas_retention_days": 30,
+            "auto_gc": True,
+        },
+        "agent_gpu_hours": {
+            "weekly_limit": w_limit,
+            "used": u_hours,
+            "remaining": max(0.0, w_limit - u_hours),
+        },
+        "concurrency": {
+            "max_concurrent_runs": 4,
+            "priority_enabled": True,
+        },
+    }
+
+
+@api_v1.get("/system/settings")
+async def get_system_settings(session: SessionDep, principal: PrincipalDep) -> dict:
+    return {
+        "version": "0.1.0",
+        "api": "eb/v1",
+        "timezone": "Asia/Shanghai",
+        "redis_port": 6380,
+        "images": [
+            {
+                "name": "eb/isaac-lab:2.3.2",
+                "digest": "sha256:eb1saaclab232fake",
+                "supported_kinds": ["train.rl", "eval.sim", "export.policy"],
+                "model_family": "lowlevel",
+                "status": "ready",
+            },
+            {
+                "name": "eb/rlinf:0.4.0-emb",
+                "digest": "sha256:rlinf040embfake",
+                "supported_kinds": ["train.sft", "train.rlft", "serve.policy"],
+                "model_family": "vla",
+                "status": "ready",
+            },
+            {
+                "name": "eb/mujoco:latest",
+                "digest": "sha256:mujocolatestfake",
+                "supported_kinds": ["eval.sim2sim"],
+                "model_family": "all",
+                "status": "ready",
+            },
+            {
+                "name": "eb/tools:latest",
+                "digest": "sha256:toolslatestfake",
+                "supported_kinds": ["data.collect", "data.convert", "data.slice", "bundle.build"],
+                "model_family": "all",
+                "status": "ready",
+            },
+        ],
+        "scanner": {
+            "roots": ["/data/kk/Berkeley-Humanoid-Lite", "/data/kk/RLinf", "/data/kk/berkeley_ego_data"],
+            "timeout_seconds": 30,
+            "exclude_patterns": [".git", "__pycache__", "*.tmp", "node_modules"],
+        },
+        "notifications": {
+            "enabled": False,
+            "webhook_url": "",
+            "events": ["run.failed", "bundle.promoted", "gate.failed"],
+        },
+    }
+
+
 @api_v1.post("/sources/scan")
 async def scan_sources(body: dict, session: SessionDep, principal: PrincipalDep) -> dict:
     path = body.get("path") or "/data/kk/berkeley_ego_data"
@@ -604,7 +817,12 @@ async def scan_sources(body: dict, session: SessionDep, principal: PrincipalDep)
             files = int(result.get("files") or 0)
             rejected = ((result.get("funnel") or {}).get("raw") or {}).get("rejected") or []
             ver.content_hash = result.get("content_hash")
-            ver.stats = {"files": files, "bytes": result.get("bytes"), "kinds": kinds}
+            ver.stats = {
+                "files": files,
+                "bytes": result.get("bytes"),
+                "kinds": kinds,
+                "samples": result.get("samples") or [],
+            }
             ver.funnel = {
                 "source": {"n": files, "rejected": []},
                 "raw": {"n": files, "rejected": rejected},
@@ -624,12 +842,12 @@ async def search(q: str, session: SessionDep, principal: PrincipalDep) -> dict:
     models = (
         await session.scalars(select(ModelVersion).where(ModelVersion.id.ilike(like) | ModelVersion.name.ilike(like)).limit(20))
     ).all()
-    contracts = (
-        await session.scalars(select(EmbodimentContractRow).where(EmbodimentContractRow.id.ilike(like)).limit(20))
+    envs = (
+        await session.scalars(select(EmbodimentEnvRow).where(EmbodimentEnvRow.id.ilike(like)).limit(20))
     ).all()
     items = [{"type": "job", "id": j.id, "label": j.kind} for j in jobs]
     items += [{"type": "model", "id": m.id, "label": m.name} for m in models]
-    items += [{"type": "contract", "id": c.id, "label": c.id} for c in contracts]
+    items += [{"type": "embodiment_env", "id": c.id, "label": c.id} for c in envs]
     return {"items": items}
 
 
@@ -784,23 +1002,12 @@ def _row(obj: Any, fields: list[str]) -> dict:
     return out
 
 
-def _contract_out(row: EmbodimentContractRow) -> dict:
-    return {
-        "id": row.id,
-        "status": row.status,
-        "obs_dim": row.obs_dim,
-        "action_dim": row.action_dim,
-        "policy_hz": row.policy_hz,
-        "spec": row.spec,
-    }
-
-
 def _job_out(job: Job) -> dict:
     return {
         "id": job.id,
         "kind": job.kind,
         "status": job.status,
-        "contract_id": job.contract_id,
+        "embodiment_env_id": job.embodiment_env_id,
         "priority": job.priority,
         "created_by": job.created_by,
         "spec": job.spec,

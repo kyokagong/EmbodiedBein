@@ -8,16 +8,16 @@
 - 控制面 Python（`backend/eb`），数据面 Rust（`rust/`，单一二进制 `ebd` + `ebctl`）。
 - 外部仓只读：`/data/kk/Berkeley-Humanoid-Lite`、`/data/kk/RLinf`、`/data/kk/berkeley_ego_data`。平台不得写入这三个目录。
 - 执行一律容器化。`ebd` 是唯一持有 `docker.sock` 的服务。控制面禁止 `subprocess` 跑训练。
-- 平台内 Agent 没有后门：工具走 ToolBus，禁止 shell / 文件系统 / 出网 / SQL / 真机放行 / 改契约 / 门禁豁免。
+- 平台内 Agent 没有后门：工具走 ToolBus，禁止 shell / 文件系统 / 出网 / SQL / 真机放行 / 改已发布本体环境 / 门禁豁免。
 - 部署：`make up`。前端打进 api 镜像的 `backend/web/dist`（由 `frontend/` Vite 构建，不进 git）。
 - 单机、`docker compose` 是唯一入口。任务容器不进 compose，由 ebd 按 Job 动态创建。
 - Redis 端口 **6380**（避让 Ray 默认 6379）。
 
 ## 项目是什么
 
-EmbodiedBein 是面向 Berkeley-Humanoid-Lite 的单机在线管理平台：契约、数据、模型、训练、评估、部署与平台 Agent。
+EmbodiedBein 是面向 Berkeley-Humanoid-Lite 的单机在线管理平台：本体、本体环境、任务、数据、模型、训练、评估、部署与平台 Agent。
 
-当前代码是 **v0.1 可部署骨架**（`make up` 可起）：领域内核（契约 / 门禁 / 估算器 / ToolBus）是真的；Isaac/RLinf 大镜像、真机、重定向、LLM 仍是占位。细节对照见 `docs/progress/2026-08-21-first-version.md`。
+当前代码是 **v0.1 可部署骨架**（`make up` 可起）：领域内核（本体环境 / 门禁 / 估算器 / ToolBus）是真的；Isaac/RLinf 大镜像、真机、重定向、LLM 仍是占位。细节对照见 `docs/progress/2026-08-21-first-version.md`。
 
 ## 基本信息
 
@@ -33,7 +33,7 @@ EmbodiedBein 是面向 Berkeley-Humanoid-Lite 的单机在线管理平台：契�
 | 默认用户 | `kk` / `embodied`（`deploy/.env.example`） |
 | 默认 API Key | `eb-dev-key`（Bearer）；Agent 内部 key `eb-agent-key` |
 | Showcase | `/showcase/bhl-progress-demo`（免登录） |
-| 契约 | `ec_bhl_humanoid_22dof_v1`（75/22/25Hz）、`ec_bhl_biped_12dof_v1`（45/12/25）、`ec_bhl_wbc_22dof_v1`（85/22/50）、`ec_bhl_fixedhand_10dof_v1`（10+img/10/20，concat=false） |
+| 本体 / 环境 | `emb_berkeley_humanoid_lite`；`ee_bhl_humanoid_22dof_v1`（75/22/25Hz）、`ee_bhl_biped_12dof_v1`（45/12/25）、`ee_bhl_wbc_22dof_v1`（85/22/50）、`ee_bhl_fixedhand_10dof_v1`（10+img/10/20，concat=false） |
 | UDS | `/run/eb/ebd.sock`（控制）· `/run/eb/ebd-http.sock`（媒体） |
 | 数据根 | `/var/lib/eb` |
 | MinIO | 用户 `ebadmin`（≥3 字符限制），密码见 `.env` |
@@ -79,11 +79,11 @@ EmbodiedBein/
 ├── .gitignore
 ├── .dockerignore
 │
-├── contracts/                # 四个 Embodiment Contract YAML（真源实例）
-│   ├── ec_bhl_humanoid_22dof_v1.yaml
-│   ├── ec_bhl_biped_12dof_v1.yaml
-│   ├── ec_bhl_wbc_22dof_v1.yaml
-│   └── ec_bhl_fixedhand_10dof_v1.yaml
+├── contracts/                # 四份本体环境 YAML（ee_*）
+│   ├── ee_bhl_humanoid_22dof_v1.yaml
+│   ├── ee_bhl_biped_12dof_v1.yaml
+│   ├── ee_bhl_wbc_22dof_v1.yaml
+│   └── ee_bhl_fixedhand_10dof_v1.yaml
 │
 ├── backend/                  # 控制面（包名 eb）
 │   ├── pyproject.toml        # uv / hatchling；pytest 在 extra dev
@@ -92,7 +92,7 @@ EmbodiedBein/
 │   ├── web/dist/             # 前端构建产物（gitignore；镜像内 /app/web/dist）
 │   ├── eb/
 │   │   ├── api/              # FastAPI：app.py 装配；routes.py 目前集中全部路由
-│   │   ├── domain/           # 契约、JobSpec、状态机、CheckResult（禁止 IO）
+│   │   ├── domain/           # 本体环境、JobSpec、状态机、CheckResult（禁止 IO）
 │   │   ├── orchestrator/     # Job→Run、幂等、admit_and_start
 │   │   ├── scheduler/        # 单机准入循环（无 NVML 时虚拟 4 卡）
 │   │   ├── adapters/         # isaaclab_rslrl / rlinf / mujoco / tools / deploy / lerobot
@@ -104,10 +104,10 @@ EmbodiedBein/
 │   │   ├── capacity/         # 显存估算器 L2
 │   │   ├── store/            # PG 模型、ebd HTTP-over-UDS 客户端
 │   │   ├── ingest.py         # 遗留 ONNX / tfevents 纳管
-│   │   ├── bootstrap.py      # 种子用户、契约、Showcase、扫描
+│   │   ├── bootstrap.py      # 种子用户、本体/环境/任务、Showcase、扫描
 │   │   └── settings.py       # EB_* 配置
 │   └── tests/
-│       ├── unit/             # 契约、门禁、容量、ingest、插件
+│       ├── unit/             # 本体环境、门禁、容量、ingest、插件
 │       ├── adapters/         # Isaac 命令行快照
 │       └── agent/            # ToolBus / 剧本
 │
@@ -157,6 +157,6 @@ EmbodiedBein/
 
 - 新增训练栈：只加 `backend/eb/adapters/` 一个文件 + 快照测试，不要改 domain。
 - 热路径（日志、tfevents、视频、大文件）应进 `ebd`，不要在 FastAPI 里解析。
-- 真机放行、改契约、gate.override 必须保持结构禁止。
+- 真机放行、改已发布本体环境、gate.override 必须保持结构禁止。
 - 任务镜像用 `make images`，不要塞进 `make up`。
 - 进度文档只记录对照设计的差距，不要反过来改 `docs/design/`。

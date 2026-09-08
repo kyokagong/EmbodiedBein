@@ -8,8 +8,8 @@ onMounted(async () => { rows.value = (await api("/assets")).items || []; });
 <template>
   <div>
     <h2>机器人资产</h2>
-    <EbTable :columns="[{key:'contract_id',label:'contract'},{key:'mjcf',label:'mjcf'},{key:'usd',label:'usd'},{key:'isaac_task',label:'task'}]" :rows="rows">
-      <template #contract_id="{ row }"><router-link :to="`/assets/${row.contract_id}/viewer`">{{ row.contract_id }}</router-link></template>
+    <EbTable :columns="[{key:'embodiment_env_id',label:'env'},{key:'mjcf',label:'mjcf'},{key:'usd',label:'usd'},{key:'isaac_task',label:'task'}]" :rows="rows">
+      <template #embodiment_env_id="{ row }"><router-link :to="`/assets/${row.embodiment_env_id}/viewer`">{{ row.embodiment_env_id }}</router-link></template>
     </EbTable>
   </div>
 </template>
