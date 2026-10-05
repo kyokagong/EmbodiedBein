@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import Chart from "../components/Chart.vue";
@@ -12,37 +12,77 @@ const logs = ref<string[]>([]);
 const cmd = ref("");
 const copiedCmd = ref(false);
 const filterText = ref("");
-const autoscroll = ref(true);
-let ws: WebSocket | null = null;
+const err = ref("");
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
-onMounted(async () => {
-  const id = route.params.id;
-  try {
-    data.value = await api(`/runs/${id}`);
-    metrics.value = await api(`/runs/${id}/metrics`);
-    logs.value = (await api(`/runs/${id}/logs?tail=200`)).lines || [];
-    if (data.value?.job_id) {
-      try {
-        const cmdRes = await api(`/jobs/${data.value.job_id}/equivalent-command`);
-        cmd.value = cmdRes.command || "";
-      } catch {}
+watch(() => String(route.params.id || ""), (id, _previous, onCleanup) => {
+  const controller = new AbortController();
+  const signal = controller.signal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let ws: WebSocket | null = null;
+  data.value = null;
+  metrics.value = { series: {} };
+  logs.value = [];
+  cmd.value = "";
+  copiedCmd.value = false;
+  err.value = "";
+  clearTimeout(copyTimer);
+  onCleanup(() => {
+    controller.abort();
+    clearTimeout(timer);
+    clearTimeout(copyTimer);
+    ws?.close();
+  });
+  if (!id) return;
+
+  async function refreshState() {
+    try {
+      const current = await api(`/runs/${id}`, { signal });
+      if (signal.aborted) return;
+      data.value = current;
+      err.value = "";
+    } catch (e: any) {
+      if (!signal.aborted) err.value = e.message;
+    } finally {
+      if (!signal.aborted && !["finished", "aborted"].includes(data.value?.status)) {
+        timer = setTimeout(refreshState, 5000);
+      }
     }
-  } catch (e) {
-    console.error(e);
   }
 
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/runs/${id}`);
-  ws.onmessage = (ev) => {
-    try {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "metrics" && msg.payload?.series) metrics.value = msg.payload;
-      if (msg.type === "log" && msg.payload?.lines) logs.value = msg.payload.lines;
-    } catch {}
-  };
-});
+  async function connectStreams() {
+    const initial = await Promise.allSettled([
+      api(`/runs/${id}/metrics`, { signal }),
+      api(`/runs/${id}/logs?tail=200`, { signal }),
+    ]);
+    if (signal.aborted) return;
+    if (initial[0].status === "fulfilled") metrics.value = initial[0].value;
+    if (initial[1].status === "fulfilled") logs.value = initial[1].value.lines || [];
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/runs/${id}`);
+    ws.onmessage = (ev) => {
+      if (signal.aborted) return;
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "metrics" && msg.payload?.series) metrics.value = msg.payload;
+        if (msg.type === "log" && msg.payload?.lines) logs.value = msg.payload.lines;
+      } catch {}
+    };
+  }
 
-onUnmounted(() => ws?.close());
+  async function loadCommand() {
+    await refreshState();
+    if (signal.aborted || !data.value?.job_id) return;
+    try {
+      const result = await api(`/jobs/${data.value.job_id}/equivalent-command`, { signal });
+      if (!signal.aborted) cmd.value = result.command || "";
+    } catch {}
+  }
+  void loadCommand();
+  void connectStreams();
+}, { immediate: true });
+
+onUnmounted(() => clearTimeout(copyTimer));
 
 const filteredLogs = computed(() => {
   if (!filterText.value.trim()) return logs.value;
@@ -53,7 +93,8 @@ function copyCommand() {
   if (!cmd.value) return;
   navigator.clipboard?.writeText(cmd.value);
   copiedCmd.value = true;
-  setTimeout(() => (copiedCmd.value = false), 2000);
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => (copiedCmd.value = false), 2000);
 }
 </script>
 
@@ -72,11 +113,13 @@ function copyCommand() {
       </div>
       <div class="row">
         <button type="button" @click="copyCommand" :disabled="!cmd">
-          {{ copiedCmd ? "✓ 已复制命令" : "📋 复制等价 Docker 命令" }}
+          {{ copiedCmd ? "✓ 已复制命令" : "📋 复制当前配置命令" }}
         </button>
       </div>
     </div>
 
+    <p class="error" role="alert">{{ err }}</p>
+    <p class="muted small">运行期间每 5 秒刷新状态，日志与指标通过实时连接更新。</p>
     <!-- 运行状态信息条 -->
     <div class="kpis">
       <div class="card">
@@ -91,8 +134,8 @@ function copyCommand() {
       </div>
       <div class="card">
         <div class="l">GPU 资源</div>
-        <div class="v">{{ data?.assigned_gpus?.length ? 'GPU ' + data.assigned_gpus.join(',') : 'CPU / 未占用' }}</div>
-        <div class="muted">独占准入模式</div>
+        <div class="v">{{ data?.gpu_ids?.length ? 'GPU ' + data.gpu_ids.join(',') : 'CPU / 未占用' }}</div>
+        <div class="muted">本次 Run 的 GPU 分配记录</div>
       </div>
       <div class="card">
         <div class="l">TSDB 曲线点</div>
@@ -101,12 +144,23 @@ function copyCommand() {
       </div>
     </div>
 
+    <div class="panel" v-if="data?.metrics_summary?.eval_report_id || data?.metrics_summary?.checkpoint" style="margin-bottom:1rem">
+      <h3>本次运行产物</h3>
+      <router-link v-if="data.metrics_summary.eval_report_id" :to="`/eval/reports/${data.metrics_summary.eval_report_id}`">查看本次评估报告</router-link>
+      <p v-if="data.metrics_summary.qualification" class="muted small">验收状态：{{ data.metrics_summary.qualification }}</p>
+      <div v-if="data.metrics_summary.checkpoint">
+        <p>完整模型目录 · step {{ data.metrics_summary.checkpoint.step }}</p>
+        <code style="overflow-wrap:anywhere">{{ data.metrics_summary.checkpoint.path }}</code>
+      </div>
+    </div>
+
     <!-- 等价命令展开卡片 -->
     <div class="panel" v-if="cmd" style="margin-bottom:1rem">
       <div class="page-head" style="margin-bottom:0.4rem">
-        <h3>等价复现命令 (Equivalent Reproducible Command)</h3>
+        <h3>当前配置命令</h3>
         <button type="button" class="btn-sm" @click="copyCommand">{{ copiedCmd ? "已复制" : "复制" }}</button>
       </div>
+      <p class="muted small">按当前适配器生成；历史运行以其镜像指纹和 resolved-config.yaml 为准。</p>
       <pre class="cmd-box"><code>{{ cmd }}</code></pre>
     </div>
 
@@ -127,7 +181,6 @@ function copyCommand() {
         <h3>容器实时控制台输出 (console.log)</h3>
         <div class="row">
           <input v-model="filterText" placeholder="过滤日志内容..." class="input-sm" />
-          <label class="small muted"><input type="checkbox" v-model="autoscroll" /> 自动滚动</label>
         </div>
       </div>
       <LogPane :lines="filteredLogs" />

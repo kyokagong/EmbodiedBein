@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 
 from eb.adapters.base import Adapter, RenderedJob, _image
 from eb.domain.job import JobKind, JobSpec
+from eb.settings import get_settings
 
 # Image site-packages only has an editable install of berkeley_humanoid_lite.
 # The assets/lowlevel packages live under source/ and must be on PYTHONPATH
@@ -22,6 +24,25 @@ class IsaacLabRslRlAdapter(Adapter):
     name = "isaaclab_rslrl"
 
     def render(self, spec: JobSpec, run_id: str) -> RenderedJob:
+        if spec.embodiment_env_id == "ee_rpo_v2_wbc_23dof_v1" and spec.kind == JobKind.EXPORT_POLICY:
+            source = Path(spec.inputs.base_model or "")
+            checkpoint = source / "model_state_dict/full_weights.pt" if source.is_dir() else source
+            if not checkpoint.is_file():
+                raise ValueError("RPO 导出必须绑定 RLinf full_weights.pt 或其模型目录")
+            settings = get_settings()
+            return RenderedJob(
+                image=_image(spec, "eb/rlinf:rpo-v2-wbc"),
+                command=["/workspace/isaaclab_extension_template/.venv/bin/python",
+                         "/workspace/eb_runner/rpo_wbc_artifact.py", "export",
+                         "--checkpoint", "/workspace/model/full_weights.pt",
+                         "--output", "/workspace/output/model"],
+                env={"PYTHONUNBUFFERED":"1"}, writable_paths=["output"],
+                mounts=[(str(checkpoint), "/workspace/model/full_weights.pt", "ro"),
+                        (str(settings.data_root / "runs" / run_id / "output"), "/workspace/output", "rw"),
+                        (str(settings.models_root / "runs" / run_id), "/workspace/output/model", "rw")],
+                gpus=spec.resources.gpus, shm_gb=spec.resources.shm_gb,
+                workdir="/workspace", outputs=["output"], metrics_glob="",
+            )
         task = spec.params.get("task", "Velocity-Berkeley-Humanoid-Lite-v0")
         num_envs = spec.params.get("num_envs", 4096)
         max_it = spec.params.get("max_iterations", 6000)

@@ -49,11 +49,11 @@ class CodeRefs(BaseModel):
 
 
 class ResourceSpec(BaseModel):
-    gpus: int = 0
+    gpus: int = Field(default=0, ge=0, le=4)
     gpu_mode: str = "exclusive"
-    cpus: int = 4
-    memory_gb: int = 8
-    shm_gb: int = 2
+    cpus: int = Field(default=4, ge=1)
+    memory_gb: int = Field(default=8, ge=1)
+    shm_gb: int = Field(default=2, ge=1)
     devices: list[str] = Field(default_factory=list)
 
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import GatePanel from "../components/GatePanel.vue";
@@ -7,11 +7,39 @@ import GatePanel from "../components/GatePanel.vue";
 const route = useRoute();
 const row = ref<any>(null);
 const drift = ref<any>(null);
+const episodes = ref<any[]>([]);
+const selectedFailure = ref<any>(null);
 const activeTab = ref("metrics");
+const isRpoFlat = computed(() => row.value?.gate_results?.receipt?.schema_version === "eb/rpo-flat-eval/v1");
+const isRpo = computed(() => ["eb/rpo-wbc-eval/v1", "eb/rpo-amp-eval/v1", "eb/rpo-flat-eval/v1"].includes(row.value?.gate_results?.receipt?.schema_version));
+const rpoStability = computed(() => row.value?.gate_results?.success_definition === "survive_1000_steps_without_fall_or_nan");
+const rpoStandWalk = computed(() => row.value?.gate_results?.receipt?.criterion === "stand_walk");
+function caseResult(ep: any) {
+  if (!isRpo.value) return ep.status;
+  if (ep.status === "success") return "成功";
+  if (ep.fall) return `跌倒（${ep.fall_reason || '接触'}）`;
+  if (ep.nan) return "数值异常";
+  if (isRpoFlat.value) {
+    if (ep.hard_limit) return "硬越限";
+    return ep.status === "infra_failure" ? `运行异常：${ep.reason}`
+      : `速度 RMSE ${ep.velocity_rmse?.toFixed(3) ?? '—'} / 0.20，转向 RMSE ${ep.yaw_rmse?.toFixed(3) ?? '—'} / 0.30`;
+  }
+  if (rpoStandWalk.value) return ep.scenario === "stand"
+    ? `站立漂移 ${Number(ep.distance_m).toFixed(2)}m / 上限 0.5m`
+    : `直行 ${Number(ep.distance_m).toFixed(2)}m / 下限 4m`;
+  if (!rpoStability.value && ep.hard_limit) return "关节或力矩越限";
+  if (!rpoStability.value && ["horizon", "tracking_error"].includes(ep.termination_reason)) {
+    const failed = [ep.velocity_rmse > 0.15 ? `速度 RMSE ${ep.velocity_rmse.toFixed(3)} > 0.15` : "",
+      ep.upper_rmse > 0.1 ? `上肢 RMSE ${ep.upper_rmse.toFixed(3)} > 0.1` : ""].filter(Boolean);
+    return `走满步数，${failed.join("、") || "跟踪误差"}未达标`;
+  }
+  return ep.termination_reason || ep.status;
+}
 
 onMounted(async () => {
   const id = route.params.id;
   row.value = await api(`/evals/reports/${id}`);
+  try { episodes.value = (await api(`/evals/reports/${id}/episodes`)).items || []; } catch {}
   try {
     drift.value = await api(`/evals/reports/${id}/cross-domain-drift`);
   } catch {}
@@ -40,22 +68,23 @@ onMounted(async () => {
         <div class="v" style="color: #53e5a3;">
           {{ row.metrics?.success_rate != null ? (row.metrics.success_rate * 100).toFixed(1) + '%' : '—' }}
         </div>
-        <div class="muted">{{ row.wilson_ci?.label || '样本量 n=' + (row.metrics?.n_trials || 64) }}</div>
+        <div class="muted">{{ row.wilson_ci?.label || (row.metrics?.n_trials != null ? '样本量 n=' + row.metrics.n_trials : '缺少实际样本量，未计算区间') }}</div>
       </div>
       <div class="card">
         <div class="l">评估套件</div>
         <div class="v" style="font-size:1.1rem">{{ row.suite_id }}</div>
-        <div class="muted">固定种子集测定</div>
+        <div class="muted">实际配置与输入见运行记录</div>
       </div>
       <div class="card">
         <div class="l">受评模型版本</div>
-        <div class="v" style="font-size:1.1rem">{{ row.model_version_id || "基线策略" }}</div>
-        <div class="muted"><router-link v-if="row.model_version_id" :to="`/models/${row.model_version_id}`">查看 ModelCard</router-link><span v-else>种子基线</span></div>
+        <div class="v" style="font-size:1.1rem">{{ row.model_version_id || "运行检查点" }}</div>
+        <div class="muted"><router-link v-if="row.model_version_id" :to="`/models/${row.model_version_id}`">查看 ModelCard</router-link><router-link v-else-if="row.run_id" :to="`/eval/runs/${row.run_id}`">查看评估 Run</router-link><span v-else>未记录模型版本</span></div>
+        <div v-if="row.gate_results?.checkpoint?.run_id" class="muted xs">源 checkpoint：{{ row.gate_results.checkpoint.run_id }} / step {{ row.gate_results.checkpoint.step }}</div>
       </div>
-      <div class="card">
+      <div class="card" v-if="!row.metrics?.profile && !isRpo">
         <div class="l">sim2sim 跨域门禁</div>
         <div class="v" :style="{ color: drift?.passed_sim2sim_gate ? '#53e5a3' : '#ffc857' }">
-          {{ drift ? (drift.passed_sim2sim_gate ? '✓ 通过 (≤0.6σ)' : '⚠️ 需校准') : '—' }}
+          {{ drift?.passed_sim2sim_gate == null ? '尚未评估' : (drift.passed_sim2sim_gate ? '✓ 通过' : '⚠️ 未通过') }}
         </div>
         <div class="muted">发散步数 t*={{ drift?.divergence_step ?? '—' }} 步</div>
       </div>
@@ -63,16 +92,32 @@ onMounted(async () => {
 
     <!-- 标签页导航 -->
     <div class="tab-nav">
-      <button class="tab-btn" :class="{ active: activeTab === 'metrics' }" @click="activeTab = 'metrics'">核心指标与 Seed 明细</button>
-      <button class="tab-btn" :class="{ active: activeTab === 'drift' }" @click="activeTab = 'drift'">L3 跨域观测漂移热力图 (|Δμ|/σ)</button>
+      <button class="tab-btn" :class="{ active: activeTab === 'metrics' }" @click="activeTab = 'metrics'">{{ row.metrics?.profile ? '任务与案例结果' : '核心指标与 Seed 明细' }}</button>
+      <button v-if="!row.metrics?.profile && !isRpo" class="tab-btn" :class="{ active: activeTab === 'drift' }" @click="activeTab = 'drift'">L3 跨域观测漂移热力图 (|Δμ|/σ)</button>
       <button class="tab-btn" :class="{ active: activeTab === 'gates' }" @click="activeTab = 'gates'">门禁校验结果</button>
       <button class="tab-btn" :class="{ active: activeTab === 'failures' }" @click="activeTab = 'failures'">失败案例库 (FailureCases)</button>
     </div>
 
     <!-- 1. 核心指标面板 -->
     <div class="panel" v-if="activeTab === 'metrics'">
-      <h3>Seed 评估明细</h3>
-      <table v-if="row.metrics?.per_seed && Object.keys(row.metrics.per_seed).length">
+      <p>证据：{{ row.gate_results?.validity || '历史报告，未验证逐案例完整性' }} · 资格：{{ row.gate_results?.qualification || '未判定' }}</p>
+      <p v-if="row.metrics?.planned != null">已完成 {{ row.metrics.completed }} / 计划 {{ row.metrics.planned }} · 成功 {{ row.metrics.successes }}</p>
+      <p v-if="isRpoFlat">官方完整速度/转向指令，每例 20 秒；无跌倒、NaN 或硬越限，平移向量 RMSE ≤0.20 m/s、转向 RMSE ≤0.30 rad/s。标准评估 {{ row.metrics?.successes }} / 100，通过目标为至少 80 例。</p>
+      <p v-else-if="isRpo">成功标准：{{ rpoStandWalk ? '平地直立或 0.3m/s 直行：保持直立 1000 步，站立漂移 ≤ 0.5m，直行前进 ≥ 4m' : rpoStability ? '身体稳定：达到 1000 步且未跌倒、无数值异常' : '跟踪精度：无跌倒、越限或数值异常，且速度 RMSE ≤ 0.15、上肢 RMSE ≤ 0.1' }}</p>
+      <p v-if="isRpo">环境 {{ row.gate_results?.receipt?.backend === 'isaac' ? 'Isaac Lab' : 'MuJoCo' }} · 跌倒 {{ row.metrics?.fall_count }} · 关节/力矩越限 {{ row.metrics?.hard_limit_count }} · 数值异常 {{ row.metrics?.nan_count }} · 速度 RMSE {{ row.metrics?.velocity_rmse }} · {{ isRpoFlat ? '转向' : '上肢' }} RMSE {{ isRpoFlat ? row.metrics?.yaw_rmse : row.metrics?.upper_rmse }}</p>
+      <h3 v-if="row.metrics?.per_task">逐任务结果</h3>
+      <table v-if="row.metrics?.per_task"><thead><tr><th>Task</th><th>成功</th><th>有效次数</th><th>成功率</th></tr></thead>
+        <tbody><tr v-for="(v, task) in row.metrics.per_task" :key="String(task)"><td>task {{ task }}</td>
+          <td>{{ v.successes }}</td><td>{{ v.n_trials }}</td><td>{{ (100 * v.successes / v.n_trials).toFixed(1) }}%</td></tr></tbody></table>
+      <h3 v-if="episodes.length">实际案例</h3>
+      <table v-if="episodes.length"><thead><tr><th>Case</th><th>任务</th><th>初始状态</th><th v-if="rpoStandWalk">场景</th><th>结果</th><th>步数</th><th v-if="rpoStandWalk">位移</th></tr></thead>
+        <tbody><tr v-for="ep in episodes" :key="ep.case_id"><td class="mono xs">{{ ep.case_id }}</td><td>{{ ep.task_id }}</td>
+          <td>{{ ep.init_state_id ?? ep.seed }}</td><td v-if="rpoStandWalk">{{ ep.scenario === 'stand' ? '原地站立' : '直线行走' }}</td><td>{{ caseResult(ep) }} <button v-if="ep.video_rel" type="button" @click="selectedFailure = ep">播放录像</button></td><td>{{ ep.episode_len ?? '—' }}</td><td v-if="rpoStandWalk">{{ Number(ep.distance_m).toFixed(2) }}m</td></tr></tbody></table>
+      <div v-if="selectedFailure?.video_rel" class="panel"><h3>{{ selectedFailure.case_id }} · 录像</h3>
+        <video controls preload="metadata" style="width:100%;max-width:720px" :src="`/api/v1/evals/reports/${row.id}/media/${selectedFailure.video_rel.replace('seed_','').replace('.mp4','')}`">浏览器无法播放该录像。</video></div>
+      <p v-else-if="!episodes.length" class="muted">此报告没有逐案例索引；历史汇总结果不能用于配对比较。</p>
+      <h3 v-if="!row.metrics?.profile && !isRpo">Seed 评估明细</h3>
+      <table v-if="!row.metrics?.profile && !isRpo && row.metrics?.per_seed && Object.keys(row.metrics.per_seed).length">
         <thead>
           <tr>
             <th>Seed</th>
@@ -90,7 +135,7 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
-      <p class="muted small" v-else>无逐 Seed 明细数据；总体指标: {{ JSON.stringify(row.metrics) }}</p>
+      <p class="muted small" v-else-if="!row.metrics?.profile && !isRpo">无逐 Seed 明细数据；总体指标: {{ JSON.stringify(row.metrics) }}</p>
     </div>
 
     <!-- 2. L3 跨域漂移热力图 -->
@@ -138,10 +183,15 @@ onMounted(async () => {
 
     <!-- 4. 失败案例库 -->
     <div class="panel" v-if="activeTab === 'failures'">
-      <h3>失败视频抽样与聚类</h3>
-      <div class="empty-box">
-        <b>本 Run 未开启相机录像或无失败视频流</b>
-        仿真评测默认以无头纯计算模式运行以提高吞吐。若需录制特定失败 Episode，请在提交任务时勾选 <code>--record_video</code>。
+      <h3>失败案例与录像</h3>
+      <table v-if="episodes.some(ep => ['task_failure','timeout','invalid'].includes(ep.status))"><thead><tr><th>Case</th><th>任务</th><th>初始状态</th><th>原因</th></tr></thead>
+        <tbody><tr v-for="ep in episodes.filter(ep => ['task_failure','timeout','invalid'].includes(ep.status))" :key="ep.case_id"><td class="mono xs">{{ ep.case_id }}</td><td>{{ ep.task_id }}</td><td>{{ ep.init_state_id }}</td><td>{{ caseResult(ep) }} <button v-if="ep.video_rel" type="button" @click="selectedFailure = ep">查看录像</button><span v-else-if="ep.video_status === 'unavailable'"> · 录像不可用</span></td></tr></tbody></table>
+      <div v-if="selectedFailure?.video_rel" class="panel"><h3>{{ selectedFailure.case_id }} · 运行录像</h3>
+        <video controls preload="metadata" style="width:100%;max-width:720px" :src="`/api/v1/evals/reports/${row.id}/media/${selectedFailure.video_rel.replace('seed_','').replace('.mp4','')}`">浏览器无法播放该录像。</video>
+        <p v-if="!isRpo" class="muted">录像可能包含同一环境批次的其他案例；按 case ID 和初始状态核对。</p></div>
+      <div v-else class="empty-box">
+        <b>尚无已索引的失败视频</b>
+        是否生成录像以本次运行配置与产物为准；当前报告尚未提供失败片段索引。
       </div>
     </div>
   </div>

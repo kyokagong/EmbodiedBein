@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 
@@ -9,12 +9,57 @@ const tree = ref<any>(null);
 const dir = ref("");
 const media = ref("");
 const err = ref("");
+const segment = ref<any>(null);
+const episodes = ref<any>({ items: [], total: 0, next_cursor: null });
+const cursor = ref(0);
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
-onMounted(load);
+async function setUsage(usage: "train" | "eval") {
+  try {
+    data.value = await api(`/datasets/${route.params.id}/usage`, {
+      method: "PATCH", body: JSON.stringify({ usage }),
+    });
+    await load();
+  } catch (e: any) { err.value = e.message; }
+}
+
+async function loadEpisodes(offset = 0) {
+  episodes.value = await api(`/datasets/${route.params.id}/episodes?cursor=${offset}&limit=50`);
+  cursor.value = offset;
+}
+
+async function validate(reindex = false) {
+  try { await api(`/datasets/${route.params.id}/validate?reindex=${reindex}`, { method: "POST" }); await load(); }
+  catch (e: any) { err.value = e.message; }
+}
+function playEpisode(stream: any) {
+  segment.value = stream;
+  media.value = `/api/v1/datasets/${route.params.id}/media?path=${encodeURIComponent(stream.path)}#t=${stream.from_timestamp},${stream.to_timestamp}`;
+}
+function constrain(event: Event) {
+  const video = event.target as HTMLVideoElement;
+  if (!segment.value) return;
+  if (video.currentTime < segment.value.from_timestamp) video.currentTime = segment.value.from_timestamp;
+  if (video.currentTime >= segment.value.to_timestamp) { video.pause(); video.currentTime = segment.value.from_timestamp; }
+}
+
+onMounted(async () => {
+  await load();
+  refreshTimer = setInterval(async () => {
+    if (["libero_benchmark", "robotwin"].includes(data.value?.source_kind) && ["queued", "admitted", "running"].includes(data.value.status)) {
+      try {
+        data.value = await api(`/datasets/${route.params.id}`);
+        if (data.value.status === "validated") await loadTree("");
+      } catch (e: any) { err.value = e.message; }
+    }
+  }, 5000);
+});
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
 
 async function load() {
   data.value = await api(`/datasets/${route.params.id}`);
-  await loadTree("");
+  if (data.value.status === "validated") await loadTree("");
+  if (data.value.source_kind !== "libero_benchmark") await loadEpisodes();
 }
 
 async function loadTree(path: string) {
@@ -35,6 +80,7 @@ function open(item: any) {
   }
   const lower = item.name.toLowerCase();
   if (lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".mkv")) {
+    segment.value = null;
     media.value = `/api/v1/datasets/${route.params.id}/media?path=${encodeURIComponent(item.path)}`;
   }
 }
@@ -62,12 +108,36 @@ function gb(n: number | null) {
     </div>
     <dl class="dl">
       <dt>来源</dt><dd>{{ data.source_kind || "path" }} · {{ data.source_uri || "—" }}</dd>
+      <dt>本体</dt><dd>{{ data.embodiment_name || "未关联" }} · <span class="mono">{{ data.embodiment_id || "—" }}</span></dd>
+      <dt>本体环境</dt><dd class="mono">{{ data.embodiment_env_id || "—" }}</dd>
+      <dt>用途</dt><dd v-if="data.source_kind === 'libero_benchmark'">评估测试场景</dd><dd v-else><select :value="data.usage || 'train'" @change="setUsage(($event.target as HTMLSelectElement).value as 'train' | 'eval')"><option value="train">训练集</option><option value="eval">评估集</option></select></dd>
       <dt>落地</dt><dd>{{ data.dest_path || data.meta?.root || "—" }}</dd>
       <dt>体积</dt><dd>{{ gb(data.total_bytes || data.overview?.bytes) }}</dd>
+      <template v-if="data.source_kind === 'robotwin'">
+        <dt>原生本体</dt><dd>{{ data.meta?.native_embodiment || '—' }}</dd>
+        <dt>场景</dt><dd>{{ data.meta?.scenario || '—' }}</dd>
+        <dt>适配方式</dt><dd>{{ data.meta?.compatibility || '—' }}</dd>
+      </template>
     </dl>
-    <p class="error xs">{{ err }}</p>
-    <div class="grid2">
-      <div class="panel">
+    <p v-if="data.source_kind === 'libero_benchmark'">基准校验：{{ data.validation?.status || "not_validated" }} · {{ data.summary_stats?.benchmark?.suites ? '4 个套件，每套件 10 个任务' : '等待任务与初始状态校验' }}</p>
+    <p v-else>结构校验：{{ data.validation?.status || "not_validated" }} · training_ready={{ !!data.validation?.training_ready }}</p>
+    <p v-if="data.source_kind === 'libero_benchmark'" class="mono xs">{{ data.summary_stats?.benchmark?.sha256 || '' }}</p>
+    <button @click="validate(data.source_kind === 'libero_benchmark' && data.status !== 'registered')" :disabled="!['registered', 'failed', 'invalid'].includes(data.status)">{{ data.source_kind === 'libero_benchmark' ? '下载 / 重试校验' : '提交下载 / 结构校验' }}</button>
+    <button v-if="!['libero_benchmark', 'robotwin'].includes(data.source_kind)" @click="validate(true)" :disabled="!['validated', 'invalid', 'failed'].includes(data.status)">本地重新索引</button>
+    <button @click="load">刷新状态</button>
+    <p v-if="data.source_kind !== 'libero_benchmark'">{{ data.overview?.episodes }} episodes · {{ data.overview?.frames }} 帧 · {{ data.overview?.fps }} Hz · action {{ data.overview?.action_dim }} / state {{ data.overview?.state_dim }}</p>
+    <p v-if="data.source_kind !== 'libero_benchmark'">G2：{{ data.overview?.g2 }} · {{ data.overview?.g2_foot }}</p>
+    <p class="error xs">{{ data.error_message || err }}</p>
+    <p v-if="data.source_kind !== 'libero_benchmark'">{{ episodes.total }} episodes
+      <button :disabled="cursor === 0" @click="loadEpisodes(Math.max(0, cursor - 50))">上一页</button>
+      <button :disabled="episodes.next_cursor === null" @click="loadEpisodes(episodes.next_cursor)">下一页</button>
+    </p>
+    <div v-for="ep in data.source_kind === 'libero_benchmark' ? [] : episodes.items" :key="ep.episode_id">
+      Episode {{ ep.episode_id }} · {{ ep.length }} 帧 · {{ ep.tasks?.join('; ') || '任务未索引' }}
+      <button v-for="stream in ep.streams" :key="stream.key" @click="playEpisode(stream)">{{ stream.key }} · {{ stream.from_timestamp }}–{{ stream.to_timestamp }}s</button>
+    </div>
+    <div v-if="data.status === 'validated'" class="grid2">
+      <div v-if="data.source_kind !== 'libero_benchmark'" class="panel">
         <h3>惰性文件树</h3>
         <div class="row" style="margin-bottom:.4rem">
           <button type="button" :disabled="!dir" @click="up">上级</button>
@@ -85,7 +155,7 @@ function gb(n: number | null) {
       </div>
       <div class="panel">
         <h3>媒体预览</h3>
-        <video v-if="media" :src="media" controls style="width:100%;border-radius:8px;background:#000" />
+        <video v-if="media" :src="media" @loadedmetadata="constrain" @timeupdate="constrain" @seeking="constrain" controls style="width:100%;border-radius:8px;background:#000" />
         <p v-else class="muted xs">点开 mp4 / webm 在此播放（走 HTTP Range）。</p>
       </div>
     </div>

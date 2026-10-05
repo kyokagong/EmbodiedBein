@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from eb.domain.contract import EmbodimentEnv
-from eb.domain.job import TASK_REQUIRED_KINDS, JobSpec
+from eb.domain.job import TASK_REQUIRED_KINDS, JobKind, JobSpec
 from eb.domain.result import CheckResult, Violation
 from eb.domain.task import TaskSpec
 
@@ -26,7 +26,10 @@ _OVERRIDE_BLOCKLIST = ("observation.dim", "action.dim", "joint_order", "policy_h
 
 def g1_submit(spec: JobSpec, env: EmbodimentEnv, ctx: GateContext) -> CheckResult:
     v: list[Violation] = []
-    if env.status != "active":
+    amp_probe = (spec.kind == JobKind.ASSET_VALIDATE
+                 and spec.params.get("operation") == "probe_rpo_amp_env"
+                 and env.id == "ee_rpo_v2_amp_locomotion_23dof_v1")
+    if env.status != "active" and spec.kind != JobKind.DATA_CONVERT and not amp_probe:
         v.append(
             Violation(
                 path="embodiment_env.status",

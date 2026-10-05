@@ -1,0 +1,37 @@
+id: ee_libero_franka_delta_v1
+embodiment_id: emb_libero_franka
+robot_family: franka
+morphology: libero_simulation
+interface_version: 1
+status: active
+dof: 9
+joint_order: [panda_joint1, panda_joint2, panda_joint3, panda_joint4, panda_joint5, panda_joint6, panda_joint7, panda_finger_joint1, panda_finger_joint2]
+observation:
+  dim: 8
+  concat: false
+  layout:
+    - {term: eef_position, dim: 3, source: robot0_eef_pos}
+    - {term: eef_axis_angle, dim: 3, source: robot0_eef_quat_axis_angle}
+    - {term: gripper_qpos, dim: 2, source: robot0_gripper_qpos}
+  modalities:
+    - {name: observation.images.image, shape: [256, 256, 3], dtype: uint8}
+    - {name: observation.images.image2, shape: [256, 256, 3], dtype: uint8}
+action:
+  dim: 7
+  type: osc_pose_delta
+  absolute: false
+  terms:
+    - {name: eef_delta_position, type: normalized_controller_delta, dim: 3, indices: [0, 1, 2]}
+    - {name: eef_delta_rotation, type: normalized_axis_angle_delta, dim: 3, indices: [3, 4, 5]}
+    - {name: gripper, type: absolute_normalized, dim: 1, indices: [6]}
+control:
+  policy_hz: 20
+  control_hz: 500
+  sim_dt: 0.002
+  decimation: 25
+  max_policy_latency_ms: 50
+limits:
+  execution_scope: simulation_only
+  action_min: -1.0
+  action_max: 1.0
+  action_convention: LIBERO OSC_POSE relative controller; do not apply a second delta transform

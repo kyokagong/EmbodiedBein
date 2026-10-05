@@ -10,10 +10,13 @@ class PathNotAllowed(ValueError):
 def default_prefixes() -> list[str]:
     from eb.settings import get_settings
 
-    raw = get_settings().allowed_path_prefixes
+    settings = get_settings()
+    raw = settings.allowed_path_prefixes
     if isinstance(raw, str):
-        return [p.strip() for p in raw.split(",") if p.strip()]
-    return list(raw)
+        configured = [p.strip() for p in raw.split(",") if p.strip()]
+    else:
+        configured = list(raw)
+    return list(dict.fromkeys(map(str, (settings.data_root, settings.models_root, settings.datasets_root, *configured))))
 
 
 def validate_allowed_path(path: str, prefixes: list[str] | None = None) -> Path:

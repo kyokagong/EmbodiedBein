@@ -41,6 +41,21 @@ def test_cross_domain_drift_computation():
     ]
     report = compute_observation_drift("ee_bhl_biped_12dof_v1", layout)
     assert report["embodiment_env_id"] == "ee_bhl_biped_12dof_v1"
-    assert len(report["terms"]) == 3
-    assert report["divergence_step"] > 0
+    assert report["terms"] == []
+    assert report["divergence_step"] is None
+    assert report["passed_sim2sim_gate"] is None
     assert "sim2sim" in report["summary"]
+
+    stats = {item["name"]: {"mean": 0.0, "std": 1.0} for item in layout}
+    measured = compute_observation_drift("ee", layout, stats, stats)
+    assert len(measured["terms"]) == 3
+    assert measured["max_drift_value"] == 0.0
+    assert measured["passed_sim2sim_gate"] is None
+
+
+def test_report_interval_never_invents_sample_count():
+    from eb.eval.wilson import report_interval
+    assert report_interval({"success_rate": 0.5}) is None
+    assert report_interval({"success_rate": 0.5, "n_trials": 0}) is None
+    assert report_interval({"success_rate": float("nan"), "n_trials": 4}) is None
+    assert report_interval({"success_rate": 0.5, "n_trials": 4})["n"] == 4

@@ -1,0 +1,159 @@
+defaults:
+  - model/mlp_policy@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run: {dir: .}
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor, env, rollout: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/output
+    project_name: rlinf
+    experiment_name: rpo_v2_amp_stand_walk_ppo
+    logger_backends: [tensorboard]
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: false
+  use_training_pipeline: false
+  overlap_env_bootstrap: false
+  val_check_interval: 25
+  save_interval: 50
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  update_epoch: 5
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 1
+  reward_type: action_level
+  logprob_type: action_level
+  entropy_type: action_level
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: token-mean
+  bootstrap_type: standard
+  kl_beta: 0.0
+  entropy_bonus: 0.0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+
+env:
+  group_name: EnvGroup
+  train: &env
+    env_type: isaaclab
+    total_num_envs: 512
+    auto_reset: true
+    ignore_terminations: false
+    use_rel_reward: false
+    seed: 0
+    group_size: 1
+    reward_coef: 1.0
+    use_fixed_reset_state_ids: false
+    rollout_epoch: 1
+    max_episode_steps: 1000
+    max_steps_per_rollout_epoch: 24
+    video_cfg: {save_video: false, info_on_video: false, fps: 50, video_base_dir: /workspace/output/video/train}
+    init_params:
+      id: RPO-AMP-StandWalk-v1
+      num_envs: null
+      max_episode_steps: ${..max_episode_steps}
+      task_description: Stand upright or walk straight at 0.3 m/s on flat ground with natural arm swing.
+  eval:
+    <<: *env
+    total_num_envs: 64
+    seed: 10000
+    use_fixed_reset_state_ids: true
+    max_steps_per_rollout_epoch: 1000
+    video_cfg: {save_video: false, info_on_video: false, fps: 50, video_base_dir: /workspace/output/video/eval}
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  enable_torch_compile: false
+  enable_cuda_graph: false
+  model:
+    model_path: ""
+    precision: "${actor.model.precision}"
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1024
+  global_batch_size: 4096
+  seed: 1234
+  enable_offload: false
+  model:
+    model_path: ""
+    model_type: mlp_policy
+    policy_setup: rpo-v2-amp-locomotion-23dof
+    obs_dim: 780
+    critic_obs_dim: 1390
+    action_dim: 23
+    num_action_chunks: 1
+    hidden_dim: 256
+    precision: "32"
+    add_value_head: true
+    is_lora: false
+    lora_rank: 32
+  optim:
+    lr: 3.0e-4
+    value_lr: 3.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    weight_decay: 0.0
+    clip_grad: 1.0
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    mixed_precision:
+      param_dtype: "${actor.model.precision}"
+      reduce_dtype: "${actor.model.precision}"
+      buffer_dtype: "${actor.model.precision}"
+
+reward: {use_reward_model: false}
+critic: {use_critic_model: false}
+
+# Training-only motion prior; actual path and identity are injected from a validated Slice.
+motion_prior:
+  manifest_path: null
+  asset_sha256: null
+  feature_schema: rpo_amp_features_v1
+  feature_dim: 74
+  window_length: 3
+  required_behaviors: [stand, walk]
+
+amp_discriminator:
+  hidden_dims: [1024, 512]
+  activation: elu
+  learning_rate: 1.0e-4
+  grad_penalty_scale: 10.0
+  trunk_weight_decay: 1.0e-3
+  output_weight_decay: 1.0e-1
+  max_grad_norm: 1.0
+  epochs: 5
+  minibatches: 4
+  history_capacity: 100000
+  style_weight_max: 1.5
+  style_warmup_rounds: 10
+  style_full_rounds: 200

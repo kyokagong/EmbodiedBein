@@ -71,7 +71,7 @@ def quality_summary(
     compatible_envs: list[Any] | None,
     stats: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    stats = stats or {}
+    stats = compact_dataset_stats(stats)
     items: list[dict[str, Any]] = []
     for r in funnel.get("rejected") or []:
         reason = r.get("reason") or ""
@@ -93,6 +93,14 @@ def quality_summary(
                 "reason": "no_action_dim",
             }
         )
+    compatibility = stats.get("interface_compatibility", {})
+    for check in compatibility.get("checks", []):
+        if check["status"] == "mismatch":
+            items.append({"severity": "阻断", "rule": f"G2 {check['field']}: {check['observed']} ≠ {check['expected']}",
+                          "count": 1, "reason": f"{check['field']}_mismatch"})
+    if stats.get("action_dim") and compatibility.get("status") != "compatible":
+        items.append({"severity": "警告", "rule": "动作语义、时间映射和 loader 尚未验收", "count": 1,
+                      "reason": "interface_not_verified"})
     lic = license_gate(license)
     license_n = 0
     if lic["gate_status"] != "ok":
@@ -146,47 +154,20 @@ def slice_preview(stats: dict[str, Any] | None, query: dict[str, Any] | None) ->
     }
 
 
-def episode_media(root: Path, ep: str) -> dict[str, Any]:
-    empty = {
-        "id": ep,
-        "missing": "缺媒体",
-        "media_url": None,
-        "path": None,
-        "action_series": [],
-        "state_series": [],
-        "annots": [],
-    }
-    if not ep or not root.exists():
-        return empty
-    hits: list[Path] = []
-    for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        if p.suffix.lower() not in {".mp4", ".webm", ".mkv"}:
-            continue
-        if _episode_matches(p, ep):
-            hits.append(p)
-    if not hits:
-        return empty
-    video = sorted(hits, key=lambda x: x.as_posix())[0]
-    return {
-        "id": ep,
-        "missing": None,
-        "media_url": None,
-        "path": str(video),
-        "action_series": [],
-        "state_series": [],
-        "annots": [],
-        "note": "无并列关节轨迹时只播视频，不画占位零线",
-    }
-
-
-def _episode_matches(path: Path, ep: str) -> bool:
-    stem = path.stem
-    posix = path.as_posix()
-    if ep.isdigit():
-        return stem == ep or stem.endswith(f"_{ep}") or stem.startswith(f"{ep}_")
-    return ep in stem or ep in posix
+def episode_media(root: Path, ep: str, episodes: list[dict] | None = None) -> dict[str, Any]:
+    payload = {"id": ep, "missing": "缺媒体", "media_url": None, "path": None,
+               "action_series": [], "state_series": [], "annots": [], "streams": []}
+    episode = next((row for row in episodes or [] if str(row.get("episode_id")) == ep), None)
+    if not episode:
+        return payload
+    streams = episode.get("streams", [])
+    if not streams:
+        return payload
+    video = (root / streams[0]["path"]).resolve()
+    if not video.is_relative_to(root.resolve()) or not video.is_file():
+        return payload
+    return {**payload, "missing": None, "path": str(video), "streams": streams,
+            "from_timestamp": streams[0]["from_timestamp"], "to_timestamp": streams[0]["to_timestamp"]}
 
 
 def dataset_overview(
@@ -196,13 +177,15 @@ def dataset_overview(
     license: str | None,
     embodiment_env_id: str | None,
     versions: list[dict[str, Any]],
+    summary_stats: dict[str, Any] | None = None,
+    environment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     latest = versions[-1] if versions else {}
-    stats = latest.get("stats") or {}
+    stats = compact_dataset_stats({**(latest.get("stats") or {}), **(summary_stats or {})})
     funnel = normalize_funnel(latest.get("funnel"))
     lic = license_gate(license)
     files = int(stats.get("files") or funnel["stages"][0]["n"] or 0)
-    episodes = int(stats.get("episodes") or funnel["stages"][2]["n"] or 0)
+    episodes = int(stats.get("episodes_count") or stats.get("episodes") or funnel["stages"][2]["n"] or 0)
     kinds = stats.get("kinds") or {}
     if not episodes and isinstance(kinds, dict):
         episodes = int(kinds.get("ego_jsonl") or 0)
@@ -213,6 +196,9 @@ def dataset_overview(
         g2 = "通过"
     elif files and not latest.get("compatible_envs"):
         g2 = "待定"
+    interface = dataset_interface_check(stats, environment)
+    if summary_stats and summary_stats.get("features"):
+        g2 = "不兼容" if interface["status"] == "incompatible" else "待验收"
     return {
         "layer": layer,
         "files": files,
@@ -221,9 +207,56 @@ def dataset_overview(
         "duration_hist": duration_hist,
         "task_counts": stats.get("task_counts") or {},
         "g2": g2,
-        "g2_foot": "无机器人动作维" if g2 == "待定" else "",
+        "g2_foot": interface["reason"] if stats.get("features") else "无机器人动作维" if g2 == "待定" else "",
+        "interface_compatibility": interface,
+        "fps": stats.get("fps"),
+        "action_dim": stats.get("action_dim"),
+        "state_dim": stats.get("state_dim"),
+        "frames": stats.get("frames_count"),
         "license_gate": lic,
         "funnel": funnel,
         "content_hash": latest.get("content_hash"),
         "kinds": kinds,
     }
+
+
+def compact_dataset_stats(stats: dict | None) -> dict:
+    stats = stats or {}
+    result = {key: value for key, value in stats.items() if key != "episodes"}
+    episodes = stats.get("episodes")
+    if isinstance(episodes, list):
+        result.setdefault("episodes_count", len(episodes))
+    elif isinstance(episodes, int):
+        result.setdefault("episodes_count", episodes)
+    features = stats.get("features", {})
+    for feature, output in (("action", "action_dim"), ("observation.state", "state_dim")):
+        shape = features.get(feature, {}).get("shape", [])
+        if len(shape) == 1:
+            result[output] = shape[0]
+    return result
+
+
+def dataset_interface_check(stats: dict, environment: dict | None) -> dict:
+    observed = compact_dataset_stats(stats)
+    expected = environment or {}
+    checks = []
+    for field, required in (("action_dim", expected.get("action", {}).get("dim")),
+                            ("state_dim", expected.get("observation", {}).get("dim")),
+                            ("fps", expected.get("control", {}).get("policy_hz"))):
+        actual = observed.get(field)
+        checks.append({"field": field, "observed": actual, "expected": required,
+                       "status": "unknown" if actual is None or required is None else
+                                 "match" if actual == required else "mismatch"})
+    mismatches = [check for check in checks if check["status"] == "mismatch"]
+    return {"status": "incompatible" if mismatches else "not_verified", "checks": checks,
+            "reason": "; ".join(f"{c['field']}: {c['observed']} ≠ {c['expected']}" for c in mismatches)
+            or "动作语义、时序映射与消费端 loader 尚未验收"}
+
+
+def dataset_episode_page(stats: dict | None, cursor: int, limit: int) -> dict:
+    episodes = (stats or {}).get("episodes", [])
+    if not isinstance(episodes, list):
+        episodes = []
+    end = min(cursor + limit, len(episodes))
+    return {"items": episodes[cursor:end], "total": len(episodes),
+            "next_cursor": end if end < len(episodes) else None}

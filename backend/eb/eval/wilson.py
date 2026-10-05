@@ -1,6 +1,6 @@
 """Wilson score interval for binomial proportion confidence estimation.
 
-Design reference: docs/design/06-evaluation.html
+Design reference: docs/design/05-evaluation-delivery.md
 Wilson score interval provides accurate coverage for small sample sizes
 and extreme proportions (near 0 or 1), avoiding the zero-width artifact of
 normal approximation.
@@ -18,6 +18,16 @@ class ConfidenceInterval(TypedDict):
     n: int
     confidence: float
     label: str
+
+
+def report_interval(metrics: dict) -> ConfidenceInterval | None:
+    """Use reported trial counts only; an aggregate rate does not imply n=64."""
+    n = metrics.get("n_trials", metrics.get("n"))
+    rate = metrics.get("success_rate")
+    if (type(n) is not int or n <= 0 or type(rate) not in (int, float)
+            or not math.isfinite(rate) or not 0 <= rate <= 1):
+        return None
+    return wilson_ci(round(rate * n), n)
 
 
 def wilson_ci(k: int | float, n: int, confidence: float = 0.95) -> ConfidenceInterval:

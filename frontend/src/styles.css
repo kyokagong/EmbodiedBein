@@ -116,6 +116,20 @@ button.primary { background: #163042; border-color: var(--cyan); color: var(--cy
 .hist { display:flex; align-items:flex-end; gap:8px; height:120px; }
 .hist i { display:block; width:36px; background:var(--cyan); border-radius:4px 4px 0 0; }
 .hist-col { text-align:center; font-size:.7rem; color:var(--muted); }
+.list-controls { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; margin:0 0 .8rem; }
+.list-controls label { display:flex; align-items:center; gap:.35rem; color:var(--muted); font-size:.78rem; }
+.list-search { flex:1 1 240px; min-width:180px; }
+.list-pager { display:flex; align-items:center; gap:.4rem; margin-left:auto; }
+.list-controls button:disabled { cursor:not-allowed; opacity:.45; }
+.list-filter-box { margin:-.2rem 0 .8rem; border:1px solid var(--line); border-radius:8px; background:#0a151f; }
+.list-filter-box summary { cursor:pointer; padding:.5rem .7rem; color:var(--muted); font-size:.82rem; }
+.list-filter-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.65rem; padding:.2rem .7rem .7rem; }
+.list-field-filter { display:flex; flex-direction:column; gap:.25rem; color:var(--muted); font-size:.75rem; }
+.list-multi-filter { display:flex; flex-wrap:wrap; gap:.3rem .7rem; min-width:0; border:1px solid var(--line); border-radius:8px; }
+.list-multi-filter legend { color:var(--muted); font-size:.75rem; padding:0 .25rem; }
+.list-multi-filter label { display:flex; align-items:center; gap:.25rem; font-size:.78rem; }
+.list-multi-filter input { margin:0; }
+.list-filter-box > button { margin:0 .7rem .7rem; }
 @media (max-width: 900px) {
   .kpis, .grid2, .grid3, .joint-grid { grid-template-columns: 1fr; }
 }

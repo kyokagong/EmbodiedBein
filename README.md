@@ -12,7 +12,19 @@ make up                              # 构建并拉起 api / ebd / postgres / re
 
 浏览器打开入口（默认 `http://localhost:8000`）。默认账号见 `deploy/.env.example`。
 
-设计文档：[`docs/design/index.html`](docs/design/index.html)。
+母机存储目录也在`deploy/.env`配置。容器使用相同的绝对路径，确保ebd创建的任务容器能正确挂载：
+
+| 变量 | 本机默认 | 内容 |
+|---|---|---|
+| `EB_HOST_STATE_DIR` | `/data/kk/embodiedbein` | Run、日志、快照、CAS、TSDB |
+| `EB_HOST_MODELS_DIR` | `/data/kk/models` | 下载模型与训练发布模型 |
+| `EB_HOST_DATA_DIR` | `/data/kk/data` | 平台下载的数据集 |
+
+三个目录只授予平台对应子目录写权限；`/data/kk/RLinf`等外部源码仍只读。修改已有部署的目录前需要迁移文件和数据库路径，不能只改`.env`。
+
+设计文档：[`docs/design/README.md`](docs/design/README.md)。
+
+LIBERO → π0.5 SFT / PPO / 独立评估：[操作说明](docs/progress/libero-pi05-runbook.md)、[实际验收与剩余差距](docs/progress/2026-09-09-platform-implementation.md)。固定版本数据和公开模型由平台容器下载；管线支持失败阶段续跑。
 
 ## 部署端口
 
@@ -76,7 +88,8 @@ http://localhost:5173          仅 make dev-web
 ```bash
 make up          # 后端与依赖在 compose 里
 make dev-web     # Vite 热更新，代理 /api 到 EB_PORT_API
-cd backend && uv sync && uv run pytest
+make test        # 后端和 Rust 检查在隔离容器中执行
 ```
 
 任务镜像（Isaac / RLinf）体积大，用 `make images` 单独构建，不跟 `compose up` 绑在一起。
+仅构建 LIBERO 训练镜像可用 `make images-rlinf`，读取 `.env` 的 `EB_HF_ENDPOINT`；当前需要本机 `rlinf-berkeley-openpi:local` 基础镜像和只读 `/data/kk/openpi` 源码。

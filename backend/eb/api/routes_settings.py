@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from eb.api.deps import PrincipalDep, SessionDep
+from eb.paths import default_prefixes
 from eb.settings import get_settings
 from eb.store.models import SystemSettingsRow
 
@@ -25,7 +26,7 @@ async def _row(session) -> SystemSettingsRow:
     settings = get_settings()
     row = SystemSettingsRow(
         id=1,
-        allowed_path_prefixes=[p.strip() for p in settings.allowed_path_prefixes.split(",") if p.strip()],
+        allowed_path_prefixes=default_prefixes(),
         rlinf_repo_path=str(settings.rlinf_repo),
         default_train_image="eb/rlinf:0.4.0-emb",
     )

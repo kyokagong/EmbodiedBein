@@ -1,0 +1,72 @@
+id: ee_rpo_v2_flat_23dof_v1
+embodiment_id: emb_roboparty_rpo
+robot_family: roboparty_rpo_v2
+morphology: humanoid
+interface_version: 1
+status: active
+dof: 23
+joint_groups:
+  leg: {count: 12}
+  torso: {count: 1}
+  arm: {count: 10}
+# Native Isaac articulation order in RoboLab 6b1c3d9; different from the WBC/AMP interfaces.
+joint_order:
+  - left_thigh_yaw_joint
+  - right_thigh_yaw_joint
+  - torso_joint
+  - left_thigh_roll_joint
+  - right_thigh_roll_joint
+  - left_arm_pitch_joint
+  - right_arm_pitch_joint
+  - left_thigh_pitch_joint
+  - right_thigh_pitch_joint
+  - left_arm_roll_joint
+  - right_arm_roll_joint
+  - left_knee_joint
+  - right_knee_joint
+  - left_arm_yaw_joint
+  - right_arm_yaw_joint
+  - left_ankle_pitch_joint
+  - right_ankle_pitch_joint
+  - left_elbow_pitch_joint
+  - right_elbow_pitch_joint
+  - left_ankle_roll_joint
+  - right_ankle_roll_joint
+  - left_elbow_yaw_joint
+  - right_elbow_yaw_joint
+observation:
+  dim: 780
+  critic_dim: 1390
+  history_length: 10
+  concat: true
+  layout:
+    - {term: base_ang_vel, dim: 3, source: imu}
+    - {term: projected_gravity, dim: 3, source: imu}
+    - {term: velocity_commands, dim: 3, source: command}
+    - {term: joint_pos_rel, dim: 23, source: encoder}
+    - {term: joint_vel_rel, dim: 23, source: encoder}
+    - {term: last_sampled_action, dim: 23, source: policy}
+  critic_layout:
+    - {term: actor_frame_without_noise, dim: 78, source: simulator}
+    - {term: base_lin_vel, dim: 3, source: simulator}
+    - {term: feet_contact, dim: 2, source: simulator}
+    - {term: feet_contact_force, dim: 6, source: simulator}
+    - {term: feet_air_time, dim: 2, source: simulator}
+    - {term: feet_height, dim: 2, source: simulator}
+    - {term: joint_acc, dim: 23, source: simulator}
+    - {term: joint_torque, dim: 23, source: simulator}
+action:
+  dim: 23
+  type: joint_position
+  scale: 0.25
+  offset: default_joint_pos
+control:
+  policy_hz: 50
+  control_hz: 200
+  sim_dt: 0.005
+  decimation: 4
+  command_dim: 3
+sim_bindings:
+  isaac_task: RPO-Flat-RLinf-v1
+  experiment_name: rpo_v2_flat_ppo
+  mjcf: rpo_description/mjcf/rpo.xml

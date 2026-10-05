@@ -22,7 +22,7 @@ async function draw() {
     series: [
       {
         type: "line",
-        showSymbol: false,
+        showSymbol: props.points?.length === 1,
         data: (props.points || []).map((p) => [p.step, p.value]),
         lineStyle: { color: "#53d4ff" },
         markLine,

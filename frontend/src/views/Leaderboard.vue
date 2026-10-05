@@ -59,8 +59,7 @@ const filteredRows = computed(() => {
             <td>
               <div class="font-bold">
                 <router-link v-if="r.model_version_id" :to="`/models/${r.model_version_id}`">{{ r.model_version_id }}</router-link>
-                <span v-else>基线策略 (Seed Baseline)</span>
-                <span class="badge b-muted" style="margin-left:6px" v-if="!r.model_version_id">基准</span>
+                <span v-else>运行 checkpoint</span>
               </div>
               <div class="mono xs text-muted">report: <router-link :to="`/eval/reports/${r.id}`">{{ r.id }}</router-link></div>
             </td>

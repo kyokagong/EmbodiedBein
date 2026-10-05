@@ -9,7 +9,10 @@ use eb_core::HostProfile;
 use eb_runner::{RunRequest, Runner, StartError};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
@@ -73,6 +76,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let control = Router::new()
         .route("/healthz", get(health))
         .route("/v1/doctor", get(doctor_handler))
+        .route("/v1/images/inspect", get(image_handler))
         .route("/v1/runs", post(submit_run))
         .route("/v1/runs/{id}", get(get_run))
         .route("/v1/runs/{id}/cancel", post(cancel_run))
@@ -80,6 +84,8 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/runs/{id}/logs", get(run_logs))
         .route("/v1/ps", get(ps_handler))
         .route("/v1/scan", post(scan_handler))
+        .route("/v1/snapshots", post(snapshot_handler))
+        .route("/v1/checkpoints/freeze", post(freeze_checkpoint_handler))
         .with_state(app_state.clone());
 
     let media = Router::new()
@@ -128,6 +134,25 @@ async fn doctor_handler(State(st): State<Arc<App>>) -> Json<HostProfile> {
 }
 
 #[derive(Deserialize)]
+struct ImageQuery {
+    name: String,
+}
+
+async fn image_handler(Query(query): Query<ImageQuery>) -> impl IntoResponse {
+    match Runner::image_info(&query.name) {
+        Ok((digest, size_bytes)) => (StatusCode::OK, Json(json!({
+            "ok": true, "name": query.name, "digest": digest, "size_bytes": size_bytes
+        }))),
+        Err(StartError::ImageMissing(reason)) => (StatusCode::NOT_FOUND, Json(json!({
+            "ok": false, "name": query.name, "error": reason
+        }))),
+        Err(StartError::Docker(reason)) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+            "ok": false, "name": query.name, "error": reason
+        }))),
+    }
+}
+
+#[derive(Deserialize)]
 struct SubmitBody {
     run_id: String,
     #[serde(default)]
@@ -148,6 +173,10 @@ struct SubmitBody {
     workdir: String,
     #[serde(default)]
     network: Option<String>,
+    #[serde(default)]
+    cpus: Option<u32>,
+    #[serde(default)]
+    memory_gb: Option<u32>,
 }
 
 fn env_pairs(env: &Value) -> Vec<(String, String)> {
@@ -188,6 +217,8 @@ async fn submit_run(State(st): State<Arc<App>>, Json(body): Json<SubmitBody>) ->
         mounts: body.mounts,
         workdir: body.workdir,
         network: body.network,
+        cpus: body.cpus.unwrap_or(4),
+        memory_gb: body.memory_gb.unwrap_or(8),
     };
     let digest = eb_runner::Runner::image_digest(&req.image).ok();
     match st.runner.start(&req).await {
@@ -216,9 +247,11 @@ async fn get_run(State(st): State<Arc<App>>, Path(id): Path<String>) -> Json<Val
     }
 }
 
-async fn cancel_run(State(st): State<Arc<App>>, Path(id): Path<String>) -> Json<Value> {
-    let _ = st.runner.cancel(&id).await;
-    Json(json!({"ok": true, "run_id": id}))
+async fn cancel_run(State(st): State<Arc<App>>, Path(id): Path<String>) -> Response {
+    match st.runner.cancel(&id).await {
+        Ok(()) => Json(json!({"ok": true, "run_id": id})).into_response(),
+        Err(error) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"ok": false, "run_id": id, "error": error}))).into_response(),
+    }
 }
 
 async fn ps_handler(State(st): State<Arc<App>>) -> Json<Value> {
@@ -281,6 +314,146 @@ async fn run_logs(
 #[derive(Deserialize)]
 struct ScanReq {
     path: String,
+}
+
+#[derive(Deserialize)]
+struct SnapshotReq {
+    path: String,
+    content_hash: Option<String>,
+}
+
+async fn snapshot_handler(State(st): State<Arc<App>>, Json(req): Json<SnapshotReq>) -> Response {
+    // Only platform-owned source trees or configured external repositories can be read.
+    let source = match fs::canonicalize(&req.path) {
+        Ok(path) => path,
+        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    };
+    let allowed = [
+        std::env::var("EB_BHL_REPO").unwrap_or_else(|_| "/data/kk/Berkeley-Humanoid-Lite".into()),
+        std::env::var("EB_RLINF_REPO").unwrap_or_else(|_| "/data/kk/RLinf".into()),
+        std::env::var("EB_ASSETS_ROOT").unwrap_or_else(|_| "/data/kk/assets".into()),
+        st.data_root.to_string_lossy().into_owned(),
+    ];
+    if !allowed.iter().filter_map(|p| fs::canonicalize(p).ok()).any(|root| source.starts_with(root)) {
+        return (StatusCode::FORBIDDEN, "snapshot source outside allowed roots").into_response();
+    }
+    let root = st.data_root.clone();
+    match tokio::task::spawn_blocking(move || eb_runner::snapshot::prepare_snapshot(&source, &root, req.content_hash.as_deref())).await {
+        Ok(Ok(snapshot)) => Json(snapshot).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct FreezeCheckpointReq {
+    run_id: String,
+    step: u64,
+}
+
+async fn freeze_checkpoint_handler(State(st): State<Arc<App>>, Json(req): Json<FreezeCheckpointReq>) -> Response {
+    let root = st.data_root.clone();
+    match tokio::task::spawn_blocking(move || freeze_checkpoint(&root, &req.run_id, req.step)).await {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn freeze_checkpoint(root: &FsPath, run_id: &str, step: u64) -> Result<Value, String> {
+    if !run_id.starts_with("run_") || !run_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+        return Err("invalid source Run ID".into());
+    }
+    let runs = root.join("runs");
+    let run_dir = runs.join(run_id);
+    let output = run_dir.join("output");
+    for path in [&runs, &run_dir, &output] {
+        if fs::symlink_metadata(path).map_err(|e| e.to_string())?.file_type().is_symlink() {
+            return Err("checkpoint source contains a symlink".into());
+        }
+    }
+    let mut weights = Vec::new();
+    for entry in fs::read_dir(&output).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if !entry.file_type().map_err(|e| e.to_string())?.is_dir() { continue; }
+        let mut current = entry.path();
+        let step_dir = format!("global_step_{step}");
+        for component in ["checkpoints", step_dir.as_str(), "actor", "model_state_dict", "full_weights.pt"] {
+            current = current.join(component);
+            if fs::symlink_metadata(&current).is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err("checkpoint contains symlink".into());
+            }
+        }
+        let weight = current;
+        if weight.is_file() { weights.push(weight); }
+    }
+    if weights.len() != 1 { return Err("checkpoint must resolve to one full_weights.pt".into()); }
+    let source = fs::OpenOptions::new().read(true).custom_flags(0x20000).open(&weights[0]).map_err(|e| e.to_string())?;
+    let before = source.metadata().map_err(|e| e.to_string())?;
+    if before.len() == 0 { return Err("empty checkpoint".into()); }
+    let cas_dir = root.join("cas");
+    let tmp_dir = cas_dir.join("tmp");
+    fs::create_dir_all(&cas_dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    for path in [&cas_dir, &tmp_dir] {
+        if fs::symlink_metadata(path).map_err(|e| e.to_string())?.file_type().is_symlink() {
+            return Err("checkpoint CAS contains a symlink".into());
+        }
+    }
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?.as_nanos();
+    let tmp = tmp_dir.join(format!("checkpoint-{}-{nonce}", std::process::id()));
+    let result = (|| -> Result<Value, String> {
+        let mut out = fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e| e.to_string())?;
+        let mut input = source;
+        let mut hash = Sha256::new();
+        let mut buffer = [0u8; 1024 * 1024];
+        let mut bytes = 0u64;
+        loop {
+            let n = input.read(&mut buffer).map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            out.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+            hash.update(&buffer[..n]);
+            bytes += n as u64;
+        }
+        out.sync_all().map_err(|e| e.to_string())?;
+        let after = input.metadata().map_err(|e| e.to_string())?;
+        if bytes != before.len() || before.len() != after.len() || before.modified().ok() != after.modified().ok() {
+            return Err("checkpoint changed during freeze".into());
+        }
+        let digest = format!("{:x}", hash.finalize());
+        let dir = cas_dir.join(&digest[..2]);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        if fs::symlink_metadata(&dir).map_err(|e| e.to_string())?.file_type().is_symlink() {
+            return Err("checkpoint CAS digest directory is a symlink".into());
+        }
+        let dest = dir.join(&digest);
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o444)).map_err(|e| e.to_string())?;
+        match fs::hard_link(&tmp, &dest) {
+            Ok(()) => {},
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let meta = fs::symlink_metadata(&dest).map_err(|e| e.to_string())?;
+                if !meta.is_file() || meta.len() != bytes {
+                    return Err("CAS entry conflicts with checkpoint".into());
+                }
+                let mut existing = fs::File::open(&dest).map_err(|e| e.to_string())?;
+                let mut current = Sha256::new();
+                loop {
+                    let n = existing.read(&mut buffer).map_err(|e| e.to_string())?;
+                    if n == 0 { break; }
+                    current.update(&buffer[..n]);
+                }
+                if format!("{:x}", current.finalize()) != digest {
+                    return Err("CAS entry digest conflicts with checkpoint".into());
+                }
+            },
+            Err(e) => return Err(e.to_string()),
+        }
+        fs::remove_file(&tmp).map_err(|e| e.to_string())?;
+        Ok(json!({"path": dest, "sha256": digest, "bytes": bytes, "run_id": run_id, "step": step}))
+    })();
+    if tmp.exists() { let _ = fs::remove_file(&tmp); }
+    result
 }
 
 async fn scan_handler(Json(req): Json<ScanReq>) -> Json<Value> {

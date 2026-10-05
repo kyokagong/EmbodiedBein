@@ -74,6 +74,22 @@ class EmbodimentEnvRow(Base):
     policy_hz: Mapped[int | None] = mapped_column(Integer)
 
 
+class EnvironmentProfile(Base):
+    __tablename__ = "environment_profiles"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    usage: Mapped[str] = mapped_column(Text)
+    embodiment_env_id: Mapped[str] = mapped_column(Text, ForeignKey("embodiment_envs.id"))
+    task_id: Mapped[str] = mapped_column(Text)
+    template_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suite_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    definition: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="draft")
+    revision_of: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class TaskRow(Base):
     __tablename__ = "tasks"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -319,6 +335,19 @@ class Pipeline(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PipelineRun(Base):
+    __tablename__ = "pipeline_runs"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    pipeline_id: Mapped[str] = mapped_column(Text, ForeignKey("pipelines.id"))
+    spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, default="running")
+    job_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    created_by: Mapped[str] = mapped_column(Text)
+    idem_key: Mapped[str | None] = mapped_column(Text, unique=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class TrainJob(Base):
     __tablename__ = "train_jobs"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -364,7 +393,7 @@ class SimImage(Base):
 class SystemSettingsRow(Base):
     __tablename__ = "system_settings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    allowed_path_prefixes: Mapped[list[Any]] = mapped_column(JSONB, default=lambda: ["/data/kk", "/var/lib/eb"])
+    allowed_path_prefixes: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     rlinf_repo_path: Mapped[str] = mapped_column(Text, default="/data/kk/RLinf")
     default_train_image: Mapped[str] = mapped_column(Text, default="eb/rlinf:0.4.0-emb")
     hf_token: Mapped[str | None] = mapped_column(Text, nullable=True)

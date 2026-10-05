@@ -1,0 +1,38 @@
+id: ee_robotwin_aloha_joint14_v1
+embodiment_id: emb_robotwin_aloha_agilex
+robot_family: aloha_agilex
+morphology: robotwin_bimanual_simulation
+interface_version: 1
+status: draft
+dof: 14
+joint_order:
+  [fl_joint1, fl_joint2, fl_joint3, fl_joint4, fl_joint5, fl_joint6, fl_joint7,
+   fr_joint1, fr_joint2, fr_joint3, fr_joint4, fr_joint5, fr_joint6, fr_joint7]
+observation:
+  dim: 14
+  concat: true
+  layout:
+    - {term: measured_joint_and_gripper_position, dim: 14, source: observation.state}
+  modalities:
+    - {name: observation.images.cam_high, shape: [240, 320, 3], dtype: uint8}
+    - {name: observation.images.cam_left_wrist, shape: [240, 320, 3], dtype: uint8}
+    - {name: observation.images.cam_right_wrist, shape: [240, 320, 3], dtype: uint8}
+action:
+  dim: 14
+  type: joint_position_target
+  absolute: true
+  terms:
+    - {name: left_arm, type: absolute_joint_position, dim: 6, indices: [0, 1, 2, 3, 4, 5]}
+    - {name: left_gripper, type: absolute_normalized, dim: 1, indices: [6]}
+    - {name: right_arm, type: absolute_joint_position, dim: 6, indices: [7, 8, 9, 10, 11, 12]}
+    - {name: right_gripper, type: absolute_normalized, dim: 1, indices: [13]}
+control:
+  policy_hz: 15
+  control_hz: 300
+  sim_dt: 0.0033333333333333335
+  decimation: 20
+  max_policy_latency_ms: 66
+limits:
+  execution_scope: simulation_only
+  readiness: draft_until_runtime_probe
+  action_convention: RoboTwin ALOHA ordered absolute joint targets; π0.5 view applies joint-only delta transform and preserves absolute grippers

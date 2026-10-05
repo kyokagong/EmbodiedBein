@@ -8,7 +8,7 @@ ENV EB_WEB_OUT=/app/dist
 RUN mkdir -p /app/dist && npm run build
 
 FROM python:3.11-slim-bookworm
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
 WORKDIR /app

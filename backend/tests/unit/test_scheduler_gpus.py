@@ -21,3 +21,18 @@ def test_busy_gpu_excluded_from_free():
         ]
     }
     assert _free_gpu_indices(doctor) == [1, 2]
+
+
+def test_gpu_memory_from_external_workloads_limits_admission():
+    doctor = {'gpus':[{'index':0,'memory_free_mb':6000},
+                      {'index':1,'memory_free_mb':24000},
+                      {'index':2,'memory_free_mb':24000,'run_id':'other'}]}
+    assert _free_gpu_indices(doctor, min_free_mb=12000) == [1]
+
+
+def test_memory_admission_keeps_host_reserve_and_running_budgets():
+    from eb.scheduler.loop import _memory_budget_mb
+    assert _memory_budget_mb({}) == 0
+    assert _memory_budget_mb({"memory_available_mb": 80 * 1024}, 0) == 76 * 1024
+    assert _memory_budget_mb({"memory_available_mb": 80 * 1024}, 64 * 1024) == 12 * 1024
+    assert _memory_budget_mb({"memory_available_mb": 1000}, 0) == 0

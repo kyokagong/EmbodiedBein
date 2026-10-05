@@ -1,12 +1,19 @@
 name: eb
 
 x-bridge-env: &bridge-env
+  EB_HF_ENDPOINT: ${EB_HF_ENDPOINT:-https://huggingface.co}
+  http_proxy: ${http_proxy:-}
+  https_proxy: ${https_proxy:-}
+  no_proxy: ${no_proxy:-}
   EB_DB_URL: postgresql+asyncpg://eb:${EB_DB_PASSWORD}@postgres:5432/eb
   EB_REDIS_URL: redis://redis:6380/0
   EB_S3_ENDPOINT: http://minio:9000
   EB_S3_ACCESS_KEY: ${EB_S3_ACCESS_KEY:-ebadmin}
   EB_S3_SECRET_KEY: ${EB_S3_PASSWORD}
-  EB_DATA_ROOT: /var/lib/eb
+  EB_DATA_ROOT: ${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}
+  EB_MODELS_ROOT: ${EB_HOST_MODELS_DIR:-/data/kk/models}
+  EB_DATASETS_ROOT: ${EB_HOST_DATA_DIR:-/data/kk/data}
+  EB_ASSETS_ROOT: ${EB_HOST_ASSETS_DIR:-/data/kk/assets}
   EB_EBD_UDS: /run/eb/ebd.sock
   EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
   EB_SECRET_KEY: ${EB_SECRET_KEY}
@@ -75,7 +82,7 @@ services:
     pid: host
     environment:
       EB_REDIS_URL: redis://127.0.0.1:${EB_PORT_REDIS:-6380}/0
-      EB_DATA_ROOT: /var/lib/eb
+      EB_DATA_ROOT: ${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}
       EB_EBD_UDS: /run/eb/ebd.sock
       EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
       TZ: Asia/Shanghai
@@ -85,9 +92,12 @@ services:
       - /dev/dri:/dev/dri
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/eb:/var/lib/eb
       - /run/eb:/run/eb
       - /data/kk:/data/kk:ro
+      - ${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}:${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}
+      - ${EB_HOST_MODELS_DIR:-/data/kk/models}:${EB_HOST_MODELS_DIR:-/data/kk/models}
+      - ${EB_HOST_DATA_DIR:-/data/kk/data}:${EB_HOST_DATA_DIR:-/data/kk/data}
+      - ${EB_HOST_ASSETS_DIR:-/data/kk/assets}:${EB_HOST_ASSETS_DIR:-/data/kk/assets}
       - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
     healthcheck:
       test: ["CMD", "ebctl", "health"]
@@ -103,9 +113,12 @@ services:
     ports: ["${EB_PORT_API:-8000}:8000"]
     environment: *bridge-env
     volumes:
-      - /var/lib/eb:/var/lib/eb
       - /run/eb:/run/eb
       - /data/kk:/data/kk:ro
+      - ${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}:${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}
+      - ${EB_HOST_MODELS_DIR:-/data/kk/models}:${EB_HOST_MODELS_DIR:-/data/kk/models}
+      - ${EB_HOST_DATA_DIR:-/data/kk/data}:${EB_HOST_DATA_DIR:-/data/kk/data}
+      - ${EB_HOST_ASSETS_DIR:-/data/kk/assets}:${EB_HOST_ASSETS_DIR:-/data/kk/assets}
     depends_on:
       migrate:
         condition: service_completed_successfully

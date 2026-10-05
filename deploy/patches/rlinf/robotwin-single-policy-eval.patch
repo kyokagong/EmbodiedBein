@@ -1,0 +1,322 @@
+--- a/rlinf/scheduler/collective/async_work.py
++++ b/rlinf/scheduler/collective/async_work.py
+@@ -299,7 +299,13 @@
+     def _execute(self):
+         method = getattr(self._channel_actor, self._method)
+         future: ConcurrentFuture = method.remote(*self._args, **self._kwargs).future()
+-        future.add_done_callback(lambda f: self._future.set_result(f.result()))
++        future.add_done_callback(self._complete)
++
++    def _complete(self, future: ConcurrentFuture):
++        try:
++            self._future.set_result(future.result())
++        except BaseException as exc:
++            self._future.set_exception(exc)
+ 
+     async def async_wait(self):
+         """Async wait for the work to complete.
+--- a/rlinf/workers/rollout/hf/huggingface_worker.py
++++ b/rlinf/workers/rollout/hf/huggingface_worker.py
+@@ -137,8 +137,11 @@
+                 "rollout_results": [],
+             }
+         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
++        self.model_load_count = 0
+ 
+     def init_worker(self):
++        if self.model_load_count:
++            raise RuntimeError("Policy worker model may only be loaded once")
+         rollout_model_config = copy.deepcopy(self.model_cfg)
+         with open_dict(rollout_model_config):
+             rollout_model_config.precision = self.cfg.rollout.model.precision
+@@ -189,6 +192,7 @@
+             )
+ 
+         self.setup_sample_params()
++        self.model_load_count += 1
+         if self.enable_offload:
+             self.offload_model()
+ 
+@@ -836,45 +840,99 @@
+                     split_sizes=split_sizes,
+                 )
+         else:
+-            for _ in tqdm(
+-                range(self.eval_rollout_epoch),
+-                desc="Evaluating Rollout Epochs",
+-                disable=(self._rank != 0),
+-            ):
+-                for _ in range(self.n_eval_chunk_steps):
+-                    for stage_id in range(self.num_pipeline_stages):
+-                        env_output = await self.recv_from(
+-                            group_name=self.cfg.env.group_name,
+-                            channel=input_channel,
+-                            tag="eval_rollout_results",
+-                            route_key=stage_id,
+-                            async_op=True,
+-                            batch_size=self.eval_batch_size,
+-                            merge_fn=self._merge_obs_batches,
+-                            infer_batch_size_fn=self._infer_env_batch_size,
+-                        ).async_wait()
+-                        actions, _ = self._predict_rollout_actions(
+-                            env_output["obs"],
+-                            mode="eval",
+-                            final_obs=env_output.get("final_obs", None),
+-                            rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+-                            intervene_requested=env_output.get("intervene_flags", None),
+-                        )
+-                        if isinstance(actions, torch.Tensor):
+-                            actions = actions.detach().cpu().contiguous()
+-                        self.send_to(
+-                            group_name=self.cfg.env.group_name,
+-                            channel=output_channel,
+-                            data=actions,
+-                            tag="eval_rollout_results",
+-                            route_key=stage_id,
+-                            async_op=True,
+-                            batch_size=self.eval_batch_size,
+-                        )
++            await self.evaluate_wave(
++                input_channel,
++                output_channel,
++                steps=self.eval_rollout_epoch * self.n_eval_chunk_steps,
++                micro_batch_size=int(
++                    self.cfg.rollout.get("inference_micro_batch_size", self.eval_batch_size)
++                ),
++            )
+ 
+             if self.enable_offload:
+                 self.offload_model()
+ 
++    @staticmethod
++    def _slice_eval_obs(obs: dict[str, Any], start: int, stop: int, total: int):
++        sliced = {}
++        for key, value in obs.items():
++            if isinstance(value, (torch.Tensor, np.ndarray)):
++                sliced[key] = value[start:stop]
++            elif isinstance(value, (list, tuple)) and len(value) == total:
++                sliced[key] = value[start:stop]
++            else:
++                sliced[key] = value
++        return sliced
++
++    @staticmethod
++    def _split_actions(actions: torch.Tensor, sizes: list[int]):
++        if sum(sizes) != actions.shape[0]:
++            raise ValueError("action route sizes do not match the inferred batch")
++        return list(torch.split(actions, sizes, dim=0))
++
++    def _predict_eval_micro_batches(
++        self, obs: dict[str, Any], micro_batch_size: int
++    ) -> torch.Tensor:
++        if micro_batch_size < 1:
++            raise ValueError("inference_micro_batch_size must be positive")
++        total = self._infer_env_batch_size(obs)
++        outputs = []
++        for start in range(0, total, micro_batch_size):
++            piece = self._slice_eval_obs(
++                obs, start, min(start + micro_batch_size, total), total
++            )
++            actions, _ = self._predict_rollout_actions(piece, mode="eval")
++            outputs.append(torch.as_tensor(actions).detach().cpu().contiguous())
++        return torch.cat(outputs, dim=0)
++
++    async def evaluate_wave(
++        self,
++        input_channel: Channel,
++        output_channel: Channel,
++        steps: int,
++        micro_batch_size: int,
++    ):
++        if self.enable_offload:
++            raise ValueError("persistent evaluation requires rollout.enable_offload=False")
++        if int(self.cfg.rollout.get("max_inflight_batches", 1)) != 1:
++            raise ValueError("persistent evaluation supports max_inflight_batches=1")
++        for _ in range(steps):
++            for stage_id in range(self.num_pipeline_stages):
++                env_output = await self.recv_from(
++                    group_name=self.cfg.env.group_name,
++                    channel=input_channel,
++                    tag="eval_rollout_results",
++                    route_key=stage_id,
++                    async_op=True,
++                    batch_size=self.eval_batch_size,
++                    merge_fn=self._merge_obs_batches,
++                    infer_batch_size_fn=self._infer_env_batch_size,
++                ).async_wait()
++                actions = self._predict_eval_micro_batches(
++                    env_output["obs"], micro_batch_size
++                )
++                self.send_to(
++                    group_name=self.cfg.env.group_name,
++                    channel=output_channel,
++                    data=actions,
++                    tag="eval_rollout_results",
++                    route_key=stage_id,
++                    async_op=True,
++                    batch_size=self.eval_batch_size,
++                )
++        return self.runtime_receipt()
++
++    def runtime_receipt(self):
++        return {
++            "policy_worker_count": 1,
++            "model_load_count": self.model_load_count,
++        }
++
++    def close_policy(self):
++        self.hf_model = None
++        gc.collect()
++        self.torch_platform.empty_cache()
++
+     def offload_model(self):
+         if self.enable_cuda_graph:
+             self.hf_model.release_cuda_graph()
+--- a/rlinf/runners/embodied_eval_runner.py
++++ b/rlinf/runners/embodied_eval_runner.py
+@@ -90,6 +90,27 @@
+         eval_metrics.update(rollout_metrics)
+         return eval_metrics
+ 
++    def evaluate_wave(self, steps: int, micro_batch_size: int):
++        env_handle: Handle = self.env.evaluate(
++            input_channel=self.env_channel,
++            rollout_channel=self.rollout_channel,
++        )
++        rollout_handle: Handle = self.rollout.evaluate_wave(
++            input_channel=self.rollout_channel,
++            output_channel=self.env_channel,
++            steps=steps,
++            micro_batch_size=micro_batch_size,
++        )
++        env_results = env_handle.wait()
++        rollout_results = rollout_handle.wait()
++        metrics = compute_evaluate_metrics(
++            [result for result in env_results if result is not None]
++        )
++        receipts = [result for result in rollout_results if result is not None]
++        if receipts:
++            metrics["runtime_receipt"] = receipts[0]
++        return metrics
++
+     def run(self):
+         start_time = time.time()
+         eval_metrics = self.evaluate()
+--- a/rlinf/workers/env/env_worker.py
++++ b/rlinf/workers/env/env_worker.py
+@@ -66,6 +66,14 @@
+     # ``split_fn`` (see ``_split_and_compress_obs``).
+     _obs_split_fn = None
+ 
++    @staticmethod
++    def eval_rank_slice(total: int, rank: int, world_size: int) -> tuple[int, int]:
++        if total < world_size or not 0 <= rank < world_size:
++            raise ValueError("evaluation wave must activate every Env Worker")
++        base, extra = divmod(total, world_size)
++        start = rank * base + min(rank, extra)
++        return start, start + base + (rank < extra)
++
+     def __init__(self, cfg: DictConfig):
+         Worker.__init__(self)
+ 
+--- a/rlinf/envs/sim/robotwin/robotwin_env.py
++++ b/rlinf/envs/sim/robotwin/robotwin_env.py
+@@ -153,7 +153,10 @@
+         return infos
+ 
+     def center_and_crop(self, image, center_crop=False):
+-        image = np.array(image)
++        image = np.asarray(image)
++        if (not center_crop and image.dtype == np.uint8 and image.ndim == 3
++                and image.shape[-1] == 3 and image.flags.c_contiguous):
++            return image
+ 
+         image = Image.fromarray(image).convert("RGB")
+         if center_crop:
+@@ -408,13 +411,27 @@
+         return extracted_obs, infos
+ 
+     def offload(self, clear_cache=True):
+-        if hasattr(self, "venv"):
+-            self.venv.close(clear_cache)
++        if not hasattr(self, "venv"):
++            return {"children_alive": 0, "renderers_alive": 0}
++        self.venv.close(clear_cache)
++        pool = getattr(self.venv, "env_thread_pool", None)
++        if pool is not None:
++            pool.shutdown(wait=True, cancel_futures=True)
++        del self.venv
++        return {"children_alive": 0, "renderers_alive": 0}
+ 
+     def sample_action_space(self):
+         return np.random.randn(self.num_envs, self.horizon, 14)
+ 
+     def _init_reset_state_ids(self):
++        fixed = self.cfg.get("fixed_reset_state_ids", None)
++        if fixed is not None:
++            self.reset_state_ids = torch.as_tensor(fixed, dtype=torch.long)
++            if self.reset_state_ids.numel() != self.num_envs:
++                raise ValueError("fixed_reset_state_ids must match local env count")
++            self.success_seeds = self.reset_state_ids.clone()
++            self._current_seed_index = 0
++            return
+         if self.cfg.get("seeds_path", None) is not None and os.path.exists(
+             self.cfg.seeds_path
+         ):
+--- a/evaluations/robotwin/robotwin_adjust_bottle_openpi_pi05_eval.yaml
++++ b/evaluations/robotwin/robotwin_adjust_bottle_openpi_pi05_eval.yaml
+@@ -2,6 +2,7 @@ defaults:
+   - env/robotwin_adjust_bottle@env.eval
+   - model/pi0_5@rollout.model
+   - override hydra/job_logging: stdout
++  - _self_
+ 
+ hydra:
+   run:
+@@ -13,7 +13,8 @@
+ cluster:
+   num_nodes: 1
+   component_placement:
+-    env, rollout: 0-7
++    env: 0-3
++    rollout: 0
+ 
+ runner:
+   task_type: embodied_eval
+@@ -27,6 +28,7 @@
+   max_steps: -1
+ 
+   only_eval: True
++  enable_decoupled_mode: False
+   val_check_interval: -1
+   save_interval: -1
+ 
+@@ -35,7 +37,7 @@
+ 
+ env:
+   group_name: "EnvGroup"
+-  enable_offload: True
++  enable_offload: False
+   # Override the default values in env/robotwin_adjust_bottle
+   eval:
+     rollout_epoch: 1
+@@ -51,7 +53,7 @@
+     assets_path: "/path/to/robotwin_assets"
+     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
+     video_cfg:
+-      save_video: True
++      save_video: False
+       video_base_dir: ${runner.logger.log_path}/video/eval
+     center_crop: False
+     task_config:
+@@ -71,7 +73,9 @@
+   group_name: "RolloutGroup"
+   backend: "huggingface"
+   recompute_logprobs: False
+-  enable_offload: True
++  enable_offload: False
++  inference_micro_batch_size: 4
++  max_inflight_batches: 1
+   pipeline_stage_num: 1
+   model:
+     model_path: "/path/to/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle"

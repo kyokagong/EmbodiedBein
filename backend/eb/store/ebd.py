@@ -10,7 +10,9 @@ class EbdClient:
         self.settings = get_settings()
 
     def _client(self, timeout: float = 30.0) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=self.settings.ebd_uds), timeout=timeout)
+        return httpx.AsyncClient(
+            transport=httpx.AsyncHTTPTransport(uds=self.settings.ebd_uds), timeout=timeout
+        )
 
     async def health(self) -> dict:
         try:
@@ -30,9 +32,32 @@ class EbdClient:
         except Exception as e:
             return {"gpus": [], "error": str(e)}
 
+    async def image_info(self, name: str) -> dict:
+        try:
+            async with self._client() as c:
+                r = await c.get("http://ebd/v1/images/inspect", params={"name": name})
+                if r.status_code == 404:
+                    return {"ok": False, "status": "missing"}
+                r.raise_for_status()
+                return r.json()
+        except Exception as e:
+            return {"ok": False, "status": "unavailable", "error": str(e)}
+
     async def submit_run(self, payload: dict) -> dict:
         async with self._client() as c:
             r = await c.post("http://ebd/v1/runs", json=payload)
+            r.raise_for_status()
+            return r.json()
+
+    async def snapshot(self, path: str, content_hash: str | None = None) -> dict:
+        async with self._client(timeout=3600.0) as c:
+            r = await c.post("http://ebd/v1/snapshots", json={"path": path, "content_hash": content_hash})
+            r.raise_for_status()
+            return r.json()
+
+    async def freeze_checkpoint(self, run_id: str, step: int) -> dict:
+        async with self._client(timeout=3600.0) as c:
+            r = await c.post("http://ebd/v1/checkpoints/freeze", json={"run_id": run_id, "step": step})
             r.raise_for_status()
             return r.json()
 

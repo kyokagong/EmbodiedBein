@@ -3,12 +3,13 @@ use std::path::Path as FsPath;
 use sysinfo::System;
 
 pub fn doctor() -> HostProfile {
-    let mut sys = System::new_all();
-    sys.refresh_all();
+    let mut sys = System::new();
+    sys.refresh_memory();
     HostProfile {
         hostname: System::host_name().unwrap_or_else(|| "unknown".into()),
         gpus: nvidia_smi_gpus(),
         memory_total_mb: sys.total_memory() / 1024 / 1024,
+        memory_available_mb: sys.available_memory() / 1024 / 1024,
         has_dri: FsPath::new("/dev/dri").exists(),
     }
 }
@@ -42,4 +43,15 @@ pub fn nvidia_smi_gpus() -> Vec<GpuInfo> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn doctor_reports_available_host_memory() {
+        let profile = super::doctor();
+        assert!(profile.memory_total_mb > 0);
+        assert!(profile.memory_available_mb > 0);
+        assert!(profile.memory_available_mb <= profile.memory_total_mb);
+    }
 }

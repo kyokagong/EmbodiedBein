@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from passlib.hash import pbkdf2_sha256
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from eb.agent.playbooks import catalog as playbook_catalog
@@ -18,6 +18,7 @@ from eb.api.deps import PrincipalDep, SessionDep
 from eb.capacity import estimate_job
 from eb.domain.contract import EmbodimentEnv
 from eb.domain.data_view import (
+    compact_dataset_stats,
     dataset_overview,
     episode_media,
     license_gate,
@@ -25,7 +26,7 @@ from eb.domain.data_view import (
     quality_summary,
     slice_preview,
 )
-from eb.domain.fsm import JobStatus
+from eb.domain.fsm import JOB_TERMINAL, JobStatus
 from eb.domain.job import JobSpec
 from eb.gates.engine import evaluate_gate_dsl, g3_model
 from eb.harness.toolbus import ToolBus
@@ -42,6 +43,7 @@ from eb.store.models import (
     Dataset,
     DatasetVersion,
     EmbodimentEnvRow,
+    EmbodimentRow,
     EvalReport,
     EvalSuite,
     Experiment,
@@ -54,6 +56,7 @@ from eb.store.models import (
     Robot,
     Run,
     Share,
+    TrainJob,
     User,
 )
 
@@ -106,19 +109,30 @@ async def list_datasets(session: SessionDep, principal: PrincipalDep) -> dict:
     rows = (await session.scalars(select(Dataset))).all()
     items = []
     for r in rows:
+        if (r.meta or {}).get("validation_job_id"):
+            from eb.api.routes_data import reconcile_dataset
+            await reconcile_dataset(r, session)
         q = select(DatasetVersion).where(DatasetVersion.dataset_id == r.id).order_by(DatasetVersion.created_at)
         vers = (await session.scalars(q)).all()
         vdicts = [
             _row(v, ["id", "version", "stats", "funnel", "compatible_envs", "content_hash"])
             for v in vers
         ]
+        environment = await session.get(EmbodimentEnvRow, r.embodiment_env_id) if r.embodiment_env_id else None
+        embodiment = await session.get(EmbodimentRow, environment.embodiment_id) if environment else None
         overview = dataset_overview(
-            name=r.name, fmt=r.format, license=r.license, embodiment_env_id=r.embodiment_env_id, versions=vdicts
+            name=r.name, fmt=r.format, license=r.license, embodiment_env_id=r.embodiment_env_id, versions=vdicts,
+            summary_stats=r.summary_stats, environment=environment.spec if environment else None,
         )
         items.append(
             {
                 **_row(r, ["id", "name", "format", "license", "embodiment_env_id", "meta"]),
+                "embodiment_id": environment.embodiment_id if environment else None,
+                "embodiment_name": embodiment.display_name if embodiment else None,
+                "usage": (r.meta or {}).get("usage", "train"),
                 **overview,
+                "summary_stats": compact_dataset_stats(r.summary_stats),
+                "validation": (r.summary_stats or {}).get("validation", {"status": "not_validated", "training_ready": False}),
                 "versions": vdicts,
                 "source_kind": getattr(r, "source_kind", "path"),
                 "source_uri": getattr(r, "source_uri", "") or "",
@@ -138,23 +152,34 @@ async def get_dataset(did: str, session: SessionDep, principal: PrincipalDep) ->
     ds = await session.get(Dataset, did)
     if not ds:
         raise HTTPException(404)
+    from eb.api.routes_data import reconcile_dataset
+    await reconcile_dataset(ds, session)
     q = select(DatasetVersion).where(DatasetVersion.dataset_id == did).order_by(DatasetVersion.created_at)
     vers = (await session.scalars(q)).all()
     fields = ["id", "version", "stats", "funnel", "compatible_envs", "content_hash"]
     vdicts = [_row(v, fields) for v in vers]
+    environment = await session.get(EmbodimentEnvRow, ds.embodiment_env_id) if ds.embodiment_env_id else None
+    embodiment = await session.get(EmbodimentRow, environment.embodiment_id) if environment else None
     overview = dataset_overview(
-        name=ds.name, fmt=ds.format, license=ds.license, embodiment_env_id=ds.embodiment_env_id, versions=vdicts
+        name=ds.name, fmt=ds.format, license=ds.license, embodiment_env_id=ds.embodiment_env_id, versions=vdicts,
+        summary_stats=ds.summary_stats, environment=environment.spec if environment else None,
     )
     latest = vdicts[-1] if vdicts else {}
     quality = quality_summary(
         overview["funnel"],
         license=ds.license,
         compatible_envs=(latest.get("compatible_envs") if latest else None),
-        stats=latest.get("stats") if latest else {},
+        stats={**(latest.get("stats") or {}), **compact_dataset_stats(ds.summary_stats),
+               "interface_compatibility": overview["interface_compatibility"]},
     )
     dest = getattr(ds, "dest_path", None) or ((ds.meta or {}).get("root") if ds.meta else None)
     return {
         **_row(ds, ["id", "name", "format", "license", "embodiment_env_id", "meta"]),
+        "embodiment_id": environment.embodiment_id if environment else None,
+        "embodiment_name": embodiment.display_name if embodiment else None,
+        "usage": (ds.meta or {}).get("usage", "train"),
+        "summary_stats": compact_dataset_stats(ds.summary_stats),
+        "validation": (ds.summary_stats or {}).get("validation", {"status": "not_validated", "training_ready": False}),
         "versions": vdicts,
         "overview": overview,
         "quality": quality,
@@ -192,19 +217,12 @@ async def episode_preview(did: str, vid: str, ep: str, session: SessionDep, prin
     if not v or v.dataset_id != did:
         raise HTTPException(404)
     ds = await session.get(Dataset, did)
-    root = Path(((ds.meta if ds else {}) or {}).get("root") or "/data/kk/berkeley_ego_data")
-    payload = episode_media(root, ep)
+    from urllib.parse import quote
+    root = Path((ds.dest_path if ds else "") or ((ds.meta if ds else {}) or {}).get("root") or "")
+    payload = episode_media(root, ep, ((ds.summary_stats if ds else {}) or {}).get("episodes", []))
     if payload.get("path"):
-        from eb.onnx_io import sha256_file
-
-        video = Path(payload["path"])
-        digest = sha256_file(video)
-        cas = get_settings().data_root / "cas" / digest[:2] / digest
-        cas.parent.mkdir(parents=True, exist_ok=True)
-        if not cas.exists():
-            cas.write_bytes(video.read_bytes()[: 8 * 1024 * 1024])
-        payload["video_cas"] = digest
-        payload["media_url"] = f"/media/{digest[:2]}/{digest}"
+        relative = str(Path(payload["path"]).relative_to(root))
+        payload["media_url"] = f"/api/v1/datasets/{did}/media?path={quote(relative, safe='')}"
     return payload
 
 
@@ -222,12 +240,18 @@ async def dataset_slice_preview(did: str, body: dict, session: SessionDep, princ
 async def list_models(session: SessionDep, principal: PrincipalDep) -> dict:
     fams = (await session.scalars(select(ModelFamily))).all()
     vers = (await session.scalars(select(ModelVersion))).all()
+    trains = (await session.scalars(select(TrainJob))).all()
+    train_names = {t.id: t.name for t in trains}
+    job_train_names = {t.job_id: t.name for t in trains if t.job_id}
+    job_train_ids = {t.job_id: t.id for t in trains if t.job_id}
     from eb.store.models import WeightModel
 
     weights = (await session.scalars(select(WeightModel))).all()
     return {
         "families": [_row(f, ["id", "name", "family"]) for f in fams],
-        "versions": [_row(v, ["id", "family_id", "name", "embodiment_env_id", "provenance", "tags", "io_signature"]) for v in vers],
+        "versions": [{**_row(v, ["id", "family_id", "name", "embodiment_env_id", "provenance", "tags", "io_signature", "card", "created_at"]),
+                      "train_job_name": job_train_names.get((v.card or {}).get("train_job_id")),
+                      "train_page_id": job_train_ids.get((v.card or {}).get("train_job_id"))} for v in vers],
         "items": [
             {
                 "id": w.id,
@@ -236,6 +260,7 @@ async def list_models(session: SessionDep, principal: PrincipalDep) -> dict:
                 "path": w.path,
                 "embodiment_id": w.embodiment_id,
                 "train_job_id": w.train_job_id,
+                "train_job_name": train_names.get(w.train_job_id),
                 "parent_model_id": w.parent_model_id,
             }
             for w in weights
@@ -247,7 +272,28 @@ async def list_models(session: SessionDep, principal: PrincipalDep) -> dict:
 async def get_model(mid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     v = await session.get(ModelVersion, mid)
     if v:
-        out = _row(v, ["id", "family_id", "name", "embodiment_env_id", "io_signature", "mem_profile", "card", "tags", "provenance"])
+        out = _row(v, ["id", "family_id", "name", "embodiment_env_id", "io_signature", "mem_profile", "card", "tags", "provenance", "created_at"])
+        train_job_id = (v.card or {}).get("train_job_id")
+        producer = await session.scalar(select(TrainJob).where(TrainJob.job_id == train_job_id)) if train_job_id else None
+        if producer:
+            out["train_job_name"] = producer.name
+            out["train_page_id"] = producer.id
+        if v.artifact_id:
+            artifact = await session.get(Artifact, v.artifact_id)
+            if artifact:
+                out["artifact"] = _row(artifact, ["id", "kind", "sha256", "size_bytes", "storage", "meta"])
+        if (v.card or {}).get("schema_version") == "eb/rpo-wbc-model/v1" and not (v.card or {}).get("training"):
+            source_run = await session.get(Run, (v.card or {}).get("run_id"))
+            producer = await session.get(Job, source_run.job_id) if source_run else None
+            if producer:
+                out["card"] = {**(v.card or {}), "training":{
+                    "kind":producer.kind, "image":(producer.spec or {}).get("image"),
+                    "resources":(producer.spec or {}).get("resources") or {},
+                    "overrides":(producer.spec or {}).get("overrides") or []}}
+        reports = (await session.scalars(select(EvalReport).where(EvalReport.model_version_id == v.id)
+                                         .order_by(EvalReport.created_at.desc()).limit(20))).all()
+        out["eval_reports"] = [_row(report, ["id", "suite_id", "run_id", "metrics", "gate_results", "created_at"])
+                               for report in reports]
         if v.embodiment_env_id:
             crow = await session.get(EmbodimentEnvRow, v.embodiment_env_id)
             if crow:
@@ -259,6 +305,7 @@ async def get_model(mid: str, session: SessionDep, principal: PrincipalDep) -> d
     w = await session.get(WeightModel, mid)
     if not w:
         raise HTTPException(404)
+    producer = await session.get(TrainJob, w.train_job_id) if w.train_job_id else None
     edges = (
         await session.scalars(select(LineageEdge).where((LineageEdge.src_id == mid) | (LineageEdge.dst_id == mid)))
     ).all()
@@ -271,6 +318,7 @@ async def get_model(mid: str, session: SessionDep, principal: PrincipalDep) -> d
         "size_bytes": w.size_bytes,
         "embodiment_id": w.embodiment_id,
         "train_job_id": w.train_job_id,
+        "train_job_name": producer.name if producer else None,
         "parent_model_id": w.parent_model_id,
         "metrics_at_checkpoint": w.metrics_at_checkpoint or {},
         "created_at": w.created_at.isoformat() if w.created_at else None,
@@ -282,7 +330,42 @@ async def get_model(mid: str, session: SessionDep, principal: PrincipalDep) -> d
 @api_v1.get("/models/{mid}/lineage")
 async def model_lineage(mid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     edges = (await session.scalars(select(LineageEdge).where((LineageEdge.src_id == mid) | (LineageEdge.dst_id == mid)))).all()
-    return {"edges": [_row(e, ["src_type", "src_id", "dst_type", "dst_id", "relation"]) for e in edges]}
+    model = await session.get(WeightModel, mid) or await session.get(ModelVersion, mid)
+    if not model:
+        raise HTTPException(404)
+    endpoints = {(e.src_type, e.src_id) for e in edges} | {(e.dst_type, e.dst_id) for e in edges}
+    endpoints.add(("model" if isinstance(model, WeightModel) else "model_version", mid))
+    nodes = []
+    for kind, node_id in sorted(endpoints):
+        name, href = node_id, None
+        if kind in {"model", "model_version"}:
+            target = await session.get(WeightModel, node_id) if kind == "model" else await session.get(ModelVersion, node_id)
+            if not target and kind == "model":  # Older Run edges use "model" for a ModelVersion.
+                target = await session.get(ModelVersion, node_id)
+            if target:
+                name, href = target.name, f"/models/{node_id}"
+        elif kind == "train_job":
+            target = await session.get(TrainJob, node_id)
+            if target:
+                name, href = target.name, f"/train/{node_id}"
+        elif kind in {"job", "run"}:
+            run = await session.get(Run, node_id) if kind == "run" else None
+            job = await session.get(Job, run.job_id if run else node_id)
+            if job:
+                train = await session.scalar(select(TrainJob).where(TrainJob.job_id == job.id))
+                name = train.name if train else (job.spec or {}).get("name") or node_id
+                href = f"/train/{train.id}" if train else (f"/train/runs/{node_id}" if run else f"/eval/jobs/{node_id}")
+        elif kind == "dataset":
+            target = await session.get(Dataset, node_id)
+            if target:
+                name, href = target.name, f"/data/{node_id}"
+        elif kind == "embodiment":
+            target = await session.get(EmbodimentRow, node_id)
+            if target:
+                name, href = target.display_name, f"/embodiments/{node_id}"
+        nodes.append({"type": kind, "id": node_id, "name": name, "href": href})
+    return {"edges": [_row(e, ["src_type", "src_id", "dst_type", "dst_id", "relation"]) for e in edges],
+            "nodes": nodes}
 
 
 @api_v1.get("/experiments")
@@ -343,18 +426,25 @@ async def preview_job_command(body: dict, session: SessionDep, principal: Princi
 
 @api_v1.post("/jobs/{jid}/cancel")
 async def cancel_job(jid: str, session: SessionDep, principal: PrincipalDep) -> dict:
-    job = await session.get(Job, jid)
+    from datetime import UTC, datetime
+    job = await session.get(Job, jid, with_for_update=True, populate_existing=True)
     if not job:
         raise HTTPException(404)
+    if JobStatus(job.status) in JOB_TERMINAL:
+        raise HTTPException(409, "terminal jobs cannot be cancelled")
     run = await session.scalar(select(Run).where(Run.job_id == jid).order_by(Run.attempt.desc()))
     if run and run.id:
         try:
             await EbdClient().cancel_run(run.id)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise HTTPException(503, "container cancellation failed; job remains active") from exc
         run.status = "aborted"
         run.abort_reason = "cancelled"
+        run.finished_at = datetime.now(UTC)
     job.status = JobStatus.CANCELLED.value
+    if run:
+        from eb.orchestrator.collect import archive_partial_eval
+        await archive_partial_eval(session, job, run)
     await session.commit()
     return _job_out(job)
 
@@ -430,40 +520,112 @@ async def run_logs(rid: str, session: SessionDep, principal: PrincipalDep, tail:
 
 
 @api_v1.get("/evals/suites")
-async def list_suites(session: SessionDep, principal: PrincipalDep) -> dict:
+async def list_suites(session: SessionDep, principal: PrincipalDep, benchmark: str | None = None) -> dict:
     rows = (await session.scalars(select(EvalSuite))).all()
-    return {"items": [_row(r, ["id", "name", "embodiment_env_id", "seeds", "frozen"]) for r in rows]}
+    if benchmark:
+        rows = [row for row in rows if (row.spec or {}).get("benchmark", "libero") == benchmark]
+    return {"items": [_row(r, ["id", "name", "embodiment_env_id", "seeds", "frozen", "spec"]) for r in rows]}
 
 
 @api_v1.get("/evals/reports")
 async def list_reports(session: SessionDep, principal: PrincipalDep) -> dict:
-    from eb.eval.wilson import wilson_ci
+    from eb.eval.wilson import report_interval
     rows = (await session.scalars(select(EvalReport))).all()
     items = []
     for r in rows:
-        item = _row(r, ["id", "suite_id", "model_version_id", "metrics", "gate_results"])
+        item = _row(r, ["id", "suite_id", "model_version_id", "run_id", "metrics", "gate_results"])
         metrics = item.get("metrics") or {}
-        sr = metrics.get("success_rate")
-        n = metrics.get("n_trials") or metrics.get("n") or 64
-        if sr is not None:
-            item["wilson_ci"] = wilson_ci(round(float(sr) * n), n)
+        item["wilson_ci"] = report_interval(metrics)
         items.append(item)
     return {"items": items}
 
 
 @api_v1.get("/evals/reports/{eid}")
 async def get_report(eid: str, session: SessionDep, principal: PrincipalDep) -> dict:
-    from eb.eval.wilson import wilson_ci
+    from eb.eval.wilson import report_interval
     row = await session.get(EvalReport, eid)
     if not row:
         raise HTTPException(404)
-    item = _row(row, ["id", "suite_id", "model_version_id", "metrics", "gate_results"])
+    item = _row(row, ["id", "suite_id", "model_version_id", "run_id", "metrics", "gate_results"])
     metrics = item.get("metrics") or {}
-    sr = metrics.get("success_rate")
-    n = metrics.get("n_trials") or metrics.get("n") or 64
-    if sr is not None:
-        item["wilson_ci"] = wilson_ci(round(float(sr) * n), n)
+    item["wilson_ci"] = report_interval(metrics)
     return item
+
+
+@api_v1.get("/evals/reports/{eid}/episodes")
+async def get_report_episodes(eid: str, session: SessionDep, principal: PrincipalDep,
+                              task_id: int | None = None, failures_only: bool = False) -> dict:
+    """Serve bounded case evidence from a validated report, never a client path."""
+    import json
+    import re
+    row = await session.get(EvalReport, eid)
+    if not row:
+        raise HTTPException(404)
+    if not row.run_id or not re.fullmatch(r"run_[A-Za-z0-9_-]+", row.run_id):
+        return {"items": [], "available": False}
+    from eb.settings import get_settings
+    runs_root = get_settings().data_root / "runs"
+    run_root = runs_root / row.run_id
+    root = run_root / "output"
+    if any(part.is_symlink() for part in (runs_root, run_root, root)) or not root.is_dir():
+        return {"items": [], "available": False, "total": 0}
+    items = []
+    evidence_files = sorted(root.glob("eval-episodes-rank*.jsonl"))
+    if not evidence_files and (row.suite_id or "").startswith(("suite_rpo_v2_wbc_", "suite_rpo_v2_amp_", "suite_rpo_v2_flat_")):
+        evidence_files = [root / "eval-cases.jsonl"] if (root / "eval-cases.jsonl").is_file() else []
+    for path in evidence_files:
+        if path.is_symlink() or path.stat().st_size > 1024 * 1024:
+            raise HTTPException(409, "逐案例证据不可用")
+        try:
+            items.extend(json.loads(line) for line in path.read_text().splitlines() if line)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(409, "逐案例证据损坏") from exc
+    if (row.gate_results or {}).get("validity") == "incomplete":
+        run = await session.get(Run, row.run_id)
+        job = await session.get(Job, run.job_id) if run else None
+        plan = (((job.spec or {}).get("params") or {}).get("eval_plan") or {}) if job else {}
+        seen = {item.get("case_id") for item in items if isinstance(item, dict)}
+        items.extend({**case, "status": "not_started", "success": None} for case in plan.get("cases", [])
+                     if case.get("case_id") not in seen)
+    for item in items:
+        relative = item.get("video_rel") if isinstance(item, dict) else None
+        if relative:
+            if not isinstance(relative, str) or not re.fullmatch(r"seed_\d+/\d+\.mp4", relative):
+                item.pop("video_rel", None)
+                item["video_status"] = "unavailable"
+                continue
+            video = root / "video/eval" / relative
+            if (any(part.is_symlink() for part in (root / "video", root / "video/eval", video.parent, video))
+                    or not video.is_file()):
+                item.pop("video_rel", None)
+                item["video_status"] = "unavailable"
+            else:
+                item["video_status"] = "available"
+    items = [item for item in items if (task_id is None or item.get("task_id") == task_id)
+             and (not failures_only or item.get("status") in {"task_failure", "timeout", "invalid"})]
+    return {"items": items[:1000], "available": bool(evidence_files), "total": len(items)}
+
+
+@api_v1.get("/evals/reports/{eid}/media/{seed}/{index}")
+async def get_eval_video(eid: str, seed: int, index: int, session: SessionDep,
+                         principal: PrincipalDep):
+    import re
+    if seed < 0 or index < 0 or seed > 1_000_000 or index > 10_000:
+        raise HTTPException(404)
+    row = await session.get(EvalReport, eid)
+    if not row or not row.run_id or not re.fullmatch(r"run_[A-Za-z0-9_-]+", row.run_id):
+        raise HTTPException(404)
+    from eb.settings import get_settings
+    directory = get_settings().data_root / "runs" / row.run_id / "output/video/eval" / f"seed_{seed}"
+    path = directory / f"{index}.mp4"
+    output = get_settings().data_root / "runs" / row.run_id / "output"
+    runs_root = get_settings().data_root / "runs"
+    if (any(part.is_symlink() for part in (runs_root, runs_root / row.run_id, output,
+                                           output / "video", output / "video/eval", directory, path))
+            or not path.is_file() or not path.resolve().is_relative_to(output.resolve())):
+        raise HTTPException(404)
+    # FileResponse serves bounded chunks/Range without parsing video in the API.
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})
 
 
 @api_v1.get("/evals/reports/{eid}/cross-domain-drift")
@@ -473,35 +635,31 @@ async def get_cross_domain_drift(eid: str, session: SessionDep, principal: Princ
     if not row:
         raise HTTPException(404)
     suite = await session.get(EvalSuite, row.suite_id) if row.suite_id else None
-    ee_id = suite.embodiment_env_id if suite else "ee_bhl_biped_12dof_v1"
-    env_row = await session.get(EmbodimentEnvRow, ee_id)
-    layout = []
-    if env_row and env_row.spec:
-        layout = (env_row.spec.get("observation") or {}).get("layout") or []
-    if not layout:
-        layout = [
-            {"name": "base_ang_vel", "dim": 3},
-            {"name": "projected_gravity", "dim": 3},
-            {"name": "command", "dim": 3},
-            {"name": "joint_pos_rel", "dim": 12},
-            {"name": "joint_vel_rel", "dim": 12},
-            {"name": "last_action", "dim": 12},
-        ]
-    return compute_observation_drift(ee_id, layout)
+    ee_id = suite.embodiment_env_id if suite else ""
+    env_row = await session.get(EmbodimentEnvRow, ee_id) if ee_id else None
+    layout = ((env_row.spec or {}).get("observation") or {}).get("layout", []) if env_row else []
+    stats = (row.metrics or {}).get("observation_stats") or {}
+    return compute_observation_drift(ee_id, layout, stats.get("isaac"), stats.get("mujoco"), stats.get("real"))
+
 
 
 @api_v1.get("/evals/leaderboard")
 async def leaderboard(session: SessionDep, principal: PrincipalDep) -> dict:
-    from eb.eval.wilson import wilson_ci
+    from eb.eval.wilson import report_interval
     rows = (await session.scalars(select(EvalReport))).all()
     items = []
     for r in rows:
-        item = _row(r, ["id", "suite_id", "model_version_id", "metrics", "gate_results"])
+        if (r.gate_results or {}).get("validity") != "complete" or (r.metrics or {}).get("profile") != "standard":
+            continue
+        run = await session.get(Run, r.run_id) if r.run_id else None
+        job = await session.get(Job, run.job_id) if run else None
+        if not run or run.status != "finished" or not job or job.status != "succeeded":
+            continue
+        if ((job.spec or {}).get("params") or {}).get("rpo_eval_plan", {}).get("diagnostic_environment"):
+            continue
+        item = _row(r, ["id", "suite_id", "model_version_id", "run_id", "metrics", "gate_results"])
         metrics = item.get("metrics") or {}
-        sr = metrics.get("success_rate")
-        n = metrics.get("n_trials") or metrics.get("n") or 64
-        if sr is not None:
-            item["wilson_ci"] = wilson_ci(round(float(sr) * n), n)
+        item["wilson_ci"] = report_interval(metrics)
         items.append(item)
     items = sorted(
         items,
@@ -727,7 +885,7 @@ async def version(principal: PrincipalDep) -> dict:
 
 @api_v1.get("/system/images")
 async def images(principal: PrincipalDep) -> dict:
-    return {"items": ["eb/isaac-lab:2.3.2", "eb/rlinf:0.4.0-emb", "eb/mujoco:latest", "eb/tools:latest"]}
+    return {"items": ["eb/isaac-lab:2.3.2", "eb/rlinf:0.4.0-emb", "eb/rlinf:libero-pi05", "eb/mujoco:latest", "eb/tools:latest"]}
 
 
 @api_v1.get("/system/quotas")
@@ -738,6 +896,9 @@ async def get_system_quotas(session: SessionDep, principal: PrincipalDep) -> dic
     return {
         "disk": {
             "data_root": str(get_settings().data_root),
+            "state_root": str(get_settings().data_root),
+            "models_root": str(get_settings().models_root),
+            "datasets_root": str(get_settings().datasets_root),
             "watermark_warn_pct": 80,
             "watermark_block_pct": 90,
             "cas_retention_days": 30,
@@ -851,30 +1012,74 @@ async def search(q: str, session: SessionDep, principal: PrincipalDep) -> dict:
     return {"items": items}
 
 
+def _pipeline_run_out(run) -> dict:
+    return {**_row(run, ["id", "pipeline_id", "status", "job_ids", "error", "created_by", "created_at"]),
+            "resumed_from": (run.spec or {}).get("resumed_from")}
+
+
 @api_v1.get("/pipelines")
 async def pipelines(session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.store.models import PipelineRun
     rows = (await session.scalars(select(Pipeline))).all()
-    return {
-        "items": [
-            {
-                "id": r.id,
-                "name": r.name,
-                "status": (r.spec or {}).get("status"),
-                "job_ids": (r.spec or {}).get("job_ids") or [],
-                "spec": r.spec,
-            }
-            for r in rows
-        ]
-    }
+    runs = (await session.scalars(select(PipelineRun).order_by(PipelineRun.created_at.desc()))).all()
+    items = []
+    for row in rows:
+        history = [_pipeline_run_out(run) for run in runs if run.pipeline_id == row.id]
+        latest = history[0] if history else {}
+        items.append({"id": row.id, "name": row.name, "spec": row.spec, "runs": history,
+                      "status": latest.get("status", "not_started"), "job_ids": latest.get("job_ids", [])})
+    return {"items": items}
 
 
 @api_v1.post("/pipelines/{pid}/start")
-async def pipeline_start(pid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+async def pipeline_start(pid: str, request: Request, session: SessionDep, principal: PrincipalDep) -> dict:
     row = await session.get(Pipeline, pid)
     if not row:
         raise HTTPException(404)
-    await start_pipeline(session, row)
-    return {"id": row.id, "status": (row.spec or {}).get("status")}
+    try:
+        run = await start_pipeline(session, row, principal.id, request.headers.get("idempotency-key"))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _pipeline_run_out(run)
+
+
+@api_v1.get("/pipelines/{pid}/runs")
+async def pipeline_runs(pid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.store.models import PipelineRun
+    runs = (await session.scalars(select(PipelineRun).where(PipelineRun.pipeline_id == pid)
+                                  .order_by(PipelineRun.created_at.desc()).limit(100))).all()
+    return {"items": [_pipeline_run_out(run) for run in runs]}
+
+
+@api_v1.get("/pipeline-runs/{rid}")
+async def pipeline_run_detail(rid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.store.models import PipelineRun
+    run = await session.get(PipelineRun, rid)
+    if not run:
+        raise HTTPException(404)
+    return {**_pipeline_run_out(run), "spec": run.spec}
+
+
+class PipelineResumeIn(BaseModel):
+    memory_gb: int | None = Field(default=None, ge=1, le=1024, strict=True)
+
+
+@api_v1.post("/pipeline-runs/{rid}/resume")
+async def pipeline_run_resume(rid: str, request: Request, session: SessionDep, principal: PrincipalDep,
+                              body: PipelineResumeIn | None = None) -> dict:
+    from eb.store.models import PipelineRun
+    previous = await session.get(PipelineRun, rid)
+    if not previous:
+        raise HTTPException(404)
+    pipeline = await session.get(Pipeline, previous.pipeline_id)
+    if not pipeline:
+        raise HTTPException(404, "pipeline template missing")
+    try:
+        run = await start_pipeline(session, pipeline, principal.id, request.headers.get("idempotency-key"),
+                                   resume_from=previous, memory_gb=body.memory_gb if body else None)
+    except (ValueError, TypeError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _pipeline_run_out(run)
 
 
 @api_v1.post("/gates/{gid}/evaluations")
@@ -886,10 +1091,6 @@ async def eval_gate(gid: str, body: dict, principal: PrincipalDep) -> dict:
 async def robot_telemetry(did: str, body: dict) -> dict:
     root = get_settings().data_root
     points = body.get("points") or []
-    try:
-        import eb_tsdb  # type: ignore
-    except Exception:
-        eb_tsdb = None
     n = 0
     for i, p in enumerate(points):
         tag = p.get("tag") or "robot.event"

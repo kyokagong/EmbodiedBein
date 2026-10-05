@@ -39,6 +39,8 @@ KIND_ADAPTER: dict[JobKind, Adapter] = {
 
 
 def get_adapter(spec: JobSpec) -> Adapter:
+    if spec.params.get("stack") == "rlinf" or spec.params.get("template_id") in {"collect_berkeley_reach"}:
+        return _RLINF
     return KIND_ADAPTER[spec.kind]
 
 

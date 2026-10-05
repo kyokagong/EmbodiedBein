@@ -1,0 +1,77 @@
+id: ee_rpo_v2_wbc_23dof_v1
+embodiment_id: emb_roboparty_rpo
+robot_family: roboparty_rpo_v2
+morphology: humanoid
+interface_version: 1
+status: active
+dof: 23
+joint_groups:
+  leg: { count: 12 }
+  torso: { count: 1 }
+  arm: { count: 10 }
+joint_order:
+  - left_thigh_yaw_joint
+  - left_thigh_roll_joint
+  - left_thigh_pitch_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_thigh_yaw_joint
+  - right_thigh_roll_joint
+  - right_thigh_pitch_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - torso_joint
+  - left_arm_pitch_joint
+  - left_arm_roll_joint
+  - left_arm_yaw_joint
+  - left_elbow_pitch_joint
+  - left_elbow_yaw_joint
+  - right_arm_pitch_joint
+  - right_arm_roll_joint
+  - right_arm_yaw_joint
+  - right_elbow_pitch_joint
+  - right_elbow_yaw_joint
+observation:
+  dim: 890
+  critic_dim: 1500
+  history_length: 10
+  concat: true
+  layout:
+    - { term: base_ang_vel, dim: 3, source: imu }
+    - { term: projected_gravity, dim: 3, source: imu }
+    - { term: velocity_commands, dim: 3, source: command }
+    - { term: joint_pos_rel, dim: 23, source: encoder }
+    - { term: joint_vel_rel, dim: 23, source: encoder }
+    - { term: last_executed_action, dim: 23, source: policy }
+    - { term: upper_body_reference, dim: 11, source: command }
+  critic_layout:
+    - { term: actor_frame, dim: 89, source: policy }
+    - { term: base_lin_vel, dim: 3, source: simulator }
+    - { term: feet_contact, dim: 2, source: simulator }
+    - { term: feet_contact_force, dim: 6, source: simulator }
+    - { term: feet_air_time, dim: 2, source: simulator }
+    - { term: feet_height, dim: 2, source: simulator }
+    - { term: joint_acc, dim: 23, source: simulator }
+    - { term: joint_torque, dim: 23, source: simulator }
+action:
+  dim: 23
+  terms:
+    - { name: leg, type: joint_position, dim: 12, scale: 0.25, indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+    - { name: torso, type: joint_position, dim: 1, scale: 0.25, indices: [12] }
+    - { name: arm, type: joint_position, dim: 10, scale: 0.25, indices: [13, 14, 15, 16, 17, 18, 19, 20, 21, 22] }
+control:
+  policy_hz: 50
+  control_hz: 200
+  sim_dt: 0.005
+  decimation: 4
+  max_policy_latency_ms: 8
+  command_dim: 14
+sim_bindings:
+  isaac_task: RPO-WBC-WalkUpper-v0
+  experiment_name: rpo_v2_wbc_ppo
+  mjcf: rpo_description/mjcf/rpo.xml
+real_bindings:
+  motor_bus: can
+  firmware_n_joints: 23

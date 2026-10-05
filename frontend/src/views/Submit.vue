@@ -27,6 +27,7 @@ const spec = ref({
   task_id: "",
   name: "biped-smoke",
   params: {
+    model_name: "",
     task: "",
     num_envs: 64,
     max_iterations: 5,
@@ -219,6 +220,10 @@ async function submit() {
         <div class="form-grid">
           <span>任务名称</span>
           <input v-model="spec.name" />
+          <template v-if="spec.kind.startsWith('train.')">
+            <span>产出模型名称</span>
+            <input v-model="spec.params.model_name" :placeholder="spec.name || '默认使用任务名称'" />
+          </template>
 
           <!-- Dynamic fields for train.rl -->
           <template v-if="spec.kind === 'train.rl' || spec.kind === 'eval.sim'">

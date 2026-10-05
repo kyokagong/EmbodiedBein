@@ -14,9 +14,11 @@ from eb.api.routes import api_v1, health_router, media_router, spa_router, ws_ro
 from eb.api.embodiment_routes import router as embodiment_router
 from eb.api.routes_data import router as data_router
 from eb.api.routes_env import router as env_router
+from eb.api.routes_environments import router as environments_router
 from eb.api.routes_model import router as model_router
 from eb.api.routes_settings import router as settings_router
 from eb.api.routes_train import router as train_router
+from eb.api.routes_eval import router as eval_router
 from eb.bootstrap import seed_if_empty
 from eb.scheduler.loop import Scheduler
 from eb.settings import get_settings
@@ -80,7 +82,9 @@ def create_app() -> FastAPI:
     app.include_router(embodiment_router, prefix="/api/v1")
     app.include_router(data_router, prefix="/api/v1")
     app.include_router(env_router, prefix="/api/v1")
+    app.include_router(environments_router, prefix="/api/v1")
     app.include_router(train_router, prefix="/api/v1")
+    app.include_router(eval_router, prefix="/api/v1")
     app.include_router(model_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(ws_router)

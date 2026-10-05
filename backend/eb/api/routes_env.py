@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from eb.api.deps import PrincipalDep, SessionDep
 from eb.ids import new_id
+from eb.settings import get_settings
 from eb.store.ebd import EbdClient
 from eb.store.models import SimImage
 
@@ -14,6 +15,7 @@ router = APIRouter()
 
 _CATALOG = [
     {"name": "eb/rlinf:0.4.0-emb", "tag": "0.4.0-emb", "role": "train", "is_default": True},
+    {"name": "eb/rlinf:libero-pi05", "tag": "libero-pi05", "role": "train", "is_default": False},
     {"name": "eb/isaac-lab:2.3.2", "tag": "2.3.2", "role": "sim", "is_default": False},
 ]
 
@@ -57,11 +59,12 @@ def _img_out(row: SimImage) -> dict:
 async def env_stack(session: SessionDep, principal: PrincipalDep) -> dict:
     await _ensure_catalog(session)
     default = (await session.scalars(select(SimImage).where(SimImage.is_default.is_(True)))).first()
+    cache = get_settings().data_root / "cache"
     return {
         "id": "isaaclab",
         "display_name": "Isaac Lab",
         "default_image": default.name if default else "eb/rlinf:0.4.0-emb",
-        "cache": {"ov_data": "/var/lib/eb/cache/ov_data", "nucleus": "/var/lib/eb/cache/isaac_nucleus"},
+        "cache": {"ov_data": str(cache / "ov_data"), "nucleus": str(cache / "isaac_nucleus")},
     }
 
 
@@ -69,6 +72,15 @@ async def env_stack(session: SessionDep, principal: PrincipalDep) -> dict:
 async def env_images(session: SessionDep, principal: PrincipalDep) -> dict:
     await _ensure_catalog(session)
     rows = (await session.scalars(select(SimImage))).all()
+    ebd = EbdClient()
+    for row in rows:
+        info = await ebd.image_info(row.name)
+        row.status = "ready" if info.get("ok") else info.get("status", "unavailable")
+        if info.get("ok"):
+            row.digest = info["digest"]
+            row.size_bytes = info["size_bytes"]
+        row.error_message = info.get("error")
+    await session.commit()
     return {"items": [_img_out(r) for r in rows]}
 
 

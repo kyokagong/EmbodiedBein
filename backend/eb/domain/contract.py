@@ -26,9 +26,11 @@ class Modality(BaseModel):
 
 class Observation(BaseModel):
     dim: int
+    critic_dim: int | None = None
     history_length: int = 1
     concat: bool = True
     layout: list[ObsTerm] = Field(default_factory=list)
+    critic_layout: list[ObsTerm] = Field(default_factory=list)
     modalities: list[Modality] = Field(default_factory=list)
 
 
@@ -108,6 +110,17 @@ class EmbodimentEnv(BaseModel):
                     hint="observation.dim must equal sum(layout.dim) * history_length",
                 )
             )
+        if self.observation.critic_dim is not None:
+            critic_sum = sum(t.dim for t in self.observation.critic_layout) * self.observation.history_length
+            if critic_sum != self.observation.critic_dim:
+                v.append(
+                    Violation(
+                        path="observation.critic_dim",
+                        expected=critic_sum,
+                        actual=self.observation.critic_dim,
+                        hint="critic_dim must equal sum(critic_layout.dim) * history_length",
+                    )
+                )
         if self.action.terms:
             term_sum = sum(t.dim for t in self.action.terms)
             if term_sum != self.action.dim:

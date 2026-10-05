@@ -1,6 +1,6 @@
 """L3 Cross-Domain Consistency Diagnosis & Observation Drift Heatmap.
 
-Design reference: docs/design/06-evaluation.html (06.3)
+Design reference: docs/design/05-evaluation-delivery.md (sim2sim and sim2real)
 Computes standardized distribution drift |Δμ|/σ per observation term across:
   - Isaac vs MuJoCo (sim2sim)
   - MuJoCo vs Real (sim2real)
@@ -32,10 +32,10 @@ class DriftTermResult(TypedDict):
 
 class CrossDomainDriftReport(TypedDict):
     embodiment_env_id: str
-    divergence_step: int      # t* (first step divergence > threshold)
+    divergence_step: Optional[int]  # requires measured paired trajectories
     max_drift_term: str
-    max_drift_value: float
-    passed_sim2sim_gate: bool # True if max_drift <= 0.6 and divergence_step >= 100
+    max_drift_value: Optional[float]
+    passed_sim2sim_gate: Optional[bool]  # statistics alone cannot qualify a gate
     terms: List[DriftTermResult]
     summary: str
 
@@ -63,7 +63,7 @@ def compute_observation_drift(
 ) -> CrossDomainDriftReport:
     """Compute standardized observation drift heatmap across simulation and real domains.
 
-    If stats are not provided from runtime logs, uses deterministic model/environment baseline parameters.
+    Missing runtime statistics never produce synthetic measurements or gate approval.
     """
     terms: List[DriftTermResult] = []
     current_offset = 0
@@ -74,32 +74,16 @@ def compute_observation_drift(
         name = item.get("name", "unknown")
         dim = int(item.get("dim", 1))
 
-        # Retrieve or synthesize statistics for comparison
-        # Base realistic defaults reflecting Isaac vs MuJoCo contact/friction variations
-        s_mean = sim_stats.get(name, {}).get("mean", 0.0) if sim_stats else 0.0
-        m_mean = mujoco_stats.get(name, {}).get("mean", 0.0) if mujoco_stats else 0.0
-        r_mean = real_stats.get(name, {}).get("mean") if real_stats else None
-        p_std = max(0.01, sim_stats.get(name, {}).get("std", 1.0) if sim_stats else 1.0)
-
-        # In absence of direct runtime streams, compute synthetic physics difference
-        # (Isaac vs MuJoCo typical contact divergence on specific dynamics terms)
-        if not sim_stats and not mujoco_stats:
-            if "gravity" in name:
-                s_mean = 0.02
-                m_mean = 0.04
-                p_std = 0.15
-            elif "vel" in name:
-                s_mean = 0.12
-                m_mean = 0.18
-                p_std = 0.25
-            elif "pos" in name:
-                s_mean = -0.05
-                m_mean = -0.07
-                p_std = 0.30
-            else:
-                s_mean = 0.0
-                m_mean = 0.01
-                p_std = 1.0
+        if not sim_stats or not mujoco_stats or name not in sim_stats or name not in mujoco_stats:
+            current_offset += dim
+            continue
+        source, target = sim_stats[name], mujoco_stats[name]
+        s_mean, m_mean, p_std = source.get("mean"), target.get("mean"), source.get("std")
+        r_mean = (real_stats or {}).get(name, {}).get("mean")
+        values = [s_mean, m_mean, p_std] + ([] if r_mean is None else [r_mean])
+        if any(type(value) not in (int, float) or not math.isfinite(value) for value in values) or p_std <= 0:
+            current_offset += dim
+            continue
 
         sim2sim = round(abs(s_mean - m_mean) / p_std, 3)
         sim2real = round(abs(m_mean - r_mean) / p_std, 3) if r_mean is not None else None
@@ -134,31 +118,16 @@ def compute_observation_drift(
         })
         current_offset += dim
 
-    # Divergence step estimation:
-    # If max_drift <= 0.3 -> t* > 500 steps (very stable)
-    # If max_drift 0.3 ~ 0.6 -> t* ~ 150~300 steps
-    # If max_drift > 0.6 -> t* < 100 steps
-    if max_drift <= 0.3:
-        div_step = 600
-    elif max_drift <= 0.6:
-        div_step = 220
-    else:
-        div_step = int(max(10, 100 - (max_drift - 0.6) * 150))
-
-    passed_gate = (max_drift <= 0.60) and (div_step >= 100)
-
-    summary = (
-        f"sim2sim 最大观测漂移为 {max_drift}σ (在 {max_term_name})，"
-        f"预测发散步数 t*={div_step} 步。"
-        f"{'满足 sim2sim 放行门禁 (≤0.6σ & t*≥100)。' if passed_gate else '未达 sim2sim 门禁阈值，建议先校准资产。'}"
-    )
+    summary = (f"sim2sim 已有 {len(terms)}/{len(layout)} 项实测分布统计；最大漂移 {max_drift}σ。"
+               "尚无配对轨迹发散步数与完整门禁证据，未执行放行验收。" if terms else
+               "sim2sim 缺少实测跨域统计，尚未评估。")
 
     return {
         "embodiment_env_id": embodiment_env_id,
-        "divergence_step": div_step,
+        "divergence_step": None,
         "max_drift_term": max_term_name,
-        "max_drift_value": max_drift,
-        "passed_sim2sim_gate": passed_gate,
+        "max_drift_value": max_drift if terms else None,
+        "passed_sim2sim_gate": None,
         "terms": terms,
         "summary": summary,
     }

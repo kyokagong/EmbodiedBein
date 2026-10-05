@@ -16,6 +16,8 @@ pub struct HostProfile {
     pub gpus: Vec<GpuInfo>,
     pub memory_total_mb: u64,
     pub has_dri: bool,
+    #[serde(default)]
+    pub memory_available_mb: u64,
 }
 
 pub fn sha256_hex(data: &[u8]) -> String {

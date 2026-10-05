@@ -1,3 +1,4 @@
+pub mod snapshot;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -33,7 +34,14 @@ pub struct RunRequest {
     pub workdir: String,
     #[serde(default)]
     pub network: Option<String>,
+    #[serde(default = "default_cpus")]
+    pub cpus: u32,
+    #[serde(default = "default_memory")]
+    pub memory_gb: u32,
 }
+
+fn default_cpus() -> u32 { 4 }
+fn default_memory() -> u32 { 8 }
 
 fn default_shm() -> u32 {
     2
@@ -54,6 +62,8 @@ pub struct ContainerInfo {
     pub status: String,
     pub exit_code: Option<i32>,
     pub image_digest: Option<String>,
+    #[serde(default)]
+    pub oom_killed: bool,
 }
 
 #[derive(Clone)]
@@ -85,19 +95,18 @@ impl Runner {
     pub fn get(&self, run_id: &str) -> Option<ContainerInfo> {
         let cached = self.inner.lock().unwrap().runs.get(run_id).cloned();
         if let Some(mut info) = cached {
-            if info.status != "exited" {
-                if let Some(fresh) = inspect_container(run_id) {
-                    info.status = fresh.status;
-                    info.exit_code = fresh.exit_code;
-                    if info.status == "exited" {
-                        self.release(run_id);
-                    }
-                    self.inner
-                        .lock()
-                        .unwrap()
-                        .runs
-                        .insert(run_id.to_string(), info.clone());
+            if let Some(fresh) = inspect_container(run_id) {
+                info.status = fresh.status;
+                info.exit_code = fresh.exit_code;
+                info.oom_killed = fresh.oom_killed;
+                if info.status == "exited" {
+                    self.release(run_id);
                 }
+                self.inner
+                    .lock()
+                    .unwrap()
+                    .runs
+                    .insert(run_id.to_string(), info.clone());
             }
             return Some(info);
         }
@@ -109,17 +118,22 @@ impl Runner {
     }
 
     pub fn image_digest(image: &str) -> Result<String, StartError> {
+        Self::image_info(image).map(|(digest, _)| digest)
+    }
+
+    pub fn image_info(image: &str) -> Result<(String, u64), StartError> {
         let out = Command::new("docker")
-            .args(["image", "inspect", "--format", "{{.Id}}", image])
+            .args(["image", "inspect", "--format", "{{.Id}}\t{{.Size}}", image])
             .output()
             .map_err(|e| StartError::Docker(e.to_string()))?;
         if !out.status.success() {
             return Err(StartError::ImageMissing(format!("image not present: {image}")));
         }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        parse_image_inspect(&String::from_utf8_lossy(&out.stdout))
     }
 
     pub async fn start(&self, req: &RunRequest) -> Result<String, StartError> {
+        validate_resources(req)?;
         if req.image.is_empty() {
             return Err(StartError::ImageMissing("image not present: (empty)".into()));
         }
@@ -151,6 +165,7 @@ impl Runner {
                     status: "running".into(),
                     exit_code: None,
                     image_digest: Some(digest),
+                    oom_killed: false,
                 },
             );
         }
@@ -161,7 +176,13 @@ impl Runner {
 
     pub async fn cancel(&self, run_id: &str) -> Result<(), String> {
         let name = format!("eb-run-{run_id}");
-        let _ = Command::new("docker").args(["rm", "-f", &name]).output();
+        let removed = Command::new("docker").args(["rm", "-f", &name]).output()
+            .map_err(|e| format!("docker removal failed: {e}"))?;
+        let inspected = if removed.status.success() { None } else {
+            Some(Command::new("docker").args(["inspect", &name]).output()
+                .map_err(|e| format!("could not confirm container removal: {e}"))?)
+        };
+        check_cancel_result(&name, &removed, inspected.as_ref())?;
         self.release(run_id);
         Ok(())
     }
@@ -220,6 +241,20 @@ impl Runner {
     }
 }
 
+fn check_cancel_result(
+    name: &str, removed: &std::process::Output, inspected: Option<&std::process::Output>,
+) -> Result<(), String> {
+    if removed.status.success() { return Ok(()); }
+    if let Some(result) = inspected {
+        let error = String::from_utf8_lossy(&result.stderr);
+        if !result.status.success() && result.stdout.is_empty()
+            && [format!("Error: No such object: {name}"), format!("Error: No such container: {name}")]
+                .iter().any(|missing| error.trim() == missing)
+        { return Ok(()); }
+    }
+    Err(format!("container removal not confirmed: {}", String::from_utf8_lossy(&removed.stderr).trim()))
+}
+
 pub fn build_docker_args(req: &RunRequest) -> Vec<String> {
     let mut args = vec![
         "run".into(),
@@ -229,6 +264,7 @@ pub fn build_docker_args(req: &RunRequest) -> Vec<String> {
         "--label".into(),
         format!("eb.run_id={}", req.run_id),
     ];
+    args.extend(["--cpus".into(), req.cpus.to_string(), "--memory".into(), format!("{}g", req.memory_gb)]);
     if !req.gpus.is_empty() {
         let devices = req
             .gpus
@@ -237,7 +273,8 @@ pub fn build_docker_args(req: &RunRequest) -> Vec<String> {
             .collect::<Vec<_>>()
             .join(",");
         args.push("--gpus".into());
-        args.push(format!("device={devices}"));
+        // Docker parses this argv value as CSV; quote the entire device field.
+        args.push(format!("\"device={devices}\""));
     }
     args.push("--shm-size".into());
     args.push(format!("{}g", req.shm_gb));
@@ -257,13 +294,21 @@ pub fn build_docker_args(req: &RunRequest) -> Vec<String> {
         args.push("-w".into());
         args.push(req.workdir.clone());
     }
-    if let Some(net) = &req.network {
-        args.push("--network".into());
-        args.push(net.clone());
-    }
+    args.push("--network".into());
+    args.push(req.network.clone().unwrap_or_else(|| "bridge".into()));
     args.push(req.image.clone());
     args.extend(req.command.clone());
     args
+}
+
+fn validate_resources(req: &RunRequest) -> Result<(), StartError> {
+    if req.cpus == 0 || req.memory_gb == 0 || req.shm_gb == 0 || req.shm_gb > req.memory_gb {
+        return Err(StartError::Docker("cpus, memory_gb and shm_gb must be positive; shm_gb must not exceed memory_gb".into()));
+    }
+    if !matches!(req.network.as_deref(), None | Some("bridge") | Some("none")) {
+        return Err(StartError::Docker("task network must be bridge or none".into()));
+    }
+    Ok(())
 }
 
 fn inspect_container(run_id: &str) -> Option<ContainerInfo> {
@@ -272,7 +317,7 @@ fn inspect_container(run_id: &str) -> Option<ContainerInfo> {
         .args([
             "inspect",
             "--format",
-            "{{.Id}} {{.State.Status}} {{.State.ExitCode}}",
+            "{{.Id}} {{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
             &name,
         ])
         .output()
@@ -281,17 +326,31 @@ fn inspect_container(run_id: &str) -> Option<ContainerInfo> {
         return None;
     }
     let text = String::from_utf8_lossy(&out.stdout);
+    parse_container_inspect(run_id, &text)
+}
+
+fn parse_container_inspect(run_id: &str, text: &str) -> Option<ContainerInfo> {
     let mut parts = text.split_whitespace();
     let id = parts.next()?.to_string();
     let status = parts.next()?.to_string();
     let code = parts.next().and_then(|s| s.parse().ok());
+    let oom_killed = parts.next()?.parse().ok()?;
     Some(ContainerInfo {
         run_id: run_id.to_string(),
         container_id: id,
         status: if status == "running" { "running".into() } else { "exited".into() },
         exit_code: if status == "running" { None } else { code },
         image_digest: None,
+        oom_killed,
     })
+}
+
+fn parse_image_inspect(text: &str) -> Result<(String, u64), StartError> {
+    let (digest, size) = text.trim().split_once('\t')
+        .ok_or_else(|| StartError::Docker("invalid docker image inspect output".into()))?;
+    let size = size.parse()
+        .map_err(|_| StartError::Docker("invalid docker image size".into()))?;
+    Ok((digest.to_string(), size))
 }
 
 fn docker_ps() -> Vec<ContainerInfo> {
@@ -325,6 +384,7 @@ fn docker_ps() -> Vec<ContainerInfo> {
                 },
                 exit_code: None,
                 image_digest: None,
+                oom_killed: false,
             })
         })
         .collect()
@@ -333,6 +393,39 @@ fn docker_ps() -> Vec<ContainerInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_requires_removal_or_confirmed_absence() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = |success: bool, stderr: &str| std::process::Output {
+            status: std::process::ExitStatus::from_raw(if success { 0 } else { 256 }),
+            stdout: vec![], stderr: stderr.as_bytes().to_vec(),
+        };
+        let failed = output(false, "daemon unavailable");
+        assert!(check_cancel_result("eb-run-x", &output(true, ""), None).is_ok());
+        assert!(check_cancel_result("eb-run-x", &failed, Some(&failed)).is_err());
+        assert!(check_cancel_result("eb-run-x", &failed, Some(&output(true, ""))).is_err());
+        assert!(check_cancel_result("eb-run-x", &failed, Some(&output(false, "Error: No such object: eb-run-x\n"))).is_ok());
+        assert!(check_cancel_result("eb-run-x", &failed, Some(&output(false, "Error: No such object: another"))).is_err());
+    }
+
+    #[test]
+    fn inspect_preserves_oom_while_container_is_running() {
+        let info = parse_container_inspect("run_x", "abc running 0 true").unwrap();
+        assert_eq!(info.status, "running");
+        assert_eq!(info.exit_code, None);
+        assert!(info.oom_killed);
+        let exited = parse_container_inspect("run_x", "abc exited 137 true").unwrap();
+        assert_eq!(exited.exit_code, Some(137));
+        assert!(exited.oom_killed);
+        assert!(!parse_container_inspect("run_x", "abc running 0 false").unwrap().oom_killed);
+    }
+
+    #[test]
+    fn parses_image_digest_and_size() {
+        assert_eq!(parse_image_inspect("sha256:abc\t123\n").unwrap(), ("sha256:abc".into(), 123));
+        assert!(parse_image_inspect("sha256:abc").is_err());
+    }
 
     #[test]
     fn docker_args_include_gpu_and_shm() {
@@ -351,6 +444,8 @@ mod tests {
             }],
             workdir: "/workspace/isaaclab_extension_template".into(),
             network: None,
+            cpus: 6,
+            memory_gb: 24,
         });
         let s = args.join(" ");
         assert!(s.contains("--gpus"));
@@ -359,5 +454,30 @@ mod tests {
         assert!(s.contains("2g"));
         assert!(s.contains("--label"));
         assert!(s.contains("eb.run_id=run_x"));
+        assert!(s.contains("--cpus 6 --memory 24g"));
+        assert!(s.contains("--network bridge"));
+    }
+
+    #[test]
+    fn rejects_invalid_limits_and_host_network() {
+        let mut req: RunRequest = serde_json::from_str(r#"{"run_id":"x","image":"test"}"#).unwrap();
+        assert!(validate_resources(&req).is_ok());
+        req.cpus = 0;
+        assert!(validate_resources(&req).is_err());
+        req.cpus = 4;
+        req.network = Some("host".into());
+        assert!(validate_resources(&req).is_err());
+        req.network = Some("bridge".into());
+        req.shm_gb = 9;
+        assert!(validate_resources(&req).is_err());
+    }
+
+    #[test]
+    fn multiple_gpus_are_one_csv_field() {
+        let mut req: RunRequest = serde_json::from_str(r#"{"run_id":"x","image":"test"}"#).unwrap();
+        req.gpus = vec![0, 1, 2, 3];
+        let args = build_docker_args(&req);
+        let position = args.iter().position(|arg| arg == "--gpus").unwrap();
+        assert_eq!(args[position + 1], "\"device=0,1,2,3\"");
     }
 }

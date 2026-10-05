@@ -1,7 +1,7 @@
 # EmbodiedBein 第一版实现对照与后续计划
 
 - 日期：2026-08-21
-- 对照真源：`docs/design/`（尤其 `10-roadmap.html`、`09-ui-system.html`、`01-architecture.html`）
+- 对照真源：`docs/design/`。本文是旧实现快照，现行设计入口为 `docs/design/README.md`。
 - 代码版本：仓库 `main` 上的可部署骨架（`make up` 已在本机通过）
 - 判定口径见 [README](./README.md)
 
@@ -258,7 +258,7 @@ rust/crates/
 - `rust/crates/eb-cli`（现为 `ebd` 第二 bin）
 - `backend/eb/api/` 按资源拆路由
 - `backend/eb/adapters/data_*.py`
-- `docs/adr/`
+- 当时的 ADR（现已合并进 `docs/design/02-system-architecture.md`）
 - `backend/tests/agent/` 磁带夹具（现仅有 toolbus/playbook 单测）
 
 这些拆分本身不增加用户可见功能，但会挡住 M1 采集与 M3 scanner 的正确归属（控制面不应解析 tfevents）。
@@ -305,7 +305,7 @@ rust/crates/
 #### P0.2 真实 Isaac 镜像与一次手工容器
 
 1. 把 `deploy/images/isaac.Dockerfile` 从 busybox 换成可跑 BHL `train.py --headless` 的镜像（先手工 `docker run` 通，再写进适配器）。
-2. 固化 GPU 渲染/egl 参数，记入 ADR（新建 `docs/adr/`）。
+2. 固化 GPU 渲染/EGL 参数并纳入现行架构与镜像设计。
 3. 快照测试继续锁命令行，避免上游改参数名时无声失败。
 
 验收：不经过平台、只 `docker run` 能完成一次短迭代 biped 训练。

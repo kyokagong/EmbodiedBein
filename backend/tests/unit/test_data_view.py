@@ -79,7 +79,35 @@ def test_episode_does_not_pick_random_video(tmp_path: Path):
     assert out["action_series"] == []
     hit = tmp_path / "ep_42_reach.mp4"
     hit.write_bytes(b"real")
-    found = episode_media(tmp_path, "ep_42")
+    found = episode_media(tmp_path, "ep_42", [{"episode_id": "ep_42", "streams": [
+        {"path": "ep_42_reach.mp4", "from_timestamp": 0, "to_timestamp": 1}]}])
     assert found["missing"] is None
     assert found["path"].endswith("ep_42_reach.mp4")
     assert found["action_series"] == []
+
+
+def test_v3_overview_is_compact_and_does_not_pass_g2_on_frequency_mismatch():
+    from eb.domain.data_view import compact_dataset_stats, dataset_episode_page, dataset_overview
+    stats = {"episodes": [{"episode_id": str(i)} for i in range(1693)], "episodes_count": 1693,
+             "frames_count": 273465, "fps": 10, "features": {"action": {"shape": [7]},
+                                                              "observation.state": {"shape": [8]}}}
+    environment = {"action": {"dim": 7}, "observation": {"dim": 8}, "control": {"policy_hz": 20}}
+    out = dataset_overview(name="libero", fmt="lerobot", license=None, embodiment_env_id="libero",
+                           versions=[], summary_stats=stats, environment=environment)
+    assert out["episodes"] == 1693
+    assert (out["action_dim"], out["state_dim"], out["fps"]) == (7, 8, 10)
+    assert out["g2"] == "不兼容"
+    assert "fps: 10 ≠ 20" in out["g2_foot"]
+    quality = quality_summary(out["funnel"], license=None, compatible_envs=[],
+                              stats={**stats, "interface_compatibility": out["interface_compatibility"]})
+    assert not any(item["reason"] == "no_action_dim" for item in quality["items"])
+    assert any(item["reason"] == "fps_mismatch" for item in quality["items"])
+    assert "episodes" not in compact_dataset_stats(stats)
+    page = dataset_episode_page(stats, 50, 50)
+    assert len(page["items"]) == 50 and page["next_cursor"] == 100
+    assert page["items"][0]["episode_id"] == "50"
+    assert dataset_episode_page(stats, 1690, 50)["next_cursor"] is None
+    environment["control"]["policy_hz"] = 10
+    matching = dataset_overview(name="libero", fmt="lerobot", license=None, embodiment_env_id="libero",
+                                versions=[], summary_stats=stats, environment=environment)
+    assert matching["g2"] == "待验收"

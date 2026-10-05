@@ -63,3 +63,8 @@ BHL_SEED_TASKS: list[TaskSpec] = [
         stack_bindings={"isaaclab_rslrl": {"gym_id": "Isaac-Berkeley-Humanoid-Lite-FixedHand-Push-v0"}},
     ),
 ]
+
+BHL_SEED_TASKS.extend(TaskSpec(id=f"tsk_libero_{suite}", status="active",
+    compatible_env_ids=["ee_libero_franka_delta_v1"],
+    stack_bindings={"rlinf":{"config_name":f"libero_{suite}_ppo_openpi_pi05", "suite":f"libero_{suite}"}})
+    for suite in ("spatial", "object", "goal", "10"))
