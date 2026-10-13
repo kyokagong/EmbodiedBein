@@ -189,6 +189,8 @@ class Orchestrator:
         *,
         commit: bool = True,
     ) -> Job:
+        from eb.orchestrator.deletion import guard_storage_inputs
+        await guard_storage_inputs(session, spec.model_dump(mode="json"))
         if idem_key:
             existing = await session.scalar(select(Job).where(Job.idem_key == idem_key))
             if existing:

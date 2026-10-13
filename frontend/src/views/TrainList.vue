@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { api } from "../api/client";
 import ListControls from "../components/ListControls.vue";
+import DeleteButton from "../components/DeleteButton.vue";
 import { useListView } from "../composables/useListView";
 
 const items = ref<any[]>([]);
@@ -55,7 +56,7 @@ function st(s: string) {
     <table v-if="list.total.value">
       <thead>
         <tr>
-          <th>名称</th><th>产出模型</th><th>状态</th><th>模板</th><th>本体</th><th>GPU</th><th>Ray</th><th>创建</th>
+          <th>名称</th><th>产出模型</th><th>状态</th><th>模板</th><th>本体</th><th>GPU</th><th>Ray</th><th>创建</th><th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -71,6 +72,7 @@ function st(s: string) {
           <td class="xs">{{ (j.gpus_allocated || []).join(", ") || "—" }}</td>
           <td class="mono xs">{{ j.ray_port || "—" }}</td>
           <td class="xs muted">{{ (j.created_at || "").replace("T", " ").slice(0, 16) }}</td>
+          <td><DeleteButton :path="`/train/${j.id}`" :name="j.name" :disabled="!['succeeded','failed','timeout','cancelled','infra_failed'].includes(j.status)" @deleted="items = items.filter(item => item.id !== j.id)" /></td>
         </tr>
       </tbody>
     </table>

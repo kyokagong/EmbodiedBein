@@ -55,10 +55,17 @@ def flat_suite_spec() -> dict:
     }
 
 
-def validate_flat_eval(output: Path, plan: dict, run_id: str) -> dict:
+def validate_flat_eval(output: Path, plan: dict, run_id: str, *, bfm=False) -> dict:
     """Validate small case receipts and hashes; leave large traces in the data plane."""
     from eb.onnx_io import sha256_file
     from eb.runners.rpo_flat_artifact import summarize_cases
+    if bfm:
+        from eb.rpo_bfm import frozen_eval_suite_spec,eval_case_seeds,CODEC_HASH,TASK_ID
+    suite_id=plan.get("suite_id") if bfm else FLAT_SUITE
+    suite_spec=frozen_eval_suite_spec(suite_id,plan.get("profile")) if bfm else flat_suite_spec()
+    if suite_spec.get("required_video") and plan.get("record_video") is not True:
+        raise ValueError("BFM frozen suite requires actual case videos")
+    recipe="bfm" if bfm else "flat"
 
     def checked_file(relative: str, limit: int) -> Path:
         path = output / relative
@@ -68,19 +75,23 @@ def validate_flat_eval(output: Path, plan: dict, run_id: str) -> dict:
             raise ValueError(f"RPO-Flat evidence unavailable or unsafe: {relative}")
         return path
 
-    def load(relative: str) -> dict:
-        return json.loads(checked_file(relative, 1024 * 1024).read_text(),
+    def load(relative: str, limit: int = 1024 * 1024) -> dict:
+        return json.loads(checked_file(relative, limit).read_text(),
                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
 
     expected_hash = "sha256:" + hashlib.sha256(json.dumps(
         {k:v for k,v in plan.items() if k != "hash"}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     seeds = plan.get("seeds") or []
-    if (plan.get("hash") != expected_hash or plan.get("schema_version") != "eb/rpo-flat-eval-plan/v1"
-            or plan.get("suite_id") != FLAT_SUITE or plan.get("suite_spec") != flat_suite_spec()
+    if bfm and seeds != eval_case_seeds(suite_id, plan.get("profile")):
+        raise ValueError("BFM evaluation cases differ from frozen suite role")
+    if (plan.get("hash") != expected_hash or plan.get("schema_version") != f"eb/rpo-{recipe}-eval-plan/v1"
+            or plan.get("suite_id") != suite_id or plan.get("suite_spec") != suite_spec
             or not seeds or len(set(seeds)) != len(seeds)):
         raise ValueError("RPO-Flat frozen evaluation plan changed")
-    receipt = load("eval-manifest.json")
-    if (receipt.get("schema_version") != "eb/rpo-flat-eval/v1" or receipt.get("run_id") != run_id
+    # Each frozen case includes its physical settings; 100 cases exceed 1 MiB.
+    receipt = load("eval-manifest.json", max(
+        1024 * 1024, min(len(seeds), suite_spec["planned_cases"]) * 64 * 1024))
+    if (receipt.get("schema_version") != f"eb/rpo-{recipe}-eval/v1" or receipt.get("run_id") != run_id
             or receipt.get("plan_hash") != plan["hash"] or receipt.get("seeds") != seeds
             or receipt.get("backend") != "isaac" or receipt.get("criterion") != "velocity_commands"
             or receipt.get("required_steps") != 1000 or receipt.get("official_revision") != ROBOLAB_REVISION
@@ -104,11 +115,43 @@ def validate_flat_eval(output: Path, plan: dict, run_id: str) -> dict:
                  and (version.endswith("v2") or (
                      onnx.get("max_joint_target_error_rad") == 0.25 * onnx["max_clipped_action_error"]
                      and (exported.get("golden") or {}).get("batch_sizes") == [1, 11])))))
+    if bfm:
+        from eb.rpo_bfm import action_control_for_execution, auxiliary_profile_for_execution
+        control = action_control_for_execution(plan.get("execution"))
+        if exported.get("action_control") != control or receipt.get("action_control") != control:
+            raise ValueError("BFM action control differs from frozen source recipe")
+        auxiliary = auxiliary_profile_for_execution(plan.get("execution"))
+        if exported.get("auxiliary_profile") != auxiliary or receipt.get("auxiliary_profile") != auxiliary:
+            raise ValueError("BFM auxiliary profile differs from frozen source recipe")
+        numerical_valid=(version=="eb/rpo-bfm-export/v1" and isinstance(onnx.get("max_joint_target_error_rad"),(int,float))
+            and 0<=onnx["max_joint_target_error_rad"]<=1e-4 and onnx.get("latent")==256
+            and onnx.get("normalization")=="embedded" and exported.get("codec_sha256")==CODEC_HASH)
+        if (exported.get("model_weights_sha256")!=plan.get("source_weights_sha256")
+                or exported.get("resolved_config_sha256")!=plan.get("source_config_sha256")
+                or exported.get("motion_manifest_sha256")!=plan.get("motion_manifest_sha256")
+                or exported.get("asset_sha256")!=plan.get("asset_sha256")
+                or receipt.get("codec_sha256")!=CODEC_HASH
+                or receipt.get("motion_manifest_sha256")!=plan.get("motion_manifest_sha256")
+                or receipt.get("asset_sha256")!=plan.get("asset_sha256")
+                or receipt.get("diagnostic_commands") is not plan.get("diagnostic_commands")):
+            raise ValueError("BFM evaluation source weights, motion, codec or assets differ")
+        command=exported.get("command_latent") or {}
+        if plan.get("execution") and (exported.get("execution") != plan["execution"]
+                or exported.get("learner_joint_updates") != plan.get("checkpoint_step")
+                or exported.get("checkpoint_format") != plan["execution"].get("checkpoint_format")):
+            raise ValueError("Native evaluation binding/checkpoint step differs from frozen plan")
+        if (command!=receipt.get("command_latent") or command.get("reference_split")!="train"
+                or command.get("command_dim")!=3 or command.get("latent_dim")!=256
+                or sha256_file(checked_file("exported/command-to-latent.onnx",64*1024*1024))!=command.get("sha256")):
+            raise ValueError("BFM evaluation command latent frontend changed")
+    # Full native actors exceed 64 MiB; retain a bounded, streamed SHA check.
+    policy_limit_mb = (512 if bfm and (plan.get("execution") or {}).get("checkpoint_format") in {"ufo_agent_state_v1", "ufo_agent_state_v2"}
+                       else 64 if plan.get("execution") else 32)
     if (not numerical_valid or exported.get("status") != "verified"
-            or onnx != receipt.get("onnx") or onnx.get("obs") != 780 or onnx.get("act") != 23
-            or sha256_file(checked_file("exported/policy.onnx", 32 * 1024 * 1024)) != onnx.get("sha256")):
+            or onnx != receipt.get("onnx") or onnx.get("obs") != (375 if bfm else 780) or onnx.get("act") != 23
+            or sha256_file(checked_file("exported/policy.onnx", policy_limit_mb * 1024 * 1024)) != onnx.get("sha256")):
         raise ValueError("RPO-Flat measured policy export changed")
-    for key, name in (("golden", "golden-traces.npz"), ("normalization", "actor-normalization.npz")):
+    for key, name in (("golden", "golden-traces.npz"), ("prompts", "prompts.npz") if bfm else ("normalization", "actor-normalization.npz")):
         evidence = exported.get(key) or {}
         if (evidence.get("path") != name
                 or sha256_file(checked_file("exported/" + name, 8 * 1024 * 1024)) != evidence.get("sha256")):
@@ -117,10 +160,29 @@ def validate_flat_eval(output: Path, plan: dict, run_id: str) -> dict:
             for line in checked_file("eval-cases.jsonl", 1024 * 1024).read_text().splitlines() if line]
     if [row.get("seed") for row in rows] != seeds:
         raise ValueError("RPO-Flat case seeds differ from plan")
+    if plan.get("parallelism"):
+        from eb.runners.rpo_bfm_parallel_eval import partition_seeds
+        parallelism=plan["parallelism"]
+        groups=partition_seeds(seeds,parallelism["gpus"])
+        workers=receipt.get("workers") or []
+        if receipt.get("parallelism")!=parallelism or len(workers)!=len(groups):
+            raise ValueError("BFM worker profile differs from plan")
+        if (len({w.get("pid") for w in workers})!=len(groups) or len({w.get("gpu_uuid") for w in workers})!=len(groups)
+                or [w.get("cuda_device_index") for w in workers]!=list(range(len(groups)))):
+            raise ValueError("BFM workers must use distinct processes and GPUs")
+        for rank,(worker,group) in enumerate(zip(workers,groups)):
+            frozen_worker=load(f"workers/rank_{rank}/worker-manifest.json")
+            batches=worker.get("batches") or []
+            if (frozen_worker!=worker or worker.get("worker_rank")!=rank or worker.get("seeds")!=group
+                    or [s for batch in batches for s in batch.get("seeds",[])]!=group
+                    or any(batch.get("num_envs")!=len(batch["seeds"]) or not 1<=batch["num_envs"]<=parallelism["envs_per_gpu"]
+                           or batch.get("terrain_seed")!=(64000 if parallelism.get("protocol") == "independent_cases_fixed_terrain_v2" else batch["seeds"][0]) for batch in batches)
+                    or any(row.get("worker_rank")!=rank for row in rows if row["seed"] in group)):
+                raise ValueError("BFM worker case coverage or shared terrain evidence differs")
     for row in rows:
         seed = row["seed"]
         if (row.get("run_id") != run_id or row.get("plan_hash") != plan["hash"]
-                or row.get("task_id") != FLAT_TASK or row.get("case_id") != f"rpo-flat-seed-{seed}"
+                or row.get("task_id") != (TASK_ID if bfm else FLAT_TASK) or row.get("case_id") != f"rpo-{recipe}-seed-{seed}"
                 or type(row.get("completed")) is not bool or type(row.get("success")) is not bool
                 or row.get("status") != ("success" if row["success"] else "task_failure" if row["completed"] else "infra_failure")
                 or type(row.get("actual_steps")) is not int or not 0 <= row["actual_steps"] <= 1000
@@ -144,12 +206,22 @@ def validate_flat_eval(output: Path, plan: dict, run_id: str) -> dict:
             if row.get("video_rel") != f"seed_{seed}/0.mp4":
                 raise ValueError("RPO-Flat case video unavailable")
             checked_file("video/eval/" + row["video_rel"], 128 * 1024 * 1024)
+            if suite_spec.get("required_video"):
+                from eb.runners.rpo_flat_artifact import VIDEO_SETTINGS
+                import math
+                width, height, fps = VIDEO_SETTINGS[plan.get("video_quality", "standard")]
+                media = row.get("video_integrity") or {}
+                if (media.get("schema_version") != "eb/bfm-case-video/v1"
+                        or media.get("sha256") != sha256_file(checked_file("video/eval/" + row["video_rel"], 128*1024*1024))
+                        or media.get("resolution") != [width, height] or media.get("fps") != fps
+                        or media.get("decoded_frames") != 1 + math.ceil(row["actual_steps"] / round(50 / fps))):
+                    raise ValueError("BFM case video integrity differs from actual physical case")
     measured = summarize_cases(rows, len(seeds))
     if any(receipt.get(key) != measured[key] for key in ("cases", "metrics")):
         raise ValueError("RPO-Flat aggregate disagrees with individual cases")
-    standard = plan.get("profile") == "standard" and not plan.get("seed_override")
-    qualified = (standard and type(plan.get("checkpoint_step")) is int and plan["checkpoint_step"] >= 500
-                 and seeds == list(range(50000, 50100))
+    standard = plan.get("profile") in {"standard", "acceptance"} and not plan.get("seed_override")
+    qualified = (standard and type(plan.get("checkpoint_step")) is int and (bfm or plan["checkpoint_step"] >= 500)
+                 and seeds == (eval_case_seeds(suite_id, plan["profile"]) if bfm else list(range(50000, 50100)))
                  and measured["cases"]["completed"] == 100 and measured["metrics"]["successes"] >= 80)
     return {"receipt": receipt, **measured,
             "qualification": ("not_requested" if not standard else "incomplete"

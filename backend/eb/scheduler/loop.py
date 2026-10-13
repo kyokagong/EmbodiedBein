@@ -97,7 +97,9 @@ class Scheduler:
                 JobKind.SERVE_POLICY,
             }
             need = spec.resources.gpus
-            if spec.kind in gpu_kinds:
+            cpu_rsi_audit = (spec.kind == JobKind.ASSET_VALIDATE
+                and spec.params.get('operation') == 'probe_rpo_ufo_dynamics_finalize_v2')
+            if spec.kind in gpu_kinds and not cpu_rsi_audit:
                 need = need or 1
             if not need:
                 memory_budget -= required_memory

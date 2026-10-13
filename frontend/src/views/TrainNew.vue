@@ -23,9 +23,11 @@ const form = ref({
   max_epochs: "", max_steps: "", total_num_envs: "", eval_num_envs: "", rollout_epoch: "",
   micro_batch_size: "", global_batch_size: "", save_interval: "", val_check_interval: "", seed: "",
   ppo_max_epochs: "1",
+  target_learner_updates: "16", purpose: "qualification",
   lr: "", value_lr: "", extra_text: "",
 });
 const selectedTemplate = computed(() => templates.value.find(t => t.id === form.value.template_id));
+const isUfo = computed(() => selectedTemplate.value?.execution?.provider_id === "ufo");
 const compatibleEnvironments = computed(() => environments.value.filter(e => e.status === "active" && e.usage === "train"
   && e.template_id === form.value.template_id && e.embodiment_env_id === selectedTemplate.value?.embodiment_env_id));
 const selectedEnvironment = computed(() => compatibleEnvironments.value.find(e => e.id === form.value.environment_id));
@@ -40,13 +42,14 @@ const compatibleDatasets = computed(() => {
   const environmentIds = new Set((embodiments.value.find(e => e.id === form.value.embodiment_id)?.envs || []).map((e: any) => e.id));
   return datasets.value.filter(d => d.usage !== "eval" && environmentIds.has(d.embodiment_env_id) &&
     (!selectedTemplate.value?.embodiment_env_id || d.embodiment_env_id === selectedTemplate.value.embodiment_env_id) &&
-    (!isRpoAmp.value || (d.purpose === "motion_prior" && d.validation?.training_ready === true && d.status === "validated")));
+    (!isRpoAmp.value || (d.purpose === "motion_prior" && d.validation?.training_ready === true && d.status === "validated")) &&
+    (!isUfo.value || (d.validation?.scope === "rpo_ufo_robot_state_v1" && d.status === "validated")));
 });
 const compatibleWeights = computed(() => weights.value.filter(w =>
   (!w.embodiment_id || w.embodiment_id === form.value.embodiment_id) &&
   (!selectedTemplate.value?.model_framework || w.framework === selectedTemplate.value.model_framework)));
 const missingInput = computed(() => !form.value.name.trim() || !form.value.model_name.trim() || !form.value.embodiment_id || !selectedTemplate.value ||
-  selectedTemplate.value.ready === false || !selectedEnvironment.value ||
+  (selectedTemplate.value.ready === false && !(isUfo.value && form.value.purpose === "qualification" && selectedTemplate.value.qualification_ready)) || !selectedEnvironment.value ||
   (selectedTemplate.value.requires_dataset && !form.value.dataset_ids.some(Boolean)) ||
   (selectedTemplate.value.requires_base_model && !form.value.base_model_id));
 let controller: AbortController | undefined;
@@ -68,7 +71,7 @@ onMounted(async () => {
     images.value = ims.items || [];
     environments.value = envs.items || [];
     const requested = environments.value.find(e => e.id === route.query.environment_id && e.status === "active");
-    form.value.template_id = requested?.template_id || templates.value[0]?.id || "";
+    form.value.template_id = requested?.template_id || templates.value.find(t => t.ready !== false)?.id || templates.value[0]?.id || "";
     await nextTick();
     if (requested) form.value.environment_id = requested.id;
     ready.value = true;
@@ -83,7 +86,8 @@ watch(() => form.value.template_id, () => {
   form.value.base_model_id = "";
   form.value.image = "";
   form.value.gym_id = "";
-  if (isRpoAmp.value || isRpoFlat.value) form.value.gpus = 1;
+  if (isRpoAmp.value || isRpoFlat.value || isUfo.value) form.value.gpus = 1;
+  if (t?.execution?.topology_id === "one_learner_three_samplers") form.value.gpus = 4;
   for (const [field, key] of Object.entries({
     max_epochs: "runner.max_epochs", max_steps: "runner.max_steps",
     total_num_envs: "env.train.total_num_envs", eval_num_envs: "env.eval.total_num_envs",
@@ -116,10 +120,10 @@ function payload() {
     embodiment_id: form.value.embodiment_id, image: form.value.image || null,
     gpus: Number(form.value.gpus), gym_id: form.value.gym_id || null,
     dataset_ids: form.value.dataset_ids.filter(Boolean), base_model_id: form.value.base_model_id || null,
-    ...Object.fromEntries(["max_epochs", "max_steps", "total_num_envs", "eval_num_envs", "rollout_epoch", "micro_batch_size", "global_batch_size", "save_interval", "val_check_interval", "seed"].map(k => [k, (form.value as any)[k] === "" ? null : Number((form.value as any)[k])])),
-    lr: form.value.lr || null,
-    value_lr: form.value.value_lr || null,
-    extra_overrides: form.value.extra_text.split("\n").map(s => s.trim()).filter(Boolean),
+    ...(isUfo.value ? { target_learner_updates: Number(form.value.target_learner_updates), purpose: form.value.purpose } : {}),
+    ...Object.fromEntries((isUfo.value ? ["seed"] : ["max_epochs", "max_steps", "total_num_envs", "eval_num_envs", "rollout_epoch", "micro_batch_size", "global_batch_size", "save_interval", "val_check_interval", "seed"]).map(k => [k, (form.value as any)[k] === "" ? null : Number((form.value as any)[k])])),
+    ...(!isUfo.value ? { lr: form.value.lr || null, value_lr: form.value.value_lr || null,
+      extra_overrides: form.value.extra_text.split("\n").map(s => s.trim()).filter(Boolean) } : {}),
   };
 }
 async function refreshPreview() {
@@ -195,7 +199,12 @@ async function submit() {
           <p v-if="form.template_id === 'libero_pi05_sft'" class="muted xs">默认冻结视觉语言模型，仅微调动作专家（train_expert_only）。基座已完成上游 LIBERO SFT，本作业继续微调。</p>
           <h3>训练超参数</h3>
           <p class="muted xs">已填入模板覆盖值；空白表示使用训练配置中的默认值。实际生效值见右侧预览。</p>
-          <div class="grid2">
+          <div v-if="isUfo" class="grid2">
+            <div><label class="form-label" for="train-ufo-target">累计联合更新目标</label><input id="train-ufo-target" class="form-input" type="number" min="1" :max="form.purpose === 'qualification' ? 24 : 1000" v-model="form.target_learner_updates" /></div>
+            <div><label class="form-label" for="train-ufo-purpose">用途</label><select id="train-ufo-purpose" class="form-select" v-model="form.purpose"><option value="qualification">有界资格验证（最多24更新）</option><option value="training">训练（需已通过闭环资格）</option></select></div>
+          </div>
+          <p v-if="isUfo" class="muted xs">六个原生优化器共同执行一次才计为一次联合更新。warmup 可以为0更新；配方和资源由服务器冻结。</p>
+          <div v-if="!isUfo" class="grid2">
             <div><label class="form-label" for="train-epochs">max_epochs{{ selectedTemplate?.kind === 'ppo' ? '（训练迭代次数）' : '' }}</label><input id="train-epochs" class="form-input" type="number" min="1" step="1" v-model="form.max_epochs" :placeholder="defaultLabel('runner.max_epochs')" /></div>
             <div v-if="selectedTemplate?.kind === 'sft'"><label class="form-label" for="train-steps">max_steps</label><input id="train-steps" class="form-input" type="number" min="1" step="1" v-model="form.max_steps" :placeholder="defaultLabel('runner.max_steps')" /></div>
             <div v-if="selectedTemplate?.kind === 'ppo'"><label class="form-label" for="train-envs">训练环境数</label><input id="train-envs" class="form-input" type="number" min="1" step="1" v-model="form.total_num_envs" :placeholder="defaultLabel('env.train.total_num_envs')" /></div>
@@ -209,8 +218,8 @@ async function submit() {
             <div v-if="selectedTemplate?.kind === 'ppo'"><label class="form-label" for="train-rollout">每次采样轮数</label><input id="train-rollout" class="form-input" type="number" min="1" step="1" v-model="form.rollout_epoch" :placeholder="defaultLabel('env.train.rollout_epoch')" /></div>
             <div><label class="form-label" for="train-seed">随机种子</label><input id="train-seed" class="form-input" type="number" min="0" step="1" v-model="form.seed" :placeholder="defaultLabel('actor.seed')" /></div>
           </div>
-          <p v-if="selectedTemplate?.kind === 'ppo'" class="muted xs">环境数控制并行采样量；global batch 必须能被 micro batch × GPU 数整除。</p>
-          <div class="grid2">
+          <p v-if="selectedTemplate?.kind === 'ppo' && !isUfo" class="muted xs">环境数控制并行采样量；global batch 必须能被 micro batch × GPU 数整除。</p>
+          <div v-if="!isUfo" class="grid2">
             <div><label class="form-label" for="train-lr">策略学习率</label><input id="train-lr" class="form-input" v-model="form.lr" :placeholder="defaultLabel('actor.optim.lr')" /></div>
             <div v-if="selectedTemplate?.kind === 'ppo'"><label class="form-label" for="train-value-lr">价值学习率</label><input id="train-value-lr" class="form-input" v-model="form.value_lr" :placeholder="defaultLabel('actor.optim.value_lr')" /></div>
           </div>

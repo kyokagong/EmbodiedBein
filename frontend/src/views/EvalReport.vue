@@ -10,10 +10,11 @@ const drift = ref<any>(null);
 const episodes = ref<any[]>([]);
 const selectedFailure = ref<any>(null);
 const activeTab = ref("metrics");
-const isRpoFlat = computed(() => row.value?.gate_results?.receipt?.schema_version === "eb/rpo-flat-eval/v1");
-const isRpo = computed(() => ["eb/rpo-wbc-eval/v1", "eb/rpo-amp-eval/v1", "eb/rpo-flat-eval/v1"].includes(row.value?.gate_results?.receipt?.schema_version));
+const isRpoFlat = computed(() => ["eb/rpo-flat-eval/v1", "eb/rpo-bfm-eval/v1"].includes(row.value?.gate_results?.receipt?.schema_version));
+const isRpo = computed(() => ["eb/rpo-wbc-eval/v1", "eb/rpo-amp-eval/v1", "eb/rpo-flat-eval/v1", "eb/rpo-bfm-eval/v1"].includes(row.value?.gate_results?.receipt?.schema_version));
 const rpoStability = computed(() => row.value?.gate_results?.success_definition === "survive_1000_steps_without_fall_or_nan");
 const rpoStandWalk = computed(() => row.value?.gate_results?.receipt?.criterion === "stand_walk");
+const isUfo = computed(() => row.value?.gate_results?.execution?.provider_id === "ufo");
 function caseResult(ep: any) {
   if (!isRpo.value) return ep.status;
   if (ep.status === "success") return "成功";
@@ -61,6 +62,7 @@ onMounted(async () => {
       </div>
     </div>
 
+    <p v-if="isUfo" class="muted">UFO / RLinf · 源联合更新 {{ row.gate_results.source_step }} · 独立评估；缺少 case 或必需录像不能视为通过。</p>
     <!-- 4 KPI 卡片 -->
     <div class="kpis">
       <div class="card">
@@ -102,7 +104,7 @@ onMounted(async () => {
     <div class="panel" v-if="activeTab === 'metrics'">
       <p>证据：{{ row.gate_results?.validity || '历史报告，未验证逐案例完整性' }} · 资格：{{ row.gate_results?.qualification || '未判定' }}</p>
       <p v-if="row.metrics?.planned != null">已完成 {{ row.metrics.completed }} / 计划 {{ row.metrics.planned }} · 成功 {{ row.metrics.successes }}</p>
-      <p v-if="isRpoFlat">官方完整速度/转向指令，每例 20 秒；无跌倒、NaN 或硬越限，平移向量 RMSE ≤0.20 m/s、转向 RMSE ≤0.30 rad/s。标准评估 {{ row.metrics?.successes }} / 100，通过目标为至少 80 例。</p>
+      <p v-if="isRpoFlat">官方完整速度/转向指令，每例 20 秒；无跌倒、NaN 或硬越限，平移向量 RMSE ≤0.20 m/s、转向 RMSE ≤0.30 rad/s。实际成功 {{ row.metrics?.successes }} / {{ row.metrics?.n_trials }}；最终验收为 100 例至少 80 例通过。</p>
       <p v-else-if="isRpo">成功标准：{{ rpoStandWalk ? '平地直立或 0.3m/s 直行：保持直立 1000 步，站立漂移 ≤ 0.5m，直行前进 ≥ 4m' : rpoStability ? '身体稳定：达到 1000 步且未跌倒、无数值异常' : '跟踪精度：无跌倒、越限或数值异常，且速度 RMSE ≤ 0.15、上肢 RMSE ≤ 0.1' }}</p>
       <p v-if="isRpo">环境 {{ row.gate_results?.receipt?.backend === 'isaac' ? 'Isaac Lab' : 'MuJoCo' }} · 跌倒 {{ row.metrics?.fall_count }} · 关节/力矩越限 {{ row.metrics?.hard_limit_count }} · 数值异常 {{ row.metrics?.nan_count }} · 速度 RMSE {{ row.metrics?.velocity_rmse }} · {{ isRpoFlat ? '转向' : '上肢' }} RMSE {{ isRpoFlat ? row.metrics?.yaw_rmse : row.metrics?.upper_rmse }}</p>
       <h3 v-if="row.metrics?.per_task">逐任务结果</h3>

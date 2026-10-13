@@ -28,6 +28,7 @@ class Observation(BaseModel):
     dim: int
     critic_dim: int | None = None
     history_length: int = 1
+    history_preflattened: bool = False
     concat: bool = True
     layout: list[ObsTerm] = Field(default_factory=list)
     critic_layout: list[ObsTerm] = Field(default_factory=list)
@@ -100,7 +101,8 @@ class EmbodimentEnv(BaseModel):
 
     def self_assertions(self) -> list[Violation]:
         v: list[Violation] = []
-        layout_sum = sum(t.dim for t in self.observation.layout) * self.observation.history_length
+        history_multiplier = 1 if self.observation.history_preflattened else self.observation.history_length
+        layout_sum = sum(t.dim for t in self.observation.layout) * history_multiplier
         if self.observation.concat and layout_sum != self.observation.dim:
             v.append(
                 Violation(
@@ -111,7 +113,7 @@ class EmbodimentEnv(BaseModel):
                 )
             )
         if self.observation.critic_dim is not None:
-            critic_sum = sum(t.dim for t in self.observation.critic_layout) * self.observation.history_length
+            critic_sum = sum(t.dim for t in self.observation.critic_layout) * history_multiplier
             if critic_sum != self.observation.critic_dim:
                 v.append(
                     Violation(

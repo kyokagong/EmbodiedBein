@@ -89,9 +89,21 @@ class EbdClient:
             r.raise_for_status()
             return r.json()
 
+    async def motion_preview(self, run_id: str, clip_id: str) -> dict:
+        async with self._client() as c:
+            r = await c.get(f"http://ebd/v1/runs/{run_id}/motion-preview/{clip_id}")
+            r.raise_for_status()
+            return r.json()
+
     async def cancel_run(self, run_id: str) -> dict:
         async with self._client() as c:
             r = await c.post(f"http://ebd/v1/runs/{run_id}/cancel")
+            r.raise_for_status()
+            return r.json()
+
+    async def delete_storage(self, paths: list[str], run_ids: list[str]) -> dict:
+        async with self._client(timeout=3600.0) as c:
+            r = await c.post("http://ebd/v1/storage/delete", json={"paths": paths, "run_ids": run_ids})
             r.raise_for_status()
             return r.json()
 

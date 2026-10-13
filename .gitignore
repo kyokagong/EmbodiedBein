@@ -28,3 +28,5 @@ backup/*.zst
 
 .superpowers/
 .worktrees/
+deploy/.sources/
+docs/progress/artifacts/

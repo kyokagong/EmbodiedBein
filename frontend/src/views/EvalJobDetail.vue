@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
+import DeleteButton from "../components/DeleteButton.vue";
 
 const route = useRoute(); const job = ref<any>(null); const progress = ref<any>(null); const logs = ref<string[]>([]); const error = ref("");
+const router = useRouter();
 let timer: number | undefined; let alive = true;
 onUnmounted(() => { alive = false; clearTimeout(timer); });
 async function load() {
@@ -26,7 +28,8 @@ onMounted(load);
 </script>
 <template>
   <div v-if="job"><div class="page-head"><div><p class="crumb"><router-link to="/eval">评估任务</router-link> / {{ job.id }}</p><h2>{{ job.name }}</h2></div>
-    <button v-if="['queued','admitted','preparing','running'].includes(job.status)" @click="cancel">取消任务</button></div>
+    <button v-if="['queued','admitted','preparing','running'].includes(job.status)" @click="cancel">取消任务</button>
+    <DeleteButton :path="`/evals/jobs/${job.id}`" :name="job.name" :disabled="!['succeeded','failed','timeout','cancelled','infra_failed'].includes(job.status)" @deleted="router.push('/eval')" /></div>
     <p class="error" v-if="error">{{ error }}</p><p>执行状态：<b>{{ job.status }}</b> · 套件 {{ job.suite_id || '历史' }}</p>
     <p v-if="job.error" class="error">{{ job.error }}</p>
     <div class="grid2"><div class="panel"><h3>受评输入</h3><p v-if="job.model_version_id">模型 <router-link :to="`/models/${job.model_version_id}`">{{ job.model_version_id }}</router-link> · 源 Run {{ job.plan?.source_run_id }} / step {{ job.plan?.checkpoint_step }}</p><p v-else>源 Run {{ job.checkpoint?.run_id }} · step {{ job.checkpoint?.step }}</p>

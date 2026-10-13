@@ -16,7 +16,7 @@ const recordVideo = ref(false);
 const preview = ref<any>(null); const error = ref(""); const busy = ref(false);
 const key = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const visibleSuites = computed(() => suites.value.filter(s => benchmark.value === "rpo"
-  ? ["rpo_wbc", "rpo_amp", "rpo_flat"].includes(s.spec?.benchmark) && s.spec?.backend === rpoBackend.value
+  ? ["rpo_wbc", "rpo_amp", "rpo_flat", "rpo_bfm"].includes(s.spec?.benchmark) && s.spec?.backend === rpoBackend.value
     && !s.id.endsWith("_stand_walk_v1") : benchmark.value === "robotwin"
   ? s.spec?.benchmark === "robotwin" : s.spec?.suite?.startsWith("libero_"))
   .sort((a, b) => Number(b.spec?.criterion === "stand_walk") - Number(a.spec?.criterion === "stand_walk")
@@ -26,6 +26,7 @@ const selectedEnvironment = computed(() => compatibleEnvironments.value.find(e =
 const selected = computed(() => benchmark.value === "rpo" ? rpoCandidates.value.find(c => c.id === source.value)
   : benchmark.value === "robotwin" ? candidates.value.find(c => c.id === source.value)
   : checkpoints.value.find(c => c.key === source.value));
+const isUfo = computed(() => selected.value?.execution?.provider_id === "ufo");
 const compatibleRpoCandidates = computed(() => rpoCandidates.value.filter(c =>
   c.embodiment_env_id === suites.value.find(s => s.id === suiteId.value)?.embodiment_env_id));
 const runtimeProfile = computed(() => runtimeProfiles.value.find(p => p.id === runtimeProfileId.value));
@@ -49,7 +50,13 @@ watch(benchmark, async () => {
   profile.value = "smoke"; recordVideo.value = false; preview.value = null; error.value = "";
   try { await loadCandidates(); } catch (e: any) { error.value = e.message; }
 });
-watch(suiteId, async () => { environmentId.value = compatibleEnvironments.value[0]?.id || ""; preview.value = null; error.value = ""; try { await loadCandidates(); } catch (e: any) { error.value = e.message; } });
+watch(suiteId, async () => {
+  environmentId.value = compatibleEnvironments.value[0]?.id || "";
+  const role = suites.value.find(s => s.id === suiteId.value)?.spec?.evaluation_role;
+  if (["validation", "acceptance"].includes(role)) { profile.value = role; recordVideo.value = true; }
+  preview.value = null; error.value = "";
+  try { await loadCandidates(); } catch (e: any) { error.value = e.message; }
+});
 watch(rpoBackend, async () => {
   suiteId.value = visibleSuites.value[0]?.id || ""; preview.value = null; error.value = "";
   try { await loadCandidates(); } catch (e: any) { error.value = e.message; }
@@ -82,7 +89,7 @@ onMounted(async () => {
     const requested = environments.value.find(e => e.id === route.query.environment_id && e.status === "active");
     if (requested) {
       const suite = suites.value.find(s => s.id === requested.suite_id);
-      benchmark.value = ["rpo_wbc", "rpo_amp", "rpo_flat"].includes(suite?.spec?.benchmark) ? "rpo" : suite?.spec?.benchmark === "robotwin" ? "robotwin" : "libero";
+      benchmark.value = ["rpo_wbc", "rpo_amp", "rpo_flat", "rpo_bfm"].includes(suite?.spec?.benchmark) ? "rpo" : suite?.spec?.benchmark === "robotwin" ? "robotwin" : "libero";
       if (benchmark.value === "rpo") rpoBackend.value = suite?.spec?.backend === "mujoco" ? "mujoco" : "isaac";
       await nextTick();
       suiteId.value = requested.suite_id;
@@ -94,9 +101,9 @@ onMounted(async () => {
 function body() {
   if (benchmark.value === "rpo") return { model_version_id:selected.value?.id,
     backend:rpoBackend.value, suite_id:suiteId.value, environment_id:environmentId.value,
-    profile:profile.value === "standard" ? "standard" : "smoke",
+    profile: isUfo.value ? profile.value : profile.value === "standard" ? "standard" : "smoke",
     ...(String(rpoSeed.value).trim() ? {seed:Number(rpoSeed.value)} : {}),
-    record_video:recordVideo.value };
+    record_video: isUfo.value && ["validation", "acceptance"].includes(profile.value) ? true : recordVideo.value };
   if (benchmark.value === "robotwin") return { name:name.value.trim(), suite_id:suiteId.value, environment_id:environmentId.value,
     profile:profile.value, model_version_id:selected.value?.id,
     runtime_profile_id:runtimeProfileId.value, resource_variant_id:resourceVariantId.value };
@@ -146,7 +153,8 @@ async function submit() {
         : visibleSuites.find(s => s.id === suiteId)?.spec?.criterion === 'velocity_commands'
         ? '官方速度与转向：每例 20 秒，按官方范围采样并重采样指令；无跌倒、NaN 或硬越限，平移速度向量 RMSE ≤ 0.20m/s、转向 RMSE ≤ 0.30rad/s。标准 100 例至少 80 例通过。'
         : '跟踪精度：还需满足速度与上肢跟踪误差阈值。' }}</p>
-      <label>规模 <select v-model="profile"><option value="smoke">冒烟</option><option value="validation" v-if="benchmark === 'robotwin'">验证</option><option value="standard">标准</option><option value="acceptance" v-if="benchmark === 'robotwin'">验收</option></select></label>
+      <p v-if="isUfo" class="muted xs">UFO / RLinf · 源联合更新 {{ selected.step }}；周期快评与最终验收分别冻结 seed，必需录像须完整。</p>
+      <label>规模 <select v-model="profile"><option value="smoke">冒烟</option><option value="validation" v-if="benchmark === 'robotwin' || isUfo">验证</option><option value="standard">标准</option><option value="acceptance" v-if="benchmark === 'robotwin' || isUfo">验收</option></select></label>
       <label v-if="benchmark === 'rpo'">Seed（可选）<input v-model="rpoSeed" type="number" min="0" max="1000000" step="1" placeholder="留空使用默认 seed" /></label>
       <p v-if="benchmark === 'rpo'" class="muted xs">留空按规模使用默认 seed；填写后仅运行该 seed，结果只用于诊断。</p>
       <label v-if="benchmark === 'rpo'"><input v-model="recordVideo" type="checkbox" /> 录制评估视频（完成后可在评估报告中播放）</label>

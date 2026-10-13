@@ -1,0 +1,4 @@
+FROM eb/rlinf:rpo-bfm-ufo-mjlab-viability-v13
+RUN /workspace/isaaclab_extension_template/.venv/bin/python -c 'import hashlib; from pathlib import Path; assert hashlib.sha256(Path("/workspace/eb_runner/bfm_ufo_policy.py").read_bytes()).hexdigest()=="f884aeae9768d40c447e6b2aae16b2a8aa62cf727b70b285c931f48971ed09e2"'
+COPY backend/eb/runners/bfm_ufo_policy.py /workspace/eb_runner/bfm_ufo_policy.py
+RUN /workspace/isaaclab_extension_template/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; p=Path("/workspace/eb_runner/bfm_ufo_policy.py"); Path("/opt/sampling-fix-source.json").write_text(json.dumps({"schema_version":"eb/rpo-sampling-fix-source/v1","baseline_image":"sha256:e23281518d388565f4b1162dc9d2f21947543b2fd0a014b0288365be2788cee2","policy_sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"only_change":"train/eval mode variable and mode-aware action cache","qualification":"untrained_candidate_not_registered","old_full_resume_supported":False}))'

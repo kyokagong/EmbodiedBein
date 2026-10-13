@@ -88,6 +88,24 @@ def test_flat_acceptance_requires_80_real_cases_and_unchanged_evidence(tmp_path)
     assert validate_flat_eval(tmp_path, plan, "run_flat")["qualification"] == "fail"
     publish()
     assert validate_flat_eval(tmp_path, plan, "run_flat")["qualification"] == "pass"
+    manifest = tmp_path / "eval-manifest.json"
+    original = manifest.read_text()
+    large = json.loads(original)
+    large["physical_case_settings"] = [{"settings": "x" * 25000} for _ in seeds]
+    manifest.write_text(json.dumps(large))
+    assert manifest.stat().st_size > 1024 * 1024
+    assert validate_flat_eval(tmp_path, plan, "run_flat")["qualification"] == "pass"
+    large["physical_case_settings"] = "x" * (7 * 1024 * 1024)
+    manifest.write_text(json.dumps(large))
+    with pytest.raises(ValueError, match="evidence unavailable or unsafe"):
+        validate_flat_eval(tmp_path, plan, "run_flat")
+    oversized_plan = {**plan, "seeds": list(range(50000, 51000))}
+    oversized_plan["hash"] = "sha256:" + hashlib.sha256(json.dumps(
+        {k: v for k, v in oversized_plan.items() if k != "hash"},
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    with pytest.raises(ValueError, match="evidence unavailable or unsafe"):
+        validate_flat_eval(tmp_path, oversized_plan, "run_flat")
+    manifest.write_text(original)
     plan["video_quality"] = "hd"
     publish()
     with pytest.raises(ValueError, match="receipt differs"):

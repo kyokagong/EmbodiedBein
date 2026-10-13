@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from eb.api.deps import PrincipalDep, SessionDep
@@ -33,7 +33,7 @@ class DatasetIn(BaseModel):
     revision: str | None = None
     embodiment_env_id: str | None = None
     usage: Literal["train", "eval"] = "train"
-    purpose: Literal["motion_prior"] | None = None
+    purpose: Literal["motion_prior", "behavior_prior"] | None = None
 
 
 class DatasetUsageIn(BaseModel):
@@ -42,6 +42,22 @@ class DatasetUsageIn(BaseModel):
 
 class OfficialRpoAmpIn(BaseModel):
     name: str = "RoboParty RPO AMP stand/walk probe"
+
+
+class OfficialRpoBfmIn(BaseModel):
+    name: str = "RoboParty RPO BFM-Zero diagnostic motion view"
+    profile: Literal["smoke", "local_pool", "reference_pool"] = "smoke"
+
+
+class G1RpoTrialIn(BaseModel):
+    name: str = "G1 LAFAN to RPO diagnostic reference"
+    source_run_id: str = Field(pattern=r"^run_[0-9a-f]+$")
+
+
+class G1BfmViewIn(BaseModel):
+    name: str = "G1 calibrated RPO BFM codec view"
+    source_dataset_id: str = Field(pattern=r"^ds_[0-9a-f]+$")
+    official_dataset_id: str | None = Field(default=None,pattern=r"^ds_[0-9a-f]+$")
 
 
 class RoboTwinDatasetIn(BaseModel):
@@ -150,6 +166,256 @@ async def create_official_rpo_amp_dataset(body: OfficialRpoAmpIn, session: Sessi
     return _ds_out(row)
 
 
+class UfoRobotStateIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    name: str = Field(min_length=1, max_length=120)
+    parent_dataset_ids: list[str] = Field(min_length=1, max_length=1)
+    control_profile: Literal["reachable_v2"] | None = None
+
+
+@router.post("/datasets/rpo-ufo-robot-state")
+async def create_ufo_robot_state_dataset(body: UfoRobotStateIn, session: SessionDep,
+                                         principal: PrincipalDep) -> dict:
+    from eb.domain.job import JobKind, JobSpec
+    from eb.orchestrator.service import Orchestrator
+    from eb.store.models import LineageEdge
+    from eb.data_validation import require_bfm_motion_dataset, require_ufo_robot_state_dataset
+    from eb.rpo_bfm import ENV_ID, ENV_V2_ID
+    reachable = body.control_profile == "reachable_v2"
+    interface_id = ENV_V2_ID if reachable else ENV_ID
+    parent = await session.get(Dataset, body.parent_dataset_ids[0])
+    if not parent:
+        raise HTTPException(404, "父 DatasetVersion 不存在")
+    await reconcile_dataset(parent, session)
+    try:
+        validation = require_ufo_robot_state_dataset(parent) if reachable else require_bfm_motion_dataset(parent)
+        path = validate_allowed_path(parent.dest_path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    did = new_id("ds")
+    destination = get_settings().datasets_root / did / "content"
+    destination.parent.mkdir(parents=True, exist_ok=False)
+    check = disk_preflight(str(destination.parent), needed_bytes=parent.total_bytes or 0, archive=False)
+    if not check.ok:
+        raise HTTPException(400, check.reason)
+    spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id=interface_id,
+        image="eb/rlinf:rpo-bfm-ufo-agent-4gpu-reachable-v7" if reachable else "eb/rlinf:rpo-bfm-ufo-agent-v1",
+        params={"operation": "convert_rpo_ufo_robot_state", "dataset_id": did,
+            **({"control_profile": body.control_profile} if reachable else {})},
+        inputs={"datasets": [{"id": parent.id, "path": str(path), "validation": validation}]},
+        runtime={"network": "none"}, resources={"gpus": 0, "cpus": 2, "memory_gb": 4, "shm_gb": 1},
+        policy={"timeout_h": 1, "max_retries": 0})
+    job = await Orchestrator().submit(session, spec, principal.id, f"rpo-ufo-state:{did}", commit=False)
+    row = Dataset(id=did, name=body.name, format="unknown", license=parent.license,
+        source_kind="rpo_ufo_robot_state", source_uri=parent.id, dest_path=str(destination),
+        status="queued", total_bytes=0, embodiment_env_id=interface_id,
+        meta={"usage": "train", "purpose": "behavior_prior", "parent_dataset_ids": [parent.id],
+            "validation_job_id": job.id, "source_use": "local noncommercial research; no redistribution"},
+        summary_stats={"validation": {"status": "not_validated", "training_ready": False}})
+    session.add(row)
+    session.add(LineageEdge(src_type="dataset", src_id=parent.id, dst_type="dataset", dst_id=did,
+        relation="derived_robot_state_control_view" if reachable else "derived_robot_state"))
+    await session.commit()
+    await session.refresh(row)
+    return _ds_out(row)
+
+
+@router.post("/datasets/rpo-bfm-official")
+async def create_official_rpo_bfm_dataset(body: OfficialRpoBfmIn, session: SessionDep,
+                                          principal: PrincipalDep) -> dict:
+    from eb.domain.job import JobKind, JobSpec
+    from eb.orchestrator.service import Orchestrator
+    from eb.rpo_bfm import MOTION_CONVERTER_REVISION, LOCAL_POOL_CONVERTER_REVISION, REFERENCE_POOL_CONVERTER_REVISION
+
+    did = new_id("ds")
+    destination = get_settings().datasets_root / did / "content"
+    destination.parent.mkdir(parents=True, exist_ok=False)
+    check = disk_preflight(str(destination.parent), needed_bytes=0, archive=True)
+    if not check.ok:
+        raise HTTPException(400, check.reason)
+    spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
+                   params={"operation":{"smoke":"convert_rpo_bfm_official", "local_pool":"convert_rpo_bfm_local_pool", "reference_pool":"convert_rpo_bfm_reference_pool"}[body.profile], "dataset_id":did},
+                   runtime={"network":"none"},
+                   resources={"gpus":1, "cpus":8, "memory_gb":24, "shm_gb":8})
+    job = await Orchestrator().submit(session, spec, principal.id, f"rpo-bfm-official:{did}", commit=False)
+    row = Dataset(id=did, name=body.name, format="unknown", license="BSD-3-Clause",
+                  source_kind="rpo_bfm_official",
+                  source_uri="https://github.com/Roboparty/robolab/tree/6b1c3d9988497c8961dcba77892de32edc1770e1/data/motions/rpo_lab",
+                  dest_path=str(destination), status="queued", total_bytes=0,
+                  embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
+                  meta={"usage":"train", "purpose":"behavior_prior",
+                        "source_revision":"6b1c3d9988497c8961dcba77892de32edc1770e1",
+                        "converter_revision":{"smoke":MOTION_CONVERTER_REVISION, "local_pool":LOCAL_POOL_CONVERTER_REVISION, "reference_pool":REFERENCE_POOL_CONVERTER_REVISION}[body.profile],
+                        "source_profile":body.profile,
+                        "license_scope":"repository; upstream motion provenance not independently verified",
+                        "validation_job_id":job.id},
+                  summary_stats={"validation":{"status":"not_validated", "smoke_ready":False,
+                                                "training_ready":False}})
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _ds_out(row)
+
+
+@router.post("/datasets/rpo-g1-retarget")
+async def create_g1_rpo_trial(body: G1RpoTrialIn, session: SessionDep, principal: PrincipalDep) -> dict:
+    import hashlib
+    from eb.domain.job import JobKind, JobSpec
+    from eb.orchestrator.service import Orchestrator
+    from eb.store.models import Job, Run, LineageEdge
+
+    run = await session.get(Run, body.source_run_id)
+    source_job = await session.get(Job, run.job_id) if run else None
+    if (not run or run.status != "finished" or not source_job or source_job.status != "succeeded"
+            or (source_job.spec.get("params") or {}).get("operation") != "export_g1_lafan_trial"):
+        raise HTTPException(409, "G1 retarget requires a succeeded frozen trajectory-export Run")
+    settings = get_settings()
+    source_receipt = settings.data_root / "runs" / run.id / "outputs/g1-export/export-receipt.json"
+    if source_receipt.is_symlink() or not source_receipt.is_file() or source_receipt.stat().st_size > 1024*1024:
+        raise HTTPException(409, "G1 export receipt is unavailable")
+    receipt = json.loads(source_receipt.read_text())
+    if (receipt.get("schema_version") != "eb/g1-trajectory-export/v1" or receipt.get("status") != "succeeded"
+            or receipt.get("source_use") != "local_noncommercial_no_redistribution"):
+        raise HTTPException(409, "G1 source use/export receipt differs")
+    did = new_id("ds")
+    destination = settings.datasets_root / did / "content"
+    destination.parent.mkdir(parents=True, exist_ok=False)
+    preflight = disk_preflight(str(destination.parent), needed_bytes=0, archive=True)
+    if not preflight.ok:
+        raise HTTPException(400, preflight.reason)
+    export_sha = hashlib.sha256(source_receipt.read_bytes()).hexdigest()
+    spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
+        params={"operation":"retarget_g1_lafan_trial", "dataset_id":did,
+                "source_run_id":run.id, "source_export_sha256":export_sha},
+        runtime={"network":"none"}, resources={"gpus":0, "cpus":4, "memory_gb":8, "shm_gb":1},
+        policy={"timeout_h":.25, "max_retries":0})
+    job = await Orchestrator().submit(session, spec, principal.id, f"g1-rpo-trial:{did}", commit=False)
+    row = Dataset(id=did, name=body.name, source_kind="rpo_g1_retarget",
+        source_uri="https://huggingface.co/datasets/xuewang/UFO-MotionData/tree/40faaedd0d75a024685cfc48bd8eaff2f6772727",
+        dest_path=str(destination), format="unknown", license="CC-BY-NC-ND-4.0 (LAFAN1 upstream)",
+        status="queued", total_bytes=0, embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
+        meta={"usage":"train", "purpose":"behavior_prior", "validation_job_id":job.id,
+              "source_run_id":run.id, "source_export_sha256":export_sha,
+              "source_use":"local_noncommercial_no_redistribution"},
+        summary_stats={"validation":{"status":"not_validated", "training_ready":False}})
+    session.add(row)
+    session.add(LineageEdge(src_type="run", src_id=run.id, dst_type="dataset", dst_id=did, relation="retargeted_to"))
+    await session.commit()
+    await session.refresh(row)
+    return _ds_out(row)
+
+
+@router.post("/datasets/rpo-g1-bfm")
+async def create_g1_bfm_view(body:G1BfmViewIn,session:SessionDep,principal:PrincipalDep)->dict:
+    import hashlib
+    from eb.domain.job import JobKind,JobSpec
+    from eb.orchestrator.service import Orchestrator
+    from eb.store.models import Job,LineageEdge
+    from eb.rpo_bfm import G1_CONVERTER_REVISION,MIXED_POOL_CONVERTER_REVISION,REFERENCE_POOL_CONVERTER_REVISION
+    settings=get_settings()
+    source=await session.get(Dataset,body.source_dataset_id)
+    if source:
+        await reconcile_dataset(source,session)
+    source_job=await session.get(Job,(source.meta or {}).get("validation_job_id")) if source else None
+    root=settings.datasets_root/body.source_dataset_id/"content"
+    pool=bool(source and source.format=="rpo_g1_reference_pool")
+    if (not source or source.status!="validated" or source.format not in {"rpo_g1_joint_trajectory","rpo_g1_reference_pool"}
+            or source.embodiment_env_id!="ee_rpo_v2_bfm_23dof_v1"
+            or Path(source.dest_path)!=root or root.is_symlink()
+            or not source_job or source_job.status!="succeeded"
+            or (source_job.spec.get("params") or {}).get("operation")!=("retarget_g1_lafan_pool" if pool else "retarget_g1_lafan_trial")):
+        raise HTTPException(409,"G1 BFM conversion requires a succeeded managed RPO retarget DatasetVersion")
+    receipt_path=root/("pool-receipt.json" if pool else "retarget-receipt.json")
+    if receipt_path.is_symlink() or not receipt_path.is_file() or receipt_path.stat().st_size>1024*1024:
+        raise HTTPException(409,"G1 calibrated source receipt is unavailable")
+    receipt=json.loads(receipt_path.read_text())
+    if (not pool and (receipt.get("calibration_verified") is not True
+            or receipt.get("calibration_applied_to_solver") is not True
+            or receipt.get("source_use")!="local_noncommercial_no_redistribution"
+            or receipt.get("continuous_9frame_starts",0)<1)):
+        raise HTTPException(409,"G1 BFM conversion requires verified calibration and continuous reference windows")
+    official=None
+    official_sha=None
+    if pool:
+        from eb.data_validation import require_bfm_motion_dataset
+        official=await session.get(Dataset,body.official_dataset_id) if body.official_dataset_id else None
+        if not official:
+            raise HTTPException(409,"Mixed G1 pool requires an official RPO reference DatasetVersion")
+        await reconcile_dataset(official,session)
+        try:
+            require_bfm_motion_dataset(official)
+        except ValueError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        official_path=Path(official.dest_path)/"manifest.json"
+        if json.loads(official_path.read_text()).get("converter_revision")!=REFERENCE_POOL_CONVERTER_REVISION:
+            raise HTTPException(409,"Mixed pool requires geometry-checked official RPO references")
+        official_sha=hashlib.sha256(official_path.read_bytes()).hexdigest()
+    did=new_id("ds")
+    destination=settings.datasets_root/did/"content"
+    destination.parent.mkdir(parents=True,exist_ok=False)
+    preflight=disk_preflight(str(destination.parent),needed_bytes=0,archive=True)
+    if not preflight.ok:
+        raise HTTPException(400,preflight.reason)
+    source_sha=hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    spec=JobSpec(kind=JobKind.DATA_CONVERT,embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
+        params={"operation":"convert_rpo_bfm_mixed_pool" if pool else "convert_rpo_bfm_g1","dataset_id":did,"source_dataset_id":source.id,
+                "source_retarget_sha256":source_sha,"official_dataset_id":official.id if official else None,
+                "official_manifest_sha256":official_sha},runtime={"network":"none"},
+        resources={"gpus":1,"cpus":8,"memory_gb":24,"shm_gb":8},policy={"timeout_h":.5,"max_retries":0})
+    job=await Orchestrator().submit(session,spec,principal.id,f"g1-bfm-view:{did}",commit=False)
+    row=Dataset(id=did,name=body.name,source_kind="rpo_g1_bfm",source_uri=source.source_uri,
+        dest_path=str(destination),format="unknown",license=source.license,status="queued",total_bytes=0,
+        embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
+        meta={"usage":"train","purpose":"behavior_prior","source_dataset_id":source.id,
+              "source_retarget_sha256":source_sha,"converter_revision":MIXED_POOL_CONVERTER_REVISION if pool else G1_CONVERTER_REVISION,
+              "official_dataset_id":official.id if official else None,"official_manifest_sha256":official_sha,
+              "source_use":"local_noncommercial_no_redistribution","validation_job_id":job.id},
+        summary_stats={"validation":{"status":"not_validated","training_ready":False}})
+    session.add(row)
+    session.add(LineageEdge(src_type="dataset",src_id=source.id,dst_type="dataset",dst_id=did,relation="converted_to"))
+    if official:
+        session.add(LineageEdge(src_type="dataset",src_id=official.id,dst_type="dataset",dst_id=did,relation="merged_into"))
+    await session.commit()
+    await session.refresh(row)
+    return _ds_out(row)
+
+
+@router.post("/datasets/rpo-g1-pool")
+async def create_g1_pool(body:G1RpoTrialIn,session:SessionDep,principal:PrincipalDep)->dict:
+    import hashlib
+    from eb.store.models import Job,Run,LineageEdge
+    from eb.domain.job import JobKind,JobSpec
+    from eb.orchestrator.service import Orchestrator
+    settings=get_settings()
+    run=await session.get(Run,body.source_run_id)
+    source_job=await session.get(Job,run.job_id) if run else None
+    if (not run or run.status!="finished" or not source_job or source_job.status!="succeeded"
+            or (source_job.spec.get("params") or {}).get("operation")!="acquire_g1_lafan_trial"):
+        raise HTTPException(409,"G1 pool needs a succeeded pinned source-acquisition Run")
+    path=settings.data_root/"runs"/run.id/"outputs/g1/source-manifest.json"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size>1024*1024:
+        raise HTTPException(409,"G1 pool acquisition receipt unavailable")
+    source_sha=hashlib.sha256(path.read_bytes()).hexdigest()
+    did=new_id("ds")
+    destination=settings.datasets_root/did/"content"
+    destination.parent.mkdir(parents=True,exist_ok=False)
+    spec=JobSpec(kind=JobKind.DATA_CONVERT,embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
+        params={"operation":"retarget_g1_lafan_pool","dataset_id":did,"source_run_id":run.id,"source_manifest_sha256":source_sha},
+        runtime={"network":"none"},resources={"gpus":0,"cpus":8,"memory_gb":16,"shm_gb":1},
+        policy={"timeout_h":1,"max_retries":0})
+    job=await Orchestrator().submit(session,spec,principal.id,f"g1-pool:{did}",commit=False)
+    row=Dataset(id=did,name=body.name,source_kind="rpo_g1_pool",source_uri="https://huggingface.co/datasets/xuewang/UFO-MotionData/tree/40faaedd0d75a024685cfc48bd8eaff2f6772727",
+        dest_path=str(destination),format="unknown",license="CC-BY-NC-ND-4.0 (LAFAN1 upstream)",status="queued",total_bytes=0,
+        embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",meta={"usage":"train","purpose":"behavior_prior",
+            "validation_job_id":job.id,"source_run_id":run.id,"source_use":"local_noncommercial_no_redistribution"},
+        summary_stats={"validation":{"status":"not_validated","training_ready":False}})
+    session.add(row)
+    session.add(LineageEdge(src_type="run",src_id=run.id,dst_type="dataset",dst_id=did,relation="retargeted_to"))
+    await session.commit()
+    await session.refresh(row)
+    return _ds_out(row)
+
+
 @router.get("/dataset-sources/robotwin")
 async def robotwin_catalog(principal: PrincipalDep) -> dict:
     from eb.robotwin import (DOWNLOAD_PROFILES, ROBOTWIN_EMBODIMENTS, ROBOTWIN_HF_REPO,
@@ -210,6 +476,10 @@ async def create_dataset(body: DatasetIn, session: SessionDep, principal: Princi
             kind != "path" or body.usage != "train"
             or body.embodiment_env_id != "ee_rpo_v2_amp_locomotion_23dof_v1"):
         raise HTTPException(400, "AMP motion_prior requires a local train path and matching RPO interface")
+    if body.purpose == "behavior_prior" and (
+            kind != "path" or body.usage != "train"
+            or body.embodiment_env_id != "ee_rpo_v2_bfm_23dof_v1"):
+        raise HTTPException(400, "BFM behavior_prior requires a local train view and matching interface")
     if body.hf_token:
         raise HTTPException(400, "Inline HF tokens are not accepted; public datasets only")
     if kind == "libero_benchmark":
@@ -321,6 +591,11 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
                 or row.source_kind not in {"path", "rpo_amp_official"}):
             raise HTTPException(400, "AMP motion dataset registration is inconsistent")
         params = {"operation": "validate_rpo_amp_motion", "src": row.dest_path, "dataset_id": row.id}
+    elif (row.meta or {}).get("purpose") == "behavior_prior":
+        if (row.embodiment_env_id != "ee_rpo_v2_bfm_23dof_v1"
+                or row.source_kind not in {"path", "rpo_bfm_official"}):
+            raise HTTPException(400, "BFM behavior-prior DatasetVersion is inconsistent")
+        params = {"operation":"validate_rpo_bfm_motion", "src":row.dest_path, "dataset_id":row.id}
     else:
         params = {"operation": "validate_lerobot_v3", "src": row.dest_path, "dataset_id": row.id}
     if row.source_kind == "huggingface":
@@ -328,7 +603,7 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
         Path(row.dest_path).mkdir(parents=True, exist_ok=True)
     spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id=row.embodiment_env_id,
                    params=params,
-                   runtime={"network":"none"} if params["operation"] == "validate_rpo_amp_motion" else {})
+                   runtime={"network":"none"} if params["operation"] in {"validate_rpo_amp_motion", "validate_rpo_bfm_motion"} else {})
     try:
         attempt = f":{new_id('attempt')}" if reindex or retry else ""
         job = await Orchestrator().submit(session, spec, principal.id, f"dataset-validation:{did}{attempt}")

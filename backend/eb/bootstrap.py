@@ -19,6 +19,7 @@ from eb.ingest import ingest_all
 from eb.settings import get_settings
 from eb.store.models import (
     ApiKey,
+    AuditLog,
     Bundle,
     Dataset,
     DatasetVersion,
@@ -34,6 +35,12 @@ from eb.store.models import (
     TaskRow,
     User,
 )
+
+
+def _rpo_bfm_env_for_seed(env, *, rpo_assets_verified: bool):
+    if env.id in {"ee_rpo_v2_bfm_23dof_v1", "ee_rpo_v2_bfm_23dof_v2", "ee_rpo_v2_tracking_23dof_v1"} and rpo_assets_verified:
+        return env.model_copy(update={"status":"active"})
+    return env
 
 
 async def seed_if_empty(session: AsyncSession) -> None:
@@ -153,17 +160,19 @@ async def seed_if_empty(session: AsyncSession) -> None:
         if here.exists():
             contracts_dir = here
     for env in load_env_dir(contracts_dir):
+        seed_env = _rpo_bfm_env_for_seed(
+            env, rpo_assets_verified=rpo_manifest.get("status") == "verified")
         env_row = await session.get(EmbodimentEnvRow, env.id)
         if not env_row:
             session.add(EmbodimentEnvRow(
                 id=env.id,
                 embodiment_id=env.embodiment_id,
-                spec=env.model_dump(mode="json"),
-                spec_hash=env.spec_hash(),
-                status=env.status,
-                obs_dim=env.observation.dim,
-                action_dim=env.action.dim,
-                policy_hz=env.control.policy_hz,
+                spec=seed_env.model_dump(mode="json"),
+                spec_hash=seed_env.spec_hash(),
+                status=seed_env.status,
+                obs_dim=seed_env.observation.dim,
+                action_dim=seed_env.action.dim,
+                policy_hz=seed_env.control.policy_hz,
             ))
         elif env.id == "ee_rpo_v2_wbc_23dof_v1" and rpo_manifest.get("status") == "verified" \
                 and env_row.status == "draft":
@@ -173,6 +182,13 @@ async def seed_if_empty(session: AsyncSession) -> None:
             env_row.obs_dim = env.observation.dim
             env_row.action_dim = env.action.dim
             env_row.policy_hz = env.control.policy_hz
+        elif env.id == "ee_rpo_v2_bfm_23dof_v1" and env_row.status == "draft":
+            env_row.spec = seed_env.model_dump(mode="json")
+            env_row.spec_hash = seed_env.spec_hash()
+            env_row.status = seed_env.status
+            env_row.obs_dim = seed_env.observation.dim
+            env_row.action_dim = seed_env.action.dim
+            env_row.policy_hz = seed_env.control.policy_hz
         elif env.id == "ee_robotwin_aloha_joint14_v1" and env_row.status == "draft" \
                 and "left_waist" in (env_row.spec or {}).get("joint_order", []):
             env_row.spec = env.model_dump(mode="json")
@@ -235,6 +251,47 @@ async def seed_if_empty(session: AsyncSession) -> None:
     if not await session.get(TaskRow, amp_task.id):
         session.add(TaskRow(id=amp_task.id, spec=amp_task.model_dump(mode="json"),
                             spec_hash=amp_task.spec_hash(), status=amp_task.status))
+    bfm_task = TaskSpec(
+        id="tsk_rpo_bfm_pretrain", status="active",
+        compatible_env_ids=["ee_rpo_v2_bfm_23dof_v1", "ee_rpo_v2_bfm_23dof_v2"],
+        stack_bindings={"rlinf":{"config_name":"rpo_bfm_zero_pretrain",
+                                   "gym_id":"RPO-BFM-Pretrain-v1"}},
+    )
+    bfm_task_row = await session.get(TaskRow, bfm_task.id)
+    if not bfm_task_row:
+        session.add(TaskRow(id=bfm_task.id, spec=bfm_task.model_dump(mode="json"),
+                            spec_hash=bfm_task.spec_hash(), status=bfm_task.status))
+    elif "ee_rpo_v2_bfm_23dof_v2" not in bfm_task_row.spec.get("compatible_env_ids", []):
+        task_spec = {**bfm_task_row.spec, "compatible_env_ids": [
+            *bfm_task_row.spec.get("compatible_env_ids", []), "ee_rpo_v2_bfm_23dof_v2"]}
+        bfm_task_row.spec = task_spec
+        bfm_task_row.spec_hash = TaskSpec.model_validate(task_spec).spec_hash()
+    from eb.rpo_bfm import EVAL_SUITE,eval_suite_spec
+    if not await session.get(EvalSuite,EVAL_SUITE):
+        session.add(EvalSuite(id=EVAL_SUITE,name="RPO BFM 速度/转向 · 100例/80例通过",
+            embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",spec=eval_suite_spec(),
+            seeds=list(range(50000,50100)),frozen=True))
+    from eb.rpo_bfm import EVAL_BATCH_SUITE,batch_suite_spec
+    if not await session.get(EvalSuite,EVAL_BATCH_SUITE):
+        session.add(EvalSuite(id=EVAL_BATCH_SUITE,name="RPO BFM 四卡共享网格 · 独立100例/80例通过",
+            embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",spec=batch_suite_spec(),
+            seeds=list(range(50000,50100)),frozen=True))
+    from eb.rpo_bfm import VALIDATION_SUITE, ACCEPTANCE_SUITE, UFO_VALIDATION_SUITE, UFO_ACCEPTANCE_SUITE, UFO_REPAIR_ACCEPTANCE_SUITE, eval_case_seeds, frozen_eval_suite_spec
+    for suite_id, role, label in ((VALIDATION_SUITE, "validation", "周期快评 · 16例"),
+                                  (ACCEPTANCE_SUITE, "acceptance", "独立验收 · 100例/80例通过"),
+                                  (UFO_VALIDATION_SUITE, "validation", "UFO 固定网格周期快评 · 16例"),
+                                  (UFO_ACCEPTANCE_SUITE, "acceptance", "UFO 固定网格独立验收 · 100例/80例通过"),
+                                  (UFO_REPAIR_ACCEPTANCE_SUITE, "acceptance", "UFO 行走修复独立验收 · 新100例/80例通过")):
+        if not await session.get(EvalSuite, suite_id):
+            session.add(EvalSuite(id=suite_id, name="RPO BFM " + label,
+                embodiment_env_id="ee_rpo_v2_bfm_23dof_v1", frozen=True,
+                spec=frozen_eval_suite_spec(suite_id, role), seeds=eval_case_seeds(suite_id, role)))
+    teacher = TaskSpec(id="tsk_rpo_tracking_teacher", status="active",
+        compatible_env_ids=["ee_rpo_v2_tracking_23dof_v1"],
+        stack_bindings={"rlinf":{"config_name":"rpo_tracking_teacher", "gym_id":"RPO-Tracking-Teacher-v1"}})
+    if not await session.get(TaskRow, teacher.id):
+        session.add(TaskRow(id=teacher.id, spec=teacher.model_dump(mode="json"),
+                            spec_hash=teacher.spec_hash(), status=teacher.status))
     if not await session.get(EvalSuite, "suite_rpo_v2_wbc_sim2sim_v1"):
         session.add(EvalSuite(id="suite_rpo_v2_wbc_sim2sim_v1",
             name="RPO V2 WBC MuJoCo closed-loop", embodiment_env_id="ee_rpo_v2_wbc_23dof_v1",
@@ -358,12 +415,16 @@ async def seed_if_empty(session: AsyncSession) -> None:
         logging.getLogger(__name__).exception("legacy ingest skipped")
     robotwin_jobs = (await session.scalars(select(Job).where(
         Job.kind.in_(["train.sft", "train.rlft"]), Job.status == "succeeded"))).all()
+    deletions = (await session.scalars(select(AuditLog).where(AuditLog.action == "storage.delete"))).all()
+    deleted_model_runs = {rid for row in deletions for rid in (row.before or {}).get("suppressed_model_runs", [])}
     from eb.orchestrator.collect import claim_outputs
     for job in robotwin_jobs:
         if not ((job.spec or {}).get("params") or {}).get("template_id", "").startswith("robotwin_"):
             continue
         run = await session.scalar(select(Run).where(Run.job_id == job.id).order_by(Run.attempt.desc()))
         if not run:
+            continue
+        if run.id in deleted_model_runs:
             continue
         try:
             await claim_outputs(session, job, run)

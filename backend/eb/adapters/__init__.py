@@ -39,6 +39,13 @@ KIND_ADAPTER: dict[JobKind, Adapter] = {
 
 
 def get_adapter(spec: JobSpec) -> Adapter:
+    from eb.domain.training_recipe import execution_binding
+    binding = execution_binding(spec)
+    if binding is not None:
+        return _RLINF
+    if (spec.params.get("template_id") == "rpo_bfm_ufo_agent_rlinf_isaac_eval_v1"
+            and spec.params.get("stack") != "rlinf"):
+        raise ValueError("Native UFO evaluation requires stack=rlinf")
     if spec.params.get("stack") == "rlinf" or spec.params.get("template_id") in {"collect_berkeley_reach"}:
         return _RLINF
     return KIND_ADAPTER[spec.kind]

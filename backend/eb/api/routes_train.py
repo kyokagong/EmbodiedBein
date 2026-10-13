@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -27,6 +27,10 @@ _KIND = {"sft": JobKind.TRAIN_SFT, "ppo": JobKind.TRAIN_RLFT, "eval": JobKind.EV
 
 
 def _memory_gb(template_id: str, gpus: int) -> int:
+    from eb.domain.training_recipe import RECIPES, recipe_resources
+
+    if template_id in RECIPES:
+        return recipe_resources(template_id)["memory_gb"]
     if template_id == "rpo_v2_flat_ppo" and gpus > 1:
         return 96
     # Four-card PPO needs room for full-checkpoint gathering, beyond training RSS.
@@ -65,10 +69,20 @@ class TrainIn(BaseModel):
     global_batch_size: int | None = Field(default=None, ge=1)
     checkpoint_run_id: str | None = None
     checkpoint_step: int | None = Field(default=None, ge=0)
+    tracking_reference_run_id: str | None = None
+    target_learner_updates: int | None = Field(default=None, ge=0, strict=True)
+    purpose: Literal["qualification", "training"] = "training"
 
 
 class LiberoPipelineIn(TrainIn):
     ppo_max_epochs: int = Field(default=1, ge=1, le=10000, strict=True)
+
+
+def require_tracking_source(source, source_job):
+    if (not source or source.status != "finished" or not source_job
+            or source_job.status != "succeeded"
+            or (source_job.spec.get("params") or {}).get("operation") != "retarget_100style_probe"):
+        raise ValueError("Tracking reference requires a succeeded 100STYLE retarget Run")
 
 
 class ResumeTrainIn(BaseModel):
@@ -76,7 +90,8 @@ class ResumeTrainIn(BaseModel):
     model_name: str | None = Field(default=None, min_length=1, max_length=120)
     max_steps: int | None = Field(default=None, ge=1)
     max_epochs: int | None = Field(default=None, ge=1)
-    checkpoint_step: int | None = Field(default=None, ge=1)
+    checkpoint_step: int | None = Field(default=None, ge=0, strict=True)
+    target_learner_updates: int | None = Field(default=None, ge=1, strict=True)
 
 
 _RESUME_TERMINAL = {"succeeded", "failed", "timeout", "cancelled", "infra_failed"}
@@ -104,7 +119,18 @@ def build_resume_spec(source: JobSpec, source_train_job_id: str, checkpoint: dic
         raise ValueError("checkpoint 与源训练配置指纹不一致")
     template = get_template(str(source.params.get("template_id")))
     image = checkpoint.get("image_digest") or source.image
-    if template.kind == "sft":
+    from eb.domain.training_recipe import UFO_MJLAB_VIABILITY_RECIPE, UFO_MJLAB_RECIPE, execution_binding, validate_update_target, recipe_timeout_h, UFO_SCALE_RECIPE, UFO_REACHABLE_RECIPE, UFO_CONTACT_RECIPE, UFO_GROUND_RECIPE, UFO_TRACKING_CONTACT_RECIPE, UFO_TRACKING_CONTACT_KD_RECIPE
+    binding = execution_binding(source)
+    if binding:
+        if body.max_steps is not None or body.max_epochs is not None:
+            raise ValueError("UFO 恢复只允许 target_learner_updates")
+        validate_update_target(body.target_learner_updates, start=checkpoint["step"], recipe_id=binding.recipe_id)
+        if checkpoint.get("mode") != "trainer_state":
+            raise ValueError("UFO checkpoint requires trainer_state mode")
+        overrides = list(source.overrides)
+    elif body.target_learner_updates is not None:
+        raise ValueError("旧模板不支持 target_learner_updates")
+    elif template.kind == "sft":
         if body.max_steps is None or body.max_epochs is not None:
             raise ValueError("SFT 恢复只允许设置 max_steps")
         if body.max_steps <= int(checkpoint["step"]):
@@ -123,6 +149,15 @@ def build_resume_spec(source: JobSpec, source_train_job_id: str, checkpoint: dic
     else:
         raise ValueError("当前模板不支持 checkpoint 恢复")
     params = dict(source.params)
+    if binding:
+        params["target_learner_updates"] = body.target_learner_updates
+        from eb.domain.training_recipe import RECIPES
+        if body.target_learner_updates > 24 and RECIPES[binding.recipe_id].status in {"smoke_passed", "validated"}:
+            params["purpose"] = "training"
+    if template.id == "rpo_v2_bfm_zero_pretrain":
+        from eb.rpo_bfm import learner_updates
+        values = dict(item.split("=", 1) for item in overrides)
+        params["bfm_update_target"] = learner_updates(body.max_epochs, int(values.get("actor.model.updates_per_round", 1)))
     params.update({"resume_mode": checkpoint["mode"], "resume_step": checkpoint["step"],
                    "source_train_job_id": source_train_job_id,
                    "model_name": body.model_name.strip() if body.model_name else body.name})
@@ -133,6 +168,8 @@ def build_resume_spec(source: JobSpec, source_train_job_id: str, checkpoint: dic
     inputs = source.inputs.model_copy(update={"resume_from": checkpoint["run_id"]})
     result = source.model_copy(deep=True, update={"name": body.name, "image": image, "params": params,
                                                   "overrides": overrides, "inputs": inputs})
+    if binding and binding.recipe_id in {UFO_MJLAB_VIABILITY_RECIPE,UFO_MJLAB_RECIPE,UFO_TRACKING_CONTACT_RECIPE,UFO_TRACKING_CONTACT_KD_RECIPE, UFO_SCALE_RECIPE, UFO_REACHABLE_RECIPE, UFO_CONTACT_RECIPE, UFO_GROUND_RECIPE}:
+        result.policy = result.policy.model_copy(update={"timeout_h": recipe_timeout_h(binding.recipe_id, params["purpose"])})
     if resume_fingerprint(result) != checkpoint["compatibility_fingerprint"]:
         raise ValueError("恢复配置改变了训练兼容性指纹")
     return result
@@ -172,6 +209,7 @@ def _job_out(row: TrainJob) -> dict[str, Any]:
 
 @router.get("/train/templates")
 async def train_templates(principal: PrincipalDep) -> dict:
+    from eb.domain.training_recipe import RECIPES
     return {
         "items": [
             {
@@ -191,6 +229,12 @@ async def train_templates(principal: PrincipalDep) -> dict:
                 "model_id": t.model_id,
                 "model_framework": t.model_framework,
                 "ready": t.ready,
+                **({"execution": RECIPES[t.id].binding.model_dump(),
+                    "capability_status": RECIPES[t.id].status,
+                    "ready": RECIPES[t.id].status in {"smoke_passed", "validated"},
+                    "qualification_ready": RECIPES[t.id].status in {"dependency_ready", "smoke_passed", "validated"},
+                    "blocked_reason": "UFO 尚未完成 GPU/完整闭环资格，普通训练不可提交"}
+                   if t.id in RECIPES else {}),
                 "blocked_reason": t.blocked_reason,
                 "native_embodiments": t.native_embodiments,
             }
@@ -230,6 +274,25 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
     except KeyError as e:
         raise ValueError(f"未知模板 {body.template_id}") from e
     require_template_ready(tpl)
+    from eb.domain.training_recipe import RECIPES, validate_training_execution, recipe_timeout_h
+    recipe = RECIPES.get(tpl.id)
+    if recipe:
+        from eb.domain.training_recipe import recipe_resources, recipe_source_receipt
+        if (body.max_epochs is not None or body.max_steps is not None
+                or body.base_model_id or body.warm_start_model_id
+                or body.environment_id is None):
+            raise ValueError("UFO 必须绑定新训练 Profile；仅允许 target_learner_updates 且从头训练")
+        candidate = JobSpec(kind=JobKind.TRAIN_RL, task_id=tpl.task_id,
+            embodiment_env_id=tpl.embodiment_env_id, image=body.image or recipe.image,
+            params={"stack": "rlinf", "template_id": tpl.id,
+                "execution": recipe.binding.model_dump(), "purpose": body.purpose,
+                "source_receipt": recipe_source_receipt(tpl.id),
+                "target_learner_updates": body.target_learner_updates},
+            resources={**recipe_resources(tpl.id), "gpus": body.gpus},
+            policy={"timeout_h": recipe_timeout_h(tpl.id, body.purpose), "max_retries": 0})
+        validate_training_execution(candidate)
+    elif body.target_learner_updates is not None or body.purpose != "training":
+        raise ValueError("旧模板不支持 UFO 目标/资格用途")
     if tpl.kind in {"sft", "ppo"} and not (body.model_name or "").strip():
         raise ValueError("产出模型名称不能为空")
     emb = await session.get(EmbodimentRow, body.embodiment_id)
@@ -250,6 +313,11 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
             raise ValueError("RPO WBC 是从零开始的在线 PPO，不绑定数据集或基座大模型")
         if body.image and body.image != template_image(tpl):
             raise ValueError("RPO WBC 必须使用包含 Isaac、RPO 环境和 RLinf 补丁的专用镜像")
+    if tpl.id in {"rpo_v2_bfm_zero_pretrain", "rpo_v2_bfm_zero_tracking_teacher"}:
+        if body.base_model_id or body.warm_start_model_id:
+            raise ValueError("BFM-Zero 从头训练，不接受基座模型或 warm start")
+        if body.image and body.image != template_image(tpl):
+            raise ValueError("RPO BFM 必须使用包含 BFM worker 补丁的专用镜像")
     if body.warm_start_model_id and tpl.id != "rpo_v2_flat_ppo":
         raise ValueError("已发布 checkpoint warm start 当前仅支持 RPO-Flat")
     if tpl.id == "rpo_v2_amp_stand_walk_ppo" and body.base_model_id:
@@ -269,7 +337,7 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
         if value is not None:
             extra.append(f"{key}={value}")
     extra.extend(body.extra_overrides)
-    build_overrides(tpl.id, body.gpus, body.name, extra)
+    resolved_overrides=build_overrides(tpl.id, body.gpus, body.name, extra)
     if tpl.kind == "sft" and body.total_num_envs is not None:
         raise ValueError("SFT 不使用仿真环境数量")
     datasets = []
@@ -283,8 +351,22 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
             raise ValueError(f"数据集本体环境 {ds.embodiment_env_id or '未关联'} 与模板 {tpl.embodiment_env_id} 不一致")
         if (ds.meta or {}).get("usage", "train") != "train":
             raise ValueError("评估集不能用于训练")
-        validation = (require_amp_motion_dataset(ds) if tpl.id == "rpo_v2_amp_stand_walk_ppo"
-                      else require_validated_dataset(ds, tpl.embodiment_env_id if tpl.id.startswith(("libero_", "robotwin_")) else None))
+        if tpl.id == "rpo_v2_amp_stand_walk_ppo":
+            validation = require_amp_motion_dataset(ds)
+        elif recipe:
+            from eb.data_validation import require_ufo_robot_state_dataset
+            from eb.rpo_bfm import codec_hash_for_execution
+            validation = require_ufo_robot_state_dataset(ds, expected_codec_sha256=codec_hash_for_execution(recipe.binding.model_dump()))
+        elif tpl.id == "rpo_v2_bfm_zero_pretrain":
+            from eb.data_validation import require_bfm_motion_dataset
+            from eb.rpo_bfm import learner_updates, validate_training_budget
+            validation = require_bfm_motion_dataset(ds)
+            values = dict(item.split("=", 1) for item in resolved_overrides if "=" in item)
+            updates = learner_updates(int(values["runner.max_epochs"]), int(values.get("actor.model.updates_per_round", 1)))
+            validate_training_budget(updates,validation)
+        else:
+            validation = require_validated_dataset(
+                ds, tpl.embodiment_env_id if tpl.id.startswith(("libero_", "robotwin_")) else None)
         if tpl.id == "robotwin_dm05_sft" and validation.get("scope") != "opendm_robotwin2_view":
             raise ValueError("DM0.5 需要已验证的 OpenDM RoboTwin2 JSONL/三相机 view")
         path = validate_allowed_path(ds.dest_path)
@@ -330,6 +412,14 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
         raise ValueError("此模板必须选择基座模型")
     params = {"template_id": tpl.id, "config_name": tpl.config_name, "stack": "rlinf",
               "model_name": body.model_name.strip() if body.model_name else body.name}
+    if recipe:
+        params.update(execution=recipe.binding.model_dump(), purpose=body.purpose,
+                      target_learner_updates=body.target_learner_updates, source_receipt=recipe_source_receipt(tpl.id))
+    if tpl.id=="rpo_v2_bfm_zero_pretrain":
+        from eb.rpo_bfm import validate_training_budget
+        params["bfm_experiment_purpose"]=validate_training_budget(updates,datasets[0]["validation"])
+        params["bfm_update_budget"]=updates
+        params["bfm_update_target"]=updates
     if body.warm_start_model_id:
         from eb.rpo_flat import flat_warm_start_receipt
         model = await session.get(ModelVersion, body.warm_start_model_id)
@@ -363,7 +453,7 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
         source = await session.scalar(select(TrainJob).where(TrainJob.job_id == source_run.job_id)) if source_run else None
         source_job = await session.get(Job, source_run.job_id) if source_run else None
         if (not source or not source_job or source_job.status not in _RESUME_TERMINAL
-                or source_job.kind not in {"train.sft", "train.rlft"}
+                or source_job.kind not in {"train.rl", "train.sft", "train.rlft"}
                 or source.embodiment_id != body.embodiment_id or source.base_model_id != body.base_model_id
                 or not source.template_id.startswith("libero_")):
             raise ValueError("源训练、基座模型或本体与评估 checkpoint 不兼容")
@@ -381,19 +471,32 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
                        "eval_source_config_verified": bool(resolved.exists()),
                        "eval_source_train_job_id": source.id})
     code_refs = {"stack":{"kind":"content_snapshot", "path":str(get_settings().rlinf_repo)}}
-    if tpl.id == "rpo_v2_flat_ppo":
+    if recipe or tpl.id in {"rpo_v2_flat_ppo","rpo_v2_bfm_zero_pretrain"}:
         code_refs["embodiment"] = {"kind":"content_snapshot",
                                    "path":str(get_settings().assets_root / "roboparty/rpo-v2")}
-    elif not tpl.id.startswith(("robotwin_", "rpo_v2_wbc_", "rpo_v2_amp_")):
+    elif not tpl.id.startswith(("robotwin_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_bfm_zero_")):
         code_refs["embodiment"] = {"kind":"content_snapshot", "path":str(embodiment_root(emb))}
-    kind = JobKind.TRAIN_RL if tpl.id in {"rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo", "rpo_v2_amp_stand_walk_ppo", "rpo_v2_flat_ppo"} else _KIND[tpl.kind]
-    return JobSpec(kind=kind, embodiment_env_id=tpl.embodiment_env_id,
+    if tpl.id == "rpo_v2_bfm_zero_tracking_teacher":
+        import hashlib
+        source = await session.get(Run, body.tracking_reference_run_id or "")
+        source_job = await session.get(Job, source.job_id) if source else None
+        require_tracking_source(source, source_job)
+        path = get_settings().data_root / "runs" / source.id / "outputs/retargeted/retarget-receipt.json"
+        params["tracking_reference"] = {"run_id":source.id,
+            "receipt_sha256":hashlib.sha256(path.read_bytes()).hexdigest()}
+    kind = JobKind.TRAIN_RL if tpl.id in {"rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo", "rpo_v2_amp_stand_walk_ppo", "rpo_v2_flat_ppo", "rpo_v2_bfm_zero_pretrain", "rpo_v2_bfm_zero_tracking_teacher"} else _KIND[tpl.kind]
+    if recipe:
+        kind = JobKind.TRAIN_RL
+    result = JobSpec(kind=kind, embodiment_env_id=tpl.embodiment_env_id,
         task_id=tpl.task_id, name=body.name, image=body.image or template_image(tpl),
         params=params,
         overrides=extra, inputs={"datasets":datasets, "base_model":model_path},
-        resources={"gpus":body.gpus, "cpus":8 * body.gpus if tpl.id == "rpo_v2_flat_ppo" else 8,
+        resources={"gpus":body.gpus, "cpus":recipe_resources(tpl.id)["cpus"] if recipe else 8 * body.gpus if tpl.id == "rpo_v2_flat_ppo" else 8,
                    "memory_gb":_memory_gb(tpl.id, body.gpus), "shm_gb":32},
-        code_refs=code_refs)
+        code_refs=code_refs,
+        policy={"timeout_h":recipe_timeout_h(tpl.id, body.purpose), "max_retries":0} if recipe or tpl.id == "rpo_v2_bfm_zero_tracking_teacher" else {})
+    validate_training_execution(result)
+    return result
 
 
 @router.post("/train/preview")
@@ -409,7 +512,9 @@ async def preview_train(body: TrainIn, session: SessionDep, principal: Principal
     return {"template":body.template_id, "model_name": spec.params.get("model_name"),
             "overrides":build_overrides(body.template_id, body.gpus, body.name, spec.overrides), "argv":rendered.command,
             "mounts":[f"{src} → {dst} {mode}" for src,dst,mode in rendered.mounts],
-            "inputs":spec.inputs.model_dump(), "image":rendered.image, "resources":spec.resources.model_dump()}
+            "inputs":spec.inputs.model_dump(), "image":rendered.image, "resources":spec.resources.model_dump(),
+            **({key: spec.params.get(key) for key in ("execution", "target_learner_updates", "purpose",
+                "source_receipt", "environment_profile")} if spec.params.get("execution") else {})}
 
 
 @router.post("/train")
@@ -522,7 +627,7 @@ async def _resume_context(tid: str, session, *, checkpoint_step: int | None = No
                                     "embodiment_env_id": job.embodiment_env_id,
                                     "api_version": "eb/v1"})
     template = get_template(str(source.params.get("template_id")))
-    if not template.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")) or template.kind not in {"sft", "ppo"}:
+    if not template.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_")) or template.kind not in {"sft", "ppo"}:
         raise ValueError("该训练模板尚未验证 checkpoint 恢复")
     runs = (await session.scalars(select(Run).where(Run.job_id == job.id))).all()
     settings = get_settings()
@@ -560,7 +665,30 @@ async def get_resume_candidate(tid: str, session: SessionDep, principal: Princip
     except (ValueError, OSError) as exc:
         return {"available": False, "reason": str(exc)}
     template = get_template(str(source.params.get("template_id")))
-    if template.kind == "sft":
+    if source.params.get("execution"):
+        from eb.domain.training_recipe import UFO_MJLAB_VIABILITY_RECIPE, UFO_MJLAB_RECIPE, RECIPES, UFO_SCALE_RECIPE, UFO_TRACKING_CONTACT_RECIPE, UFO_TRACKING_CONTACT_KD_RECIPE, UFO_COMPLIANCE_RECIPE
+        termination = "target_learner_updates"
+        recipe = RECIPES[source.params["execution"]["recipe_id"]]
+        if recipe.binding.recipe_id == UFO_MJLAB_RECIPE and checkpoint["step"] >= 524:
+            return {"available": False, "reason": "本次 MJLab 500 更新实验预算已完成；后续训练需新的执行计划"}
+        if recipe.binding.recipe_id == UFO_MJLAB_VIABILITY_RECIPE:
+            if checkpoint['step'] != 100 or recipe.status not in {'smoke_passed','validated'}:
+                return {'available':False,'reason':'v13流程验证尚未确认或100→600观察预算已完成'}
+        qualification = source.params.get("purpose") == "qualification" and recipe.status not in {"smoke_passed", "validated"}
+        if qualification and checkpoint["step"] >= 24:
+            reason=("资格预算已用尽；确认训练与恢复证据后提升配方状态" if recipe.binding.recipe_id in {
+                UFO_MJLAB_RECIPE,UFO_COMPLIANCE_RECIPE,UFO_TRACKING_CONTACT_RECIPE,UFO_TRACKING_CONTACT_KD_RECIPE} else "资格更新预算已用尽；完成独立评估后再提升配方状态")
+            return {"available": False, "reason": reason}
+        segment=500 if recipe.binding.recipe_id in {UFO_MJLAB_VIABILITY_RECIPE,UFO_MJLAB_RECIPE,UFO_COMPLIANCE_RECIPE,UFO_TRACKING_CONTACT_RECIPE,UFO_TRACKING_CONTACT_KD_RECIPE} else 5000 if recipe.binding.recipe_id==UFO_SCALE_RECIPE else 1000
+        if recipe.binding.recipe_id==UFO_COMPLIANCE_RECIPE and checkpoint['step']>=524:
+            from eb.runners.rpo_ufo_compliance import require_long_training_gate
+            try:
+                require_long_training_gate(Path(checkpoint['path']),step=checkpoint['step'])
+            except (ValueError,OSError,KeyError) as exc:
+                return {'available':False,'reason':str(exc)}
+            segment=3000
+        suggested = 600 if recipe.binding.recipe_id == UFO_MJLAB_VIABILITY_RECIPE else checkpoint["step"] + (min(8, 24 - checkpoint["step"]) if qualification else segment)
+    elif template.kind == "sft":
         termination = "max_steps"
         suggested = max(_source_limit(source, "runner.max_steps"), checkpoint["step"] + 100)
     else:
@@ -709,6 +837,11 @@ async def register_ckpt(tid: str, body: RegisterCkptIn, session: SessionDep, pri
     except (ValueError, OSError) as exc:
         raise HTTPException(400, str(exc)) from exc
     mid = new_id("mdl")
+    from eb.orchestrator.deletion import guard_storage_inputs
+    try:
+        await guard_storage_inputs(session, {"train_job_id": tid, "path": str(path)})
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     model = WeightModel(
         id=mid,
         name=(body.name.strip() if body.name else None) or (row.params or {}).get("model_name") or path.name,

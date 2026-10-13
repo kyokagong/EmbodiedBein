@@ -144,6 +144,14 @@ function copyCommand() {
       </div>
     </div>
 
+    <div class="panel" v-if="data?.metrics_summary?.tracking_media?.length" style="margin-bottom:1rem">
+      <h3>Held-out tracking 诊断</h3>
+      <div v-for="item in data.metrics_summary.tracking_media" :key="item.case_id">
+        <p>{{ item.clip_id }} · {{ item.steps }} 控制步 · {{ item.reason }} · 关节 RMSE {{ item.q_rmse_rad.toFixed(3) }} rad</p>
+        <video :src="item.url" controls preload="metadata" style="width:100%;max-width:480px" />
+      </div>
+      <p class="muted small">冻结参考初态下的策略物理诊断，不代表行走验收通过。</p>
+    </div>
     <div class="panel" v-if="data?.metrics_summary?.eval_report_id || data?.metrics_summary?.checkpoint" style="margin-bottom:1rem">
       <h3>本次运行产物</h3>
       <router-link v-if="data.metrics_summary.eval_report_id" :to="`/eval/reports/${data.metrics_summary.eval_report_id}`">查看本次评估报告</router-link>

@@ -218,12 +218,17 @@ async def list_weights(session: SessionDep, principal: PrincipalDep, kind: str |
 
 @router.post("/weights")
 async def register_base(body: BaseModelIn, session: SessionDep, principal: PrincipalDep) -> dict:
+    from eb.orchestrator.deletion import guard_storage_inputs
     try:
         path = validate_allowed_path(body.path)
     except PathNotAllowed as e:
         raise HTTPException(400, str(e)) from e
     if not path.exists():
         raise HTTPException(400, "路径不存在")
+    try:
+        await guard_storage_inputs(session, {"path": str(path)})
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     row = WeightModel(
         id=new_id("mdl"),
         name=body.name or path.name,

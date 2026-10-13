@@ -5,6 +5,7 @@ const props = defineProps<{
   embodimentId: string;
   preview: any;
   envs?: any[];
+  motionPose?: { joints: Record<string, number>; position: number[]; quaternion: number[] };
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
@@ -36,6 +37,7 @@ let robot: any = null;
 let raf = 0;
 let ro: ResizeObserver | null = null;
 let THREE: any = null;
+let disposed = false;
 
 const published = () => (props.envs || []).filter((e) => e.status === "active");
 
@@ -120,6 +122,28 @@ function applyJoints() {
   }
 }
 
+function applyMotionPose() {
+  const pose = props.motionPose;
+  if (!robot || !pose) return;
+  const before = robot.position.clone();
+  robot.position.set(...pose.position);
+  const [w, x, y, z] = pose.quaternion;
+  robot.quaternion.set(x, y, z, w);
+  for (const [name, value] of Object.entries(pose.joints)) {
+    if (!robot.joints?.[name]) {
+      err.value = `动作关节 ${name} 不在此 URDF 中`;
+      continue;
+    }
+    // Reference playback must retain rejected frames without clipping their joint angles.
+    robot.joints[name].ignoreLimits = true;
+    robot.setJointValue(name, value);
+  }
+  const delta = robot.position.clone().sub(before);
+  const worldDelta = new THREE.Vector3(delta.x, delta.z, -delta.y);
+  camera.position.add(worldDelta);
+  controls.target.add(worldDelta);
+}
+
 function applyHighlight() {
   if (!robot) return;
   const env = (props.envs || []).find((e) => e.id === envId.value);
@@ -189,6 +213,7 @@ async function boot() {
   meshCount.value = 0;
   const url = props.preview?.urdf_url;
   await nextTick();
+  if (disposed) return;
   if (!url || !host.value) {
     status.value = "没有可加载的 URDF";
     return;
@@ -201,6 +226,7 @@ async function boot() {
     import("urdf-loader"),
   ]);
   const URDFLoader = (URDFLoaderMod as any).default || URDFLoaderMod;
+  if (disposed) return;
   const w = host.value.clientWidth || 640;
   const h = host.value.clientHeight || 420;
   scene = new THREE.Scene();
@@ -229,6 +255,7 @@ async function boot() {
     if (!r.ok) throw new Error(`URDF ${r.status}`);
     return r.text();
   });
+  if (disposed) return;
   const rewritten = rewriteMeshes(xml);
   const manager = new THREE.LoadingManager();
   const loader = new URDFLoader(manager);
@@ -274,9 +301,12 @@ async function boot() {
     queueMicrotask(maybe);
   });
   await waitMeshes;
+  if (disposed) { teardown(); return; }
   if (!robot) throw new Error("URDF 解析失败");
-  scene.add(robot);
-  robot.rotation.x = -Math.PI / 2;
+  const coordinateFrame = new THREE.Group();
+  coordinateFrame.rotation.x = -Math.PI / 2;
+  coordinateFrame.add(robot);
+  scene.add(coordinateFrame);
   const init: Record<string, number> = {};
   for (const j of movable()) init[j.name] = 0;
   jointValues.value = init;
@@ -284,6 +314,8 @@ async function boot() {
   applyMode();
   applyHighlight();
   applyJoints();
+  applyMotionPose();
+  coordinateFrame.updateMatrixWorld(true);
   fit(THREE);
   status.value = "";
   loop();
@@ -297,6 +329,11 @@ function teardown() {
   ro?.disconnect();
   ro = null;
   controls?.dispose();
+  scene?.traverse((obj: any) => {
+    obj.geometry?.dispose();
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const material of materials) material?.dispose();
+  });
   renderer?.dispose();
   if (renderer?.domElement?.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
   renderer = scene = camera = controls = robot = null;
@@ -308,6 +345,7 @@ watch(mode, () => {
 });
 watch(envId, applyHighlight);
 watch(jointValues, applyJoints, { deep: true });
+watch(() => props.motionPose, applyMotionPose);
 
 onMounted(async () => {
   try {
@@ -317,7 +355,7 @@ onMounted(async () => {
     status.value = "";
   }
 });
-onUnmounted(teardown);
+onUnmounted(() => { disposed = true; teardown(); });
 </script>
 <template>
   <div>
@@ -334,7 +372,7 @@ onUnmounted(teardown);
     <p class="muted xs" v-else-if="meshCount">STL {{ meshCount }} 件 · 拖拽旋转 · 滚轮缩放</p>
     <p class="error xs" v-if="err">{{ err }}</p>
     <p class="warn xs" v-if="missing.length">缺 mesh {{ missing.length }}：用 collision 盒线框代替，不用纯色块冒充。</p>
-    <div class="joint-sliders" v-if="movable().length">
+    <div class="joint-sliders" v-if="!motionPose && movable().length">
       <label v-for="j in movable()" :key="j.name">
         <span class="mono">{{ j.name }}</span>
         <input

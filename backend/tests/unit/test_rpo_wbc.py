@@ -392,4 +392,5 @@ async def test_rpo_candidates_only_lists_rpo_model_versions():
 
     assert result == {"items":[{"id":"mv_rpo", "name":"我的 RL 模型", "step":1000,
                                 "embodiment_env_id":"ee_rpo_v2_wbc_23dof_v1",
-                                "readiness":"simulation_unverified", "created_at":None}]}
+                                "readiness":"simulation_unverified", "execution":None,
+                                "progress_unit":None, "created_at":None}]}

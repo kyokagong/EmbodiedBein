@@ -47,13 +47,14 @@ def update_global_normalizer(norm, states):
 
 
 class RPOFlatPolicy(MLPPolicy):
+    ACTOR_DIM, CRITIC_DIM = 780, 1390
     def __init__(self, obs_dim, action_dim, num_action_chunks, add_value_head,
                  add_q_head, q_head_type="default", value_granularity="action_level",
                  critic_obs_dim=None):
         # Build the official network directly; the generic MLP has different
         # layers, activation, initialization and optional AMP-only pose biases.
         nn.Module.__init__(self)
-        if (obs_dim, action_dim, num_action_chunks, critic_obs_dim) != (780, 23, 1, 1390):
+        if (obs_dim, action_dim, num_action_chunks, critic_obs_dim) != (self.ACTOR_DIM, 23, 1, self.CRITIC_DIM):
             raise ValueError("RPO Flat requires actor780/critic1390/action23 and one chunk")
         if not add_value_head or add_q_head or value_granularity != "action_level":
             raise ValueError("RPO Flat requires its privileged PPO value head")
@@ -79,7 +80,7 @@ class RPOFlatPolicy(MLPPolicy):
         device = next(self.parameters()).device
         actor, critic = env_obs.get("states"), env_obs.get("critic_states")
         if (actor is None or critic is None or actor.ndim != 2 or critic.ndim != 2
-                or actor.shape[-1] != 780 or critic.shape[-1] != 1390
+                or actor.shape[-1] != self.obs_dim or critic.shape[-1] != self.critic_obs_dim
                 or actor.shape[0] != critic.shape[0]):
             raise ValueError("RPO Flat needs states780 and privileged critic_states1390")
         return {"states": actor.to(device), "critic_states": critic.to(device)}
@@ -133,6 +134,6 @@ class RPOFlatPolicy(MLPPolicy):
     @torch.no_grad()
     def update_normalizers(self, actor_states, critic_states):
         update_global_normalizer(self.actor_norm,
-                                 actor_states.reshape(-1, 780).to(self.actor_norm._mean.device))
+                                 actor_states.reshape(-1, self.obs_dim).to(self.actor_norm._mean.device))
         update_global_normalizer(self.critic_norm,
-                                 critic_states.reshape(-1, 1390).to(self.critic_norm._mean.device))
+                                 critic_states.reshape(-1, self.critic_obs_dim).to(self.critic_norm._mean.device))

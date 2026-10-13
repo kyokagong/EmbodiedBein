@@ -12,6 +12,7 @@ test('a one-sample metric is visible in the shared chart', async () => {
     defineProps: () => ({ points: [{ step: 1, value: 3.5512028 }] }),
     ref: () => ({ value: {} }),
     onMounted: () => {},
+    onUnmounted: () => {},
     watch: () => {},
     getEcharts: async () => ({ init: () => ({ setOption: value => { option = value; } }) }),
   });

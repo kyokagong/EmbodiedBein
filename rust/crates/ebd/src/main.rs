@@ -17,6 +17,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use tokio::net::UnixListener;
+mod storage;
+mod motion_preview;
 
 #[derive(Parser)]
 #[command(name = "ebd")]
@@ -33,10 +35,10 @@ enum Cmd {
     Health,
 }
 
-#[derive(Clone)]
 struct App {
     data_root: PathBuf,
     runner: Runner,
+    storage_lock: tokio::sync::Mutex<()>,
 }
 
 #[tokio::main]
@@ -71,6 +73,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(App {
         data_root: data_root.clone(),
         runner,
+        storage_lock: tokio::sync::Mutex::new(()),
     });
 
     let control = Router::new()
@@ -82,10 +85,12 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/runs/{id}/cancel", post(cancel_run))
         .route("/v1/runs/{id}/metrics", get(run_metrics))
         .route("/v1/runs/{id}/logs", get(run_logs))
+        .route("/v1/runs/{id}/motion-preview/{clip}", get(motion_preview_get))
         .route("/v1/ps", get(ps_handler))
         .route("/v1/scan", post(scan_handler))
         .route("/v1/snapshots", post(snapshot_handler))
         .route("/v1/checkpoints/freeze", post(freeze_checkpoint_handler))
+        .route("/v1/storage/delete", post(delete_storage_handler))
         .with_state(app_state.clone());
 
     let media = Router::new()
@@ -206,6 +211,7 @@ fn env_pairs(env: &Value) -> Vec<(String, String)> {
 }
 
 async fn submit_run(State(st): State<Arc<App>>, Json(body): Json<SubmitBody>) -> Json<Value> {
+    let _guard = st.storage_lock.lock().await;
     let req = RunRequest {
         run_id: body.run_id.clone(),
         image: body.image,
@@ -237,6 +243,17 @@ async fn submit_run(State(st): State<Arc<App>>, Json(body): Json<SubmitBody>) ->
             "status": "docker_error",
             "reason": reason
         })),
+    }
+}
+
+async fn delete_storage_handler(State(st): State<Arc<App>>, Json(req): Json<storage::DeleteRequest>) -> Response {
+    let _guard = st.storage_lock.lock().await;
+    let root = st.data_root.clone();
+    let models = PathBuf::from(std::env::var("EB_MODELS_ROOT").unwrap_or_else(|_| "/data/kk/models".into()));
+    match tokio::task::spawn_blocking(move || storage::delete_storage(&root, &models, req)).await {
+        Ok(Ok(result)) => Json(result).into_response(),
+        Ok(Err(error)) => (StatusCode::CONFLICT, Json(json!({"error": error}))).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
 
@@ -462,6 +479,17 @@ async fn scan_handler(Json(req): Json<ScanReq>) -> Json<Value> {
         .await
         .unwrap_or_else(|e| json!({"error": e.to_string()}));
     Json(value)
+}
+
+async fn motion_preview_get(State(st): State<Arc<App>>, Path((run, clip)): Path<(String, String)>) -> Response {
+    let Some(path) = motion_preview::preview_path(&st.data_root, &run, &clip) else {
+        return (StatusCode::NOT_FOUND, "motion preview unavailable").into_response();
+    };
+    match tokio::fs::read(path).await {
+        Ok(bytes) => ([(header::CONTENT_TYPE, "application/json"),
+                      (header::CACHE_CONTROL, "private, no-store")], bytes).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "motion preview unavailable").into_response(),
+    }
 }
 
 async fn media_get(State(st): State<Arc<App>>, Path(path): Path<String>, req: Request) -> Response {

@@ -13,12 +13,14 @@ from eb.agent.tools import AgentCtx  # noqa: F401 — register ToolBus tools
 from eb.api.routes import api_v1, health_router, media_router, spa_router, ws_router
 from eb.api.embodiment_routes import router as embodiment_router
 from eb.api.routes_data import router as data_router
+from eb.api.routes_motion import router as motion_router
 from eb.api.routes_env import router as env_router
 from eb.api.routes_environments import router as environments_router
 from eb.api.routes_model import router as model_router
 from eb.api.routes_settings import router as settings_router
 from eb.api.routes_train import router as train_router
 from eb.api.routes_eval import router as eval_router
+from eb.api.routes_delete import router as delete_router
 from eb.bootstrap import seed_if_empty
 from eb.scheduler.loop import Scheduler
 from eb.settings import get_settings
@@ -81,11 +83,13 @@ def create_app() -> FastAPI:
     app.include_router(api_v1, prefix="/api/v1")
     app.include_router(embodiment_router, prefix="/api/v1")
     app.include_router(data_router, prefix="/api/v1")
+    app.include_router(motion_router, prefix="/api/v1")
     app.include_router(env_router, prefix="/api/v1")
     app.include_router(environments_router, prefix="/api/v1")
     app.include_router(train_router, prefix="/api/v1")
     app.include_router(eval_router, prefix="/api/v1")
     app.include_router(model_router, prefix="/api/v1")
+    app.include_router(delete_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(media_router)

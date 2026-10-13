@@ -571,7 +571,7 @@ async def get_report_episodes(eid: str, session: SessionDep, principal: Principa
         return {"items": [], "available": False, "total": 0}
     items = []
     evidence_files = sorted(root.glob("eval-episodes-rank*.jsonl"))
-    if not evidence_files and (row.suite_id or "").startswith(("suite_rpo_v2_wbc_", "suite_rpo_v2_amp_", "suite_rpo_v2_flat_")):
+    if not evidence_files and (row.suite_id or "").startswith(("suite_rpo_v2_wbc_", "suite_rpo_v2_amp_", "suite_rpo_v2_flat_", "suite_rpo_v2_bfm_", "suite_rpo_ufo_")):
         evidence_files = [root / "eval-cases.jsonl"] if (root / "eval-cases.jsonl").is_file() else []
     for path in evidence_files:
         if path.is_symlink() or path.stat().st_size > 1024 * 1024:

@@ -83,6 +83,7 @@ services:
     environment:
       EB_REDIS_URL: redis://127.0.0.1:${EB_PORT_REDIS:-6380}/0
       EB_DATA_ROOT: ${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}
+      EB_MODELS_ROOT: ${EB_HOST_MODELS_DIR:-/data/kk/models}
       EB_EBD_UDS: /run/eb/ebd.sock
       EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
       TZ: Asia/Shanghai

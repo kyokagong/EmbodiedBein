@@ -12,7 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from eb.ids import new_id
 from eb.onnx_io import read_signature, sha256_file
-from eb.store.models import Artifact, ModelFamily, ModelVersion
+from eb.store.models import Artifact, AuditLog, ModelFamily, ModelVersion
 
 CHECKPOINT_ROOTS = (
     Path("/data/kk/Berkeley-Humanoid-Lite/checkpoints"),
@@ -80,6 +80,10 @@ async def refresh_measured_onnx_io(session: AsyncSession) -> int:
 
 
 async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) -> int:
+    from eb.orchestrator.deletion import references
+    tombstones = (await session.scalars(select(AuditLog).where(AuditLog.action == "storage.delete"))).all()
+    deleted_sources = [path for row in tombstones if (row.before or {}).get("kind") == "model"
+                       for path in row.before.get("paths", []) + row.before.get("preserved_paths", [])]
     fam = await session.get(ModelFamily, "mf_legacy")
     if fam is None:
         fam = ModelFamily(id="mf_legacy", name="legacy checkpoints", family="mlp")
@@ -112,6 +116,8 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
     for path in paths:
         if n >= 80:
             break
+        if references(str(path), set(), deleted_sources):
+            continue
         try:
             digest = sha256_file(path)
         except OSError:

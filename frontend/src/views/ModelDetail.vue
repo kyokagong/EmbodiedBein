@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
+import DeleteButton from "../components/DeleteButton.vue";
 import LineageGraph from "../components/LineageGraph.vue";
 
 const route = useRoute();
@@ -66,6 +67,7 @@ watch(() => route.params.id, async id => {
         <h2>{{ data?.name || route.params.id }} <span class="muted xs mono">{{ route.params.id }}</span></h2>
       </div>
       <router-link class="badge" to="/models">← 列表</router-link>
+      <DeleteButton v-if="data" :path="`/models/${data.id}`" :name="data.name" :disabled="data.kind === 'downloading'" @deleted="router.push('/models')" />
     </div>
     <p class="muted" v-if="data">
       {{ data.kind || data.provenance || "model" }} · {{ data.path || data.card?.source_path || "—" }}

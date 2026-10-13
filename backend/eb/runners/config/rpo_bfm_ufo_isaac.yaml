@@ -1,0 +1,140 @@
+# Fixed native UFO recipe; max_epochs is a sampling safety cap.
+defaults:
+- model/mlp_policy@actor.model
+- weight_syncer/patch_syncer@weight_syncer
+- _self_
+- override hydra/job_logging: stdout
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+  - file://${oc.env:EMBODIED_PATH}/config/
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor, env, rollout: 0
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/output
+    project_name: rlinf
+    experiment_name: rpo_bfm_ufo_isaac
+    logger_backends:
+    - tensorboard
+  max_epochs: 4096
+  max_steps: -1
+  only_eval: false
+  use_training_pipeline: false
+  overlap_env_bootstrap: false
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+algorithm:
+  loss_type: ufo_fb_cpr_aux
+  update_epoch: 1
+  normalize_advantages: false
+  kl_penalty: kl
+  group_size: 1
+  reward_type: action_level
+  logprob_type: action_level
+  entropy_type: action_level
+  adv_type: gae
+  loss_agg_func: token-mean
+  bootstrap_type: standard
+  gamma: 0.98
+  gae_lambda: 1.0
+env:
+  group_name: EnvGroup
+  train:
+    env_type: isaaclab
+    total_num_envs: 16
+    auto_reset: true
+    ignore_terminations: false
+    use_rel_reward: false
+    seed: 42
+    group_size: 1
+    reward_coef: 1.0
+    use_fixed_reset_state_ids: false
+    rollout_epoch: 1
+    max_episode_steps: 1000
+    max_steps_per_rollout_epoch: 4
+    video_cfg:
+      save_video: false
+      info_on_video: false
+      fps: 50
+      video_base_dir: /workspace/output/video/train
+    init_params:
+      id: RPO-UFO-Isaac-RSI-v1
+      num_envs: null
+      max_episode_steps: ${..max_episode_steps}
+      task_description: RPO V2 BFM-Zero online interaction with pinned observation-only
+        expert motion.
+  eval:
+    env_type: isaaclab
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    use_rel_reward: false
+    seed: 42
+    group_size: 1
+    reward_coef: 1.0
+    use_fixed_reset_state_ids: true
+    rollout_epoch: 1
+    max_episode_steps: 1000
+    max_steps_per_rollout_epoch: 1000
+    video_cfg:
+      save_video: false
+      info_on_video: false
+      fps: 50
+      video_base_dir: /workspace/output/video/eval
+    init_params:
+      id: RPO-UFO-Isaac-RSI-v1
+      num_envs: null
+      max_episode_steps: ${..max_episode_steps}
+      task_description: RPO V2 BFM-Zero online interaction with pinned observation-only
+        expert motion.
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  enable_torch_compile: false
+  enable_cuda_graph: false
+  collect_transitions: true
+  collect_prev_infos: true
+  model:
+    model_path: ''
+    precision: ${actor.model.precision}
+actor:
+  group_name: ActorGroup
+  training_backend: ufo_agent
+  micro_batch_size: 128
+  global_batch_size: 128
+  seed: 42
+  enable_offload: false
+  model:
+    model_path: ''
+    model_type: mlp_policy
+    policy_setup: rpo-v2-bfm-ufo
+    obs_dim: 375
+    critic_obs_dim: 733
+    action_dim: 23
+    num_action_chunks: 1
+    precision: '32'
+    add_value_head: false
+    is_lora: false
+    bfm_profile: ufo_native_bringup
+    motion_root: ''
+    asset_sha256: ''
+    batch_size: 128
+    replay_capacity: 100000
+    hidden_dim: 1024
+    hidden_layers: 3
+  optim: null
+  fsdp_config: null
+reward:
+  use_reward_model: false
+critic:
+  use_critic_model: false

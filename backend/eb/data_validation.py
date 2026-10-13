@@ -33,6 +33,99 @@ def require_amp_motion_dataset(row) -> dict:
     return report
 
 
+def require_bfm_motion_dataset(row) -> dict:
+    from eb.rpo_bfm import validate_motion_manifest
+    from eb.settings import get_settings
+
+    report = (row.summary_stats or {}).get("validation") or {}
+    root = Path(row.dest_path)
+    manifest = root / "manifest.json"
+    asset_manifest = get_settings().assets_root / "roboparty/rpo-v2/asset-manifest.json"
+    if (row.status != "validated" or row.embodiment_env_id != "ee_rpo_v2_bfm_23dof_v1"
+            or (row.meta or {}).get("usage") != "train"
+            or (row.meta or {}).get("purpose") != "behavior_prior"
+            or report.get("status") != "validated" or report.get("scope") != "rpo_bfm_motion_v1"
+            or report.get("smoke_ready") is not True or report.get("storage_ref") != row.dest_path
+            or root.is_symlink() or manifest.is_symlink() or not manifest.is_file()
+            or asset_manifest.is_symlink() or not asset_manifest.is_file()):
+        raise ValueError("BFM requires a validated train behavior_prior motion view")
+    manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    asset_sha256 = hashlib.sha256(asset_manifest.read_bytes()).hexdigest()
+    if (manifest_sha256 != report.get("manifest_sha256")
+            or asset_sha256 != report.get("asset_sha256")):
+        raise ValueError("BFM motion manifest or RPO asset changed after validation")
+    current = validate_motion_manifest(json.loads(manifest.read_text()), asset_sha256=asset_sha256)
+    if not current["smoke_ready"]:
+        raise ValueError("BFM legacy source quaternion conversion is incorrect; derive a new DatasetVersion")
+    if report.get("training_ready")!=current["training_ready"]:
+        raise ValueError("BFM training qualification differs from its frozen manifest")
+    return report
+
+
+def require_ufo_robot_state_dataset(row, *, expected_codec_sha256: str | None = None) -> dict:
+    from eb.rpo_bfm import CODEC_HASH, CODEC_V2_HASH, ENV_ID, ENV_V2_ID
+    expected_codec_sha256 = expected_codec_sha256 or CODEC_HASH
+    if expected_codec_sha256 not in {CODEC_HASH, CODEC_V2_HASH}:
+        raise ValueError("Unsupported UFO RobotState codec")
+    reachable = expected_codec_sha256 == CODEC_V2_HASH
+    from eb.settings import get_settings
+    report = (row.summary_stats or {}).get("validation") or {}
+    root = Path(row.dest_path)
+    from eb.runners.rpo_ufo_motion import digest, validate_robot_state_manifest
+    asset = get_settings().assets_root / "roboparty/rpo-v2/asset-manifest.json"
+    manifest = root / "manifest.json"
+    if (row.status != "validated" or report.get("status") != "validated"
+            or row.embodiment_env_id != (ENV_V2_ID if reachable else ENV_ID)
+            or (row.meta or {}).get("usage") != "train"
+            or (reachable and (row.meta or {}).get("purpose") != "behavior_prior")
+            or report.get("scope") != ("rpo_ufo_robot_state_v2" if reachable else "rpo_ufo_robot_state_v1") or root.is_symlink()
+            or manifest.is_symlink() or not manifest.is_file() or asset.is_symlink() or not asset.is_file()
+            or digest(manifest) != report.get("manifest_sha256") or digest(asset) != report.get("asset_sha256")):
+        raise ValueError("UFO RobotState DatasetVersion or asset changed after validation")
+    validate_robot_state_manifest(json.loads(manifest.read_text()), asset_sha256=digest(asset),
+        expected_codec_sha256=expected_codec_sha256)
+    return report
+
+
+def validate_ufo_robot_state(root: Path, asset_manifest: Path, source_refs: list[dict]) -> dict:
+    from eb.rpo_bfm import CODEC_HASH, CODEC_V2_HASH
+    from eb.runners.rpo_ufo_motion import digest, load_robot_state
+    codec = json.loads((root / "manifest.json").read_text()).get("codec_sha256")
+    if codec not in {CODEC_HASH, CODEC_V2_HASH}:
+        raise ValueError("Unsupported UFO RobotState codec")
+    manifest, sampler = load_robot_state(root, asset_sha256=digest(asset_manifest), expected_codec_sha256=codec)
+    sampler.sample_numpy(250, seq_length=250)
+    return {"format": "rpo_ufo_robot_state", "storage_ref": str(root.resolve()),
+        "source_refs": source_refs or manifest["source_refs"],
+        "validation": {"status": "validated", "scope": "rpo_ufo_robot_state_v2" if codec == CODEC_V2_HASH else "rpo_ufo_robot_state_v1",
+            "codec_sha256": codec,
+            "manifest_sha256": digest(root / "manifest.json"), "asset_sha256": digest(asset_manifest),
+            "window_counts": manifest["window_counts"], "training_ready": False}}
+
+
+def validate_bfm_motion(root: Path, asset_manifest: Path, source_refs: list[dict]) -> dict:
+    from eb.rpo_bfm import validate_motion_manifest
+    from eb.runners.rpo_bfm_motion import load_motion_view
+
+    root, asset_manifest = Path(root), Path(asset_manifest)
+    if asset_manifest.is_symlink() or not asset_manifest.is_file():
+        raise ValueError("BFM validation requires the managed RPO asset manifest")
+    asset_sha256 = hashlib.sha256(asset_manifest.read_bytes()).hexdigest()
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    validation = validate_motion_manifest(manifest, asset_sha256=asset_sha256)
+    sampler = load_motion_view(root, asset_sha256=asset_sha256)
+    return {"format":"rpo_bfm_motion", "source_refs":source_refs or manifest["source_refs"],
+            "storage_ref":str(root.resolve()), "clips_count":len(sampler.clips),
+            "frames_count":sum(len(arrays["states"]) for _, arrays in sampler.clips),
+            "total_bytes":sum((root / item["file"]).stat().st_size for item in manifest["clips"])
+            + manifest_path.stat().st_size,
+            "validation":{**validation, "storage_ref":str(root.resolve()),
+                          "manifest_sha256":hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                          "asset_sha256":asset_sha256, "errors":[],
+                          "unchecked":["source_license_authenticity", "dynamic_replay_quality"]}}
+
+
 def validate_amp_motion(root: Path, asset_manifest: Path, source_refs: list[dict]) -> dict:
     from eb.runners.rpo_amp_motion import load_motion_prior
 

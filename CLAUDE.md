@@ -2,6 +2,8 @@
 
 与 `AGENTS.md` 对齐。设计真源是 `docs/design/`；实现进度见 `docs/progress/`。改行为前先读这两处和本文件。
 
+接入新本体、模型、算法或评估能力，先读根目录 [AGENTS.md](AGENTS.md) 和 [eb-integrate](.agents/skills/eb-integrate/SKILL.md)。涉及训练/评估必须读取[训练与评估闭环](.agents/skills/eb-integrate/references/training-evaluation.md)：先跑通再按实测扩容，每个固定 step 区间完成快评、训练时序分析和继续/停止决策，保留成功/失败录像与完整证据。GPU 拓扑、周期评估和恢复能力以当前实现与运行验证为准，其他开发入口见[工具与技能](.agents/README.md)。
+
 ## 硬约束（冲突时改代码，不改设计）
 
 - 设计真源：`docs/design/`。实现必须服从设计，冲突时改代码而不是改设计（除非设计有明确错误）。

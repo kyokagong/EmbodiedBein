@@ -1,0 +1,138 @@
+{
+  "scope": "CPU read-only source comparison; no imports of simulation or training modules",
+  "image_tag": "eb/rlinf:rpo-bfm-ufo-mjlab-viability-v13",
+  "owned_files": [
+    {
+      "repo_path": "backend/eb/runners/bfm_ufo_agent.py",
+      "image_path": "/workspace/eb_runner/bfm_ufo_agent.py",
+      "repo_sha256": "75d031a033d06682e332985257d83ba9a0ad26db3229cdbccb254f8843820cf3",
+      "image_sha256": "75d031a033d06682e332985257d83ba9a0ad26db3229cdbccb254f8843820cf3",
+      "identical": true
+    },
+    {
+      "repo_path": "backend/eb/runners/bfm_ufo_worker.py",
+      "image_path": "/workspace/eb_runner/bfm_ufo_worker.py",
+      "repo_sha256": "abcd98f4cfbf164180b0632b2a0bbb369480f2c6c757607ab6346f355ce77b8c",
+      "image_sha256": "abcd98f4cfbf164180b0632b2a0bbb369480f2c6c757607ab6346f355ce77b8c",
+      "identical": true
+    },
+    {
+      "repo_path": "backend/eb/runners/bfm_ufo_rollout_context.py",
+      "image_path": "/workspace/eb_runner/bfm_ufo_rollout_context.py",
+      "repo_sha256": "8f7065a421729505a8377d98bea77e0963491255d262c7755b6b6de975702752",
+      "image_sha256": "8f7065a421729505a8377d98bea77e0963491255d262c7755b6b6de975702752",
+      "identical": true
+    },
+    {
+      "repo_path": "backend/eb/runners/bfm_ufo_replay.py",
+      "image_path": "/workspace/eb_runner/bfm_ufo_replay.py",
+      "repo_sha256": "638fae279d8c877860dd1ff8dc35f0c6b014a211c91c745bb0c2e26202a65f72",
+      "image_sha256": "638fae279d8c877860dd1ff8dc35f0c6b014a211c91c745bb0c2e26202a65f72",
+      "identical": true
+    },
+    {
+      "repo_path": "backend/eb/runners/rpo_ufo_mjlab.py",
+      "image_path": "/workspace/eb_runner/rpo_ufo_mjlab.py",
+      "repo_sha256": "95d6c5427047d4fce4c324d6acea37e9f139ba5009d54ecda7aac2be8b8ac27e",
+      "image_sha256": "95d6c5427047d4fce4c324d6acea37e9f139ba5009d54ecda7aac2be8b8ac27e",
+      "identical": true
+    },
+    {
+      "repo_path": "backend/eb/runners/rpo_ufo_isaac.py",
+      "image_path": "/workspace/eb_runner/rpo_ufo_isaac.py",
+      "repo_sha256": "849a134dd046f937505d94de27340dab03c2d611a320c4abd656c979315a4711",
+      "image_sha256": "849a134dd046f937505d94de27340dab03c2d611a320c4abd656c979315a4711",
+      "identical": true
+    },
+    {
+      "repo_path": "backend/eb/runners/rpo_bfm_codec.py",
+      "image_path": "/workspace/eb_runner/rpo_bfm_codec.py",
+      "repo_sha256": "0cad3bac9e3efb3f1f37d6cac873f789548143b9cd597ed90a93a3045339cd24",
+      "image_sha256": "0cad3bac9e3efb3f1f37d6cac873f789548143b9cd597ed90a93a3045339cd24",
+      "identical": true
+    },
+    {
+      "repo_path": "backend/eb/runners/rpo_ufo_contact.py",
+      "image_path": "/workspace/eb_runner/rpo_ufo_contact.py",
+      "repo_sha256": "096cb3494744a6c6fd06b4e90cec39fe9f134902b221ce1bdf4a501d2865e9f4",
+      "image_sha256": "096cb3494744a6c6fd06b4e90cec39fe9f134902b221ce1bdf4a501d2865e9f4",
+      "identical": true
+    }
+  ],
+  "pinned_files": [
+    {
+      "path": "/opt/ufo/humanoidverse/train.py",
+      "sha256": "3ea01eea90c7d3f3b18d111662ff9c4c2e2b3f873e74686b62ba428c75e1d75f"
+    },
+    {
+      "path": "/opt/ufo/humanoidverse/agents/presets/fb.py",
+      "sha256": "5510c319a28a7a1b29a3b4c281b948419097440ceda8e7f0448dd7e67522e58f"
+    },
+    {
+      "path": "/opt/ufo/humanoidverse/training/workspace.py",
+      "sha256": "d70d6fe2445c7951cde88f6a5a3280b20e24eb1d5d138a048ea1e6a9ddf36ca4"
+    },
+    {
+      "path": "/opt/ufo/humanoidverse/agents/fb_cpr_aux/agent.py",
+      "sha256": "93b6a114c4c61bf3b5484839b5950b2fac2a79ac9c0969dad4b4d4bc87d5741b"
+    },
+    {
+      "path": "/workspace/isaaclab_extension_template/.venv/lib/python3.11/site-packages/mjlab/actuator/dc_actuator.py",
+      "sha256": "cc459481704b0df987ab73cb75a21da12e969b7d13374127105b73d98ac384e0",
+      "semantic_note": "velocity_limit is motor no-load speed in this implementation; effort_limit is a torque clip, not a qvel clip"
+    }
+  ],
+  "receipt": {
+    "schema_version": "eb/ufo-image-source/v1",
+    "ufo": {
+      "commit": "0b89378de02f77712072d983bc43ec2a46455dc0",
+      "tree": "3a6b8b0d6a04287f37c1d7834e51561a8e014fc9",
+      "content_hash": "sha256:2ec3a9015dda0fd4cfe6861e6ebb35fbf55c78bf43c22544a82ab2368a222e84",
+      "license": "CC-BY-NC-4.0",
+      "scope": "pinned native agent plus measured v7 regularization/reward bounds",
+      "upstream_content_hash": "sha256:2191cf26c77262f7ef2e3525ca23878a8f08c46fd02a20b7776a791f8f5e7582"
+    },
+    "rlinf": {
+      "commit": "018e6a9e0da60f96eeda8b11008543911027d414",
+      "content_hash": "sha256:dbaa8bed56be412f6d012ee34030822941945786cede6bf9bc3de0fec5445d48",
+      "license": "Apache-2.0",
+      "base_patch_hash": "sha256:df5e404b711161d7068894890d1a90bdcf61f064c8c9bfea60210899ecf787a5"
+    },
+    "patch_hash": "sha256:f99aa821d9ccdf436f91010a7b175209a2bda0f32f40afe8e0a6b49ddaf7d5b5",
+    "packages": {
+      "python": "3.11.16",
+      "torch": "2.7.0+cu128",
+      "gymnasium": "1.2.0",
+      "pydantic": "2.11.5",
+      "safetensors": "0.6.2",
+      "tensordict": "0.11.0",
+      "mjlab": "1.4.0",
+      "mujoco": "3.8.0",
+      "mujoco-warp": "3.8.0.3",
+      "warp-lang": "1.12.0"
+    },
+    "scope": "native UFO agent + RPO MJLab dynamic RSI and training-only position tolerance",
+    "topology_patch_hash": "sha256:3078506628924464cb42d0b2f108b3fab502a43fd75e091f358d504565294d23",
+    "learning_profile_patch_hash": "sha256:d47623e48b4cc757d5e63336a1fa7d49234c3833a2f1c6bbdbee4fe7ffd9a272",
+    "rollout_profile_patch_hash": "sha256:777456ce171734326cf8c55eaa434fc5a69a27d0b2d0b725608dd54c190f4a77",
+    "action_control_source_sha256": "sha256:0cad3bac9e3efb3f1f37d6cac873f789548143b9cd597ed90a93a3045339cd24",
+    "action_control_profile_patch_hash": "sha256:548260ca5e3eedd53ae739c00672c7e273e7835faed734778039cf5977b56e0d",
+    "auxiliary_profile": "soft_velocity_v7",
+    "auxiliary_source_sha256": "sha256:6cbb53ec59105284b00f72f3b752fdae8e098361ef5a5959936aefb34ba75a37",
+    "auxiliary_profile_patch_hash": "sha256:30e7b4ea7a3ec0e45cdbe0a9dbf718eb219c2c6fd36d07f9b18bd5222183a03a",
+    "scaling_profile": "env6144_batch2048_v6",
+    "scaling_profile_patch_hash": "sha256:58a2dca8377ed2ede804c7101b39bc6992ec669ef95e610ddec4b2a59bfc6b20",
+    "control_profile": "reachable_v2",
+    "optimizer_profile": "stabilized_v7",
+    "stabilization_patch_hash": "sha256:564f5452e12e3179112e6aa3020efba4cbcedc0ad90dd26b98aed78a50dd85b1",
+    "contact_patch_hash": "sha256:e20a0ff930b3b9430ece70c21ab316a06cef92b679b638c0a35d7fed62d6d814",
+    "ground_patch_hash": "sha256:554a18609c9b8a420811fa6b1ded908a4bdf181e52e8d513c8772de6084eff59",
+    "context_profile": "environment_tracking_v10",
+    "tracking_contact_patch_hash": "sha256:d9b075574bf38e19cd74b39db52edf92573a019ba24d06e08fb82861f07dbf15",
+    "simulator": "mjlab",
+    "physics_profile": "native_mjcf_viability_v13",
+    "contact_profile": "native_mjcf_viability_v13",
+    "mjlab_patch_hash": "sha256:3b06c0e0883c415c910fee686422f7c25827b047ec37528083ddf87b0a6a8eb4",
+    "viability_patch_hash": "sha256:46cd010c4c1c1353bdd943b4dbbb4b0aed44794ba1e4a29d400d9416ee9dec0d"
+  }
+}

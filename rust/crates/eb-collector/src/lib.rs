@@ -8,6 +8,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 use walkdir::WalkDir;
 
+static INGEST_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn with_storage_lock(operation: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let _guard = INGEST_LOCK.lock().map_err(|_| "collector lock poisoned")?;
+    operation()
+}
+
 /// Stream complete TFRecords, bounding each payload rather than the log file.
 /// Oversized non-scalar records are skipped; partial tails are retried next scan.
 pub fn parse_tfevents(
@@ -197,7 +204,6 @@ fn key(buf: &[u8], i: usize) -> Option<(u32, u32, usize)> {
 
 pub fn ingest_run_logs(root: &Path, run_id: &str) -> std::io::Result<usize> {
     // ponytail: one collector lock; use per-run locks and file offsets if scan throughput matters.
-    static INGEST_LOCK: Mutex<()> = Mutex::new(());
     let _guard = INGEST_LOCK
         .lock()
         .map_err(|_| std::io::Error::other("collector lock poisoned"))?;

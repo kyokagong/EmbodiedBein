@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { api } from "../api/client";
 import ListControls from "../components/ListControls.vue";
+import DeleteButton from "../components/DeleteButton.vue";
 import { useListView } from "../composables/useListView";
 
 const items = ref<any[]>([]);
@@ -150,7 +151,8 @@ async function register() {
           <td class="mono xs">{{ w.path || w.metrics_at_checkpoint?.download?.status }}<p class="error">{{ w.metrics_at_checkpoint?.download?.error }}</p><button v-if="w.kind === 'download_failed'" type="button" :disabled="acquiring" @click="retryDownload(w)">续传</button></td>
           <td class="xs">{{ gb(w.size_bytes) }}</td>
           <td class="xs"><router-link v-if="w.train_job_name" :to="`/train/${w.train_page_id || w.train_job_id}`">{{ w.train_job_name }}</router-link><span v-else>{{ w.train_job_id || "—" }}</span><br v-if="w.train_job_id"><span class="mono muted xs">{{ w.train_job_id }}</span><br v-if="w.step != null">{{ w.step == null ? "" : `step ${w.step}` }}</td>
-          <td><router-link v-if="w.card?.schema_version === 'eb/rpo-wbc-model/v1'" :to="{ path: '/eval/new', query: { model_id: w.id } }">创建评估</router-link><span v-else>—</span></td>
+          <td><router-link v-if="w.card?.schema_version === 'eb/rpo-wbc-model/v1'" :to="{ path: '/eval/new', query: { model_id: w.id } }">创建评估</router-link>
+            <DeleteButton :path="`/models/${w.id}`" :name="w.name" :disabled="w.kind === 'downloading'" @deleted="items = items.filter(item => item.id !== w.id)" /></td>
         </tr>
       </tbody>
     </table>
