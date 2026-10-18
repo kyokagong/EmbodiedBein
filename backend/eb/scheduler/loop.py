@@ -97,9 +97,10 @@ class Scheduler:
                 JobKind.SERVE_POLICY,
             }
             need = spec.resources.gpus
-            cpu_rsi_audit = (spec.kind == JobKind.ASSET_VALIDATE
-                and spec.params.get('operation') == 'probe_rpo_ufo_dynamics_finalize_v2')
-            if spec.kind in gpu_kinds and not cpu_rsi_audit:
+            from eb.ufo_native import ENV_ID as NATIVE_ENV_ID, OPERATIONS as NATIVE_OPERATIONS
+            native_cpu = (spec.embodiment_env_id == NATIVE_ENV_ID
+                and spec.params.get("operation") in NATIVE_OPERATIONS and need == 0)
+            if spec.kind in gpu_kinds and not native_cpu:
                 need = need or 1
             if not need:
                 memory_budget -= required_memory

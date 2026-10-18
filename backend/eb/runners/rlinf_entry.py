@@ -128,11 +128,8 @@ def write_resume_manifest(checkpoint, mode):
         required += [checkpoint / "data.pt", checkpoint / "rng.pt"]
     elif mode != "trainer_state":
         raise ValueError("unsupported resume mode")
-    template_id = json.loads(os.environ.get("EB_INPUT_RECEIPT", "{}")).get("template_id")
-    if template_id == "rpo_v2_amp_stand_walk_ppo":
+    if json.loads(os.environ.get("EB_INPUT_RECEIPT", "{}")).get("template_id") == "rpo_v2_amp_stand_walk_ppo":
         required.append(checkpoint / "amp/state.pt")
-    elif template_id == "rpo_v2_bfm_zero_pretrain":
-        required.append(checkpoint / "bfm/state.pt")
     for path in [*required, *shards]:
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"checkpoint member is incomplete: {path.name}")
@@ -248,11 +245,6 @@ def prune_old_checkpoints(root, *, keep=1):
 
 
 def publish_checkpoint(output, cfg, receipt):
-    if receipt.get("execution"):
-        if receipt["execution"].get("checkpoint_format") not in {"ufo_agent_state_v1", "ufo_agent_state_v2"}:
-            raise ValueError("Unknown recipe checkpoint format")
-        from bfm_ufo_artifact import publish_ufo_checkpoint
-        return publish_ufo_checkpoint(output, cfg, receipt)
     root = output / str(cfg.runner.logger.experiment_name) / "checkpoints"
     candidates = []
     for directory in root.glob("global_step_*"):
@@ -265,25 +257,8 @@ def publish_checkpoint(output, cfg, receipt):
     step, weights = max(candidates)
     amp = receipt.get("template_id") == "rpo_v2_amp_stand_walk_ppo"
     flat = receipt.get("template_id") == "rpo_v2_flat_ppo"
-    bfm = receipt.get("template_id") == "rpo_v2_bfm_zero_pretrain"
-    tracking = receipt.get("template_id") == "rpo_v2_bfm_zero_tracking_teacher"
     if amp and not (weights.parents[2] / "amp/state.pt").is_file():
         raise ValueError("AMP checkpoint lacks discriminator and sampler state")
-    if bfm and not (weights.parents[2] / "bfm/state.pt").is_file():
-        raise ValueError("BFM checkpoint lacks replay, optimizer and rollout state")
-    bfm_progress = None
-    progress_path = weights.parents[2] / "bfm/progress.json"
-    if bfm and progress_path.exists():
-        if progress_path.is_symlink() or progress_path.stat().st_size > 4096:
-            raise ValueError("BFM learner progress path is invalid")
-        bfm_progress = json.loads(progress_path.read_text())
-        per_round = int(getattr(cfg.actor.model, "updates_per_round", 1))
-        if (not isinstance(bfm_progress, dict) or bfm_progress.get("schema_version") != "eb/bfm-learner-progress/v1"
-                or bfm_progress.get("runner_round") != step or bfm_progress.get("updates_per_round") != per_round
-                or type(bfm_progress.get("learner_updates")) is not int
-                or bfm_progress["learner_updates"] != step * per_round
-                or not 1 <= bfm_progress.get("z_pool_count", 0) <= 8192):
-            raise ValueError("BFM learner counter or latent pool differs from its checkpoint")
     if any(path.is_symlink() for path in [weights, *weights.parents] if path != output.parent):
         raise ValueError("Checkpoint source must not contain symlinks")
     parent = Path(str(cfg.actor.model.model_path))
@@ -316,34 +291,22 @@ def publish_checkpoint(output, cfg, receipt):
         if required_stats and not list(staging.rglob(required_stats)):
             raise ValueError(f"Model publication requires parent {required_stats}")
         if model_type == "mlp_policy":
-            if bfm_progress:
-                shutil.copyfile(progress_path, staging / "bfm-progress.json")
-            if flat or tracking:
+            if flat:
                 import torch
                 state = torch.load(weights, map_location="cpu", weights_only=True)
-                for prefix, dimension in (("actor_norm", 547 if tracking else 780), ("critic_norm", 905 if tracking else 1390)):
+                for prefix, dimension in (("actor_norm", 780), ("critic_norm", 1390)):
                     for field in ("_mean", "_var", "_std"):
                         tensor = state.get(f"{prefix}.{field}")
                         if tensor is None or tensor.numel() != dimension or not torch.isfinite(tensor).all():
                             raise ValueError("RPO-Flat checkpoint lacks finite empirical normalization")
                     if float(state[f"{prefix}.count"]) <= 0:
                         raise ValueError("RPO-Flat checkpoint normalization was never fitted")
-            if tracking:
-                normalization = {"schema_version":"eb/rpo-tracking-normalization/v1",
-                    "kind":"empirical", "observation_dim":547, "critic_dim":905,
-                    "history_length":4, "running_stats_in_weights":True}
-            elif bfm:
-                normalization = {"schema_version":"eb/rpo-bfm-normalization/v1",
-                                 "kind":"frozen_running_stats", "observation_dim":733,
-                                 "history_length":4, "latent_dim":256}
-            else:
-                normalization = {
-                    "schema_version":"eb/rpo-flat-normalization/v1" if flat else "eb/rpo-amp-normalization/v1" if amp else "eb/rpo-wbc-normalization/v1",
-                    "kind":"empirical" if flat else "fixed_env_scaling",
-                    "observation_dim":780 if amp or flat else 890, "history_length":10, "clip":100.0,
-                    **({"running_stats_in_weights":True, "critic_dim":1390} if flat else {}),
-                }
-            atomic_json(staging / "actor-normalization.json", normalization)
+            atomic_json(staging / "actor-normalization.json", {
+                "schema_version":"eb/rpo-flat-normalization/v1" if flat else "eb/rpo-amp-normalization/v1" if amp else "eb/rpo-wbc-normalization/v1",
+                "kind":"empirical" if flat else "fixed_env_scaling",
+                "observation_dim":780 if amp or flat else 890, "history_length":10, "clip":100.0,
+                **({"running_stats_in_weights":True, "critic_dim":1390} if flat else {}),
+            })
         target = staging / "model_state_dict/full_weights.pt"
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(weights, target)
@@ -363,8 +326,6 @@ def publish_checkpoint(output, cfg, receipt):
             "model_path": "model", "step": step, "files": files,
             "parent_model": str(parent), "config_name": config_name,
             "source_checkpoint": str(weights.relative_to(output)),
-            **({"bfm_progress":bfm_progress} if bfm_progress else {}),
-            **({"tracking_reference":receipt["tracking_reference"]} if tracking else {}),
             **({"official_source":receipt.get("official_source")} if flat else {}),
         })
     except BaseException:
@@ -387,12 +348,7 @@ def main():
         raise ValueError("Unapproved RLinf entry script")
     receipt = json.loads(os.environ.get("EB_INPUT_RECEIPT", "{}"))
     template_id = receipt.get("template_id")
-    if receipt.get("execution"):
-        from bfm_ufo_agent import validate_source_receipt
-        source = validate_source_receipt(json.loads(Path("/opt/ufo-source-receipt.json").read_text()))
-        if source != receipt.get("source_receipt"):
-            raise ValueError("UFO image source differs from frozen input receipt")
-    if template_id in {"robotwin_pi05_eval", "rpo_v2_bfm_zero_pretrain", "rpo_v2_bfm_zero_tracking_teacher"}:
+    if template_id == "robotwin_pi05_eval":
         validate_rlinf_image_receipt()
     if template_id in {"robotwin_dm05_sft", "robotwin_lingbot_vla2_sft", "robotwin_gr00t_n17_sft", "robotwin_xr1_sft"}:
         from rlinf.config import EMBODIED_MODEL, SupportedModel
@@ -527,9 +483,9 @@ def main():
         from libero_sft import LiberoSftWorker
         namespace["main"].__wrapped__.__globals__["FSDPVlaSftWorker"] = LiberoSftWorker
     elif arguments.script == RL_ENTRYPOINT and template_id.startswith("libero_"):
-        import rlinf.workers.actor.embodied_fsdp_actor_worker as actor_module
-        from libero_env import LiberoEnvWorker
         from libero_ppo import LiberoPpoActor, LiberoRolloutWorker
+        from libero_env import LiberoEnvWorker
+        import rlinf.workers.actor.embodied_fsdp_actor_worker as actor_module
         actor_module.EmbodiedFSDPActor = LiberoPpoActor
         namespace["main"].__wrapped__.__globals__["EnvWorker"] = LiberoEnvWorker
         namespace["main"].__wrapped__.__globals__["MultiStepRolloutWorker"] = LiberoRolloutWorker

@@ -1,0 +1,60 @@
+id: ee_rpo_v2_ufo_native_23dof_v2
+embodiment_id: emb_roboparty_rpo
+robot_family: roboparty_rpo_v2
+morphology: humanoid
+interface_version: 2
+status: draft
+dof: 23
+joint_order:
+  - left_thigh_yaw_joint
+  - left_thigh_roll_joint
+  - left_thigh_pitch_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_thigh_yaw_joint
+  - right_thigh_roll_joint
+  - right_thigh_pitch_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - torso_joint
+  - left_arm_pitch_joint
+  - left_arm_roll_joint
+  - left_arm_yaw_joint
+  - left_elbow_pitch_joint
+  - left_elbow_yaw_joint
+  - right_arm_pitch_joint
+  - right_arm_roll_joint
+  - right_arm_yaw_joint
+  - right_elbow_pitch_joint
+  - right_elbow_yaw_joint
+observation:
+  dim: 375
+  critic_dim: 733
+  history_length: 4
+  history_preflattened: true
+  concat: true
+  layout:
+    - {term: q_minus_default, dim: 23, source: encoder}
+    - {term: dq_radps, dim: 23, source: encoder}
+    - {term: gravity_body, dim: 3, source: imu}
+    - {term: omega_body, dim: 3, source: imu}
+    - {term: last_applied_action_times5, dim: 23, source: policy}
+    - {term: term_major_previous_four_newest_first, dim: 300, source: history}
+  critic_layout:
+    - {term: actor_observation, dim: 375, source: actor}
+    - {term: privileged_state, dim: 358, source: simulator}
+action: {dim: 23, type: joint_position, scale: 1.0, offset: native_default_plus_effort_kp_gain}
+control: {policy_hz: 50, control_hz: 400, sim_dt: 0.0025, decimation: 8}
+gains:
+  codec_schema: eb/ufo-native-codec/v1
+  history_order: [actions, base_ang_vel, dof_pos, dof_vel, projected_gravity]
+  history_oldest_first: false
+  history_includes_current: false
+  prompt_dim: 256
+  onnx_actor_dim: 631
+  input_quaternion: xyzw
+  action_mapping: q_default_plus_clip_action_times5_times_0.6_times_effort_over_kp
+limits: {scope: simulation_only, hardware_verified: false}
+sim_bindings: {mjcf: assets/rpo.xml}

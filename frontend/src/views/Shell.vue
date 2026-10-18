@@ -62,6 +62,10 @@ const crumb = computed(() => route.path);
         <router-link class="badge" to="/eval/failures">失败分析</router-link>
         <router-link class="badge" to="/eval/leaderboard">排行榜</router-link>
       </nav>
+      <nav v-if="route.path.startsWith('/deploy/')" class="row" aria-label="交付导航">
+        <router-link class="badge" to="/deploy/bundles">交付包</router-link>
+        <router-link class="badge" to="/deploy/simulation">实时仿真验证</router-link>
+      </nav>
       <router-view />
     </main>
   </div>

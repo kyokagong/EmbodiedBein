@@ -19,15 +19,9 @@
 | [11 · RPO 直立直行第一阶段](11-rpo-stand-walk-phase-a.md) | 训练目标、奖励、终止、独立评估判据与冻结协议 |
 | [12 · 环境目录与选择](12-environment-catalog-and-selection.md) | 训练/评估环境实体、修订、编辑、绑定、执行规划与验收 |
 | [13 · SONIC / RPO / RLinf](13-sonic-rpo-rlinf-integration.md) | SONIC 组件迁移、RPO 动作库与新接口、RLinf PPO/辅助损失、平台适配及多轮反思 |
-| [14 · BFM-Zero / RPO / RLinf](14-bfm-zero-rpo-rlinf-integration.md) | 基于官方 RPO-Flat 的网络逐层/参数分析、连续命令→latent、完整 BFM 离策略迁移、RLinf replay/worker、资源恢复与独立验收 |
 | [15 · AMP / RPO / RLinf](15-amp-rpo-rlinf-integration.md) | 可行性、Actor–Critic/判别器结构、环境/step/rollout 预算、完整接入与独立评估、多轮反思 |
-| [16 · BFM 数据与四卡训练](16-bfm-zero-data-and-4gpu-training.md) | 在线/专家数据分离、动作来源补充与质量验证、单 learner 四卡容量探测、1000 次更新及录像评估 |
-| [17 · RPO 跟踪教师](17-rpo-tracking-teacher.md) | 历史单卡教师设计与547/905接口；用户已禁止继续教师，当前执行设计18 |
-| [18 · BFM 原始参考与G1→RPO](18-bfm-reference-prior-and-g1-rpo-retarget.md) | 无教师参考先验、PD与数据资格分离、官方RPO审查及UFO/hhtools状态桥接 |
-| [19 · BFM 行走分段闭环](19-bfm-staged-walking-training.md) | mixed-z闭环修复、实际更新预算、完整恢复、独立周期快评与新验收组 |
-| [20 · UFO / BFM / RLinf](20-ufo-bfm-rlinf-integration.md) | 固定UFO源码对照、当前失败差异、原生agent复用、RPO Isaac先行/MJLab后续、恢复和行走验收 |
-| [21 · 多训练框架契约](21-training-runtime-contracts.md) | runtime/算法来源/仿真器解耦、recipe执行绑定、统一产物与框架专有恢复、渐进兼容 |
-| [22 · UFO/RPO BFM 学习诊断与优化](22-ufo-rpo-bfm-learning-diagnosis-and-optimization.md) | 七版500更新证据复算、位置/接触控制与学习机会分析、MJLab剩余问题、单因素优化及分阶段验证提案 |
+| [23 · 原生 UFO/RPO 部署](23-ufo-native-rpo-deployment.md) | 原生模型导入、推理契约、部署前双后端仿真与交付设计 |
+| [24 · 实时仿真验证](24-ufo-live-simulation-validation.md) | 冻结模型/环境的部署会话、连续切换任务 z、真实姿态展示与诊断证据 |
 
 RoboTwin 所需的 RLinf 逐文件补丁设计单独维护在 [`../rlinf/`](../rlinf/README.md)。该目录展开组件实现边界，不改变本目录定义的平台不变量。
 

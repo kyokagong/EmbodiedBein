@@ -52,7 +52,7 @@
 - 扩容显式核对有效 global batch、microbatch、累积、world size、LR、rollout 和更新/采样比。离策略算法还需 replay 容量、留存/来源比例、样本重用及覆盖；更多 env 不等于更多优化。若改变算法配置或拓扑，派生新 spec 并标明 warm start/可支持的恢复语义，不静默改变 batch 或冒充 exact resume。
 - 训练与快评并发仅在分别准入、保留评估资源且训练在决策点可停住时采用；所有卡用于训练时，采用已验证的分段结束/保存/释放→评估→决定→续训流程。加速最终评估可用更多空闲卡分 case，每例只分配一次；固定逐 case RNG/超时/判据，核对单卡与并行结果等价，再按逐例原始结果完整汇总，不能平均 shard 成功率。
 
-[BFM 四卡设计](../../../../docs/design/16-bfm-zero-data-and-4gpu-training.md)是单 learner 加三张采样卡的具体实例，其 batch、更新/采样关系及[后续参考设计](../../../../docs/design/18-bfm-reference-prior-and-g1-rpo-retarget.md)不作为其他算法默认。资源增加后先完成一个区间的快评，再扩大下一档。
+具体 recipe 的拓扑、batch 与更新/采样关系须分别验证，不作为其他算法默认。资源增加后先完成一个区间的快评，再扩大下一档。
 
 ## 4. 固定 step 快评与继续/停止决策
 

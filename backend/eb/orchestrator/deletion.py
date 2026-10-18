@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -58,7 +59,15 @@ def snapshot(row) -> dict:
 
 def references(value, ids: set[str], paths: list[str]) -> bool:
     if isinstance(value, dict):
-        return any(references(item, ids, paths) for item in value.values())
+        for key, item in value.items():
+            if key == "source_receipt" and isinstance(item, dict):
+                # Source-build citations never load a parent checkpoint; tombstones keep their history.
+                item = {
+                    k: v for k, v in item.items() if k not in {"guardfix_parent_run", "extension_parent_run"}
+                }
+            if references(item, ids, paths):
+                return True
+        return False
     if isinstance(value, (list, tuple)):
         return any(references(item, ids, paths) for item in value)
     if not isinstance(value, str):
@@ -68,6 +77,11 @@ def references(value, ids: set[str], paths: list[str]) -> bool:
         for path in paths
     ):
         return False
+    if value.startswith(("{", "[")):
+        try:
+            return references(json.loads(value), ids, paths)
+        except ValueError:
+            pass
     tokens = set(re.findall(r"[A-Za-z0-9_-]+", value))
     if ids & tokens:
         return True
@@ -148,9 +162,12 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
         job_id = train.job_id if train else object_id
         job = next((r for r in records["jobs"] if r.id == job_id), None)
         expected = (
-            {"train.sft", "train.rl", "train.rlft"} if kind == "train" else {"eval.sim", "eval.sim2sim"}
+            {"train.sft", "train.rl", "train.rlft"}
+            if kind == "train"
+            else ({"asset.validate"} if kind == "job" else {"eval.sim", "eval.sim2sim"})
         )
-        if job and job.kind not in expected:
+        failed_job = job and job.status in {"failed", "infra_failed", "timeout"}
+        if job and job.kind not in expected and not (kind == "job" and failed_job):
             raise HTTPException(409, "任务类型不匹配")
         if not job and not train:
             raise HTTPException(404, "评估任务不存在")
@@ -175,15 +192,37 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
                 settings.models_root / "runs",
             )
         ]
-        if train and train.run_dir and train.run_dir not in paths:
-            # Legacy trn_* directories are not Run-owned; never infer ownership from a path.
-            preserved.append(train.run_dir)
+        if failed_job and job.spec.get("params", {}).get("operation") == "download_model":
+            for weight in records["weight_models"]:
+                download = (weight.metrics_at_checkpoint or {}).get("download") or {}
+                if (
+                    weight.kind == "download_failed"
+                    and download.get("job_id") == job.id
+                    and job.spec["params"].get("model_id") == weight.id
+                ):
+                    removed.setdefault("weight_models", []).append(weight)
+                    path = weight.path or download.get("model_path", "")
+                    if path:
+                        (paths if managed_model_path(path) else preserved).append(path)
+        for projection in removed["train_jobs"]:
+            if projection.run_dir and projection.run_dir not in paths:
+                # Legacy trn_* directories are not Run-owned; never infer ownership from a path.
+                preserved.append(projection.run_dir)
 
     paths = list(dict.fromkeys(p for p in paths if p))
     if kind == "model":
         preserved = [p for p in paths if not managed_model_path(p)]
         paths = [p for p in paths if managed_model_path(p)]
     ids = {r.id for rows in removed.values() for r in rows}
+    suppressed_runs = []
+    if kind == "model":
+        if isinstance(model, ModelVersion) and (model.card or {}).get("run_id"):
+            suppressed_runs.append(model.card["run_id"])
+        suppressed_runs.extend(a.run_id for a in removed.get("artifacts", []) if a.run_id)
+        if isinstance(model, WeightModel) and model.train_job_id:
+            producers = {r.job_id for r in records["train_jobs"] if r.id == model.train_job_id}
+            suppressed_runs.extend(r.id for r in records["runs"] if r.job_id in producers)
+    producer_jobs = {r.job_id for r in records["runs"] if r.id in suppressed_runs}
     blockers = []
     for table in TABLES:
         for row in records[table.__tablename__]:
@@ -191,6 +230,15 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
                 continue
             data = snapshot(row)
             data.pop("id", None)
+            if (isinstance(row, Run) and row.id in suppressed_runs) or (
+                isinstance(row, TrainJob) and row.job_id in producer_jobs
+            ):
+                # A producer's output index is historical evidence, not a model input.
+                summary = dict(data.get("metrics_summary") or {})
+                summary.pop("checkpoint", None)
+                if summary.get("model_version_id") == object_id:
+                    summary.pop("model_version_id")
+                    data["metrics_summary"] = summary
             if references(data, ids, paths):
                 blockers.append(
                     {
@@ -207,14 +255,6 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
     for edge in edges:
         if edge.dst_id in live_ids and not any(b["id"] == edge.dst_id for b in blockers):
             blockers.append({"type": edge.dst_type, "id": edge.dst_id})
-    suppressed_runs = []
-    if kind == "model":
-        if isinstance(model, ModelVersion) and (model.card or {}).get("run_id"):
-            suppressed_runs.append(model.card["run_id"])
-        suppressed_runs.extend(a.run_id for a in removed.get("artifacts", []) if a.run_id)
-        if isinstance(model, WeightModel) and model.train_job_id:
-            producers = {r.job_id for r in records["train_jobs"] if r.id == model.train_job_id}
-            suppressed_runs.extend(r.id for r in records["runs"] if r.job_id in producers)
     return {
         "kind": kind,
         "id": object_id,

@@ -59,12 +59,10 @@ class RpoEvalIn(BaseModel):
     backend: Literal["isaac", "mujoco"] = "mujoco"
     suite_id: str | None = None
     environment_id: str | None = None
-    profile: Literal["smoke", "standard", "validation", "acceptance"] = "smoke"
+    profile: Literal["smoke", "standard"] = "smoke"
     seed: int | None = Field(default=None, ge=0, le=1_000_000)
     record_video: bool = False
     video_quality: Literal["standard", "hd"] = "standard"
-    eval_gpus: Literal[1, 4] = 1
-    envs_per_gpu: Literal[1, 4] = 1
     preview_hash: str | None = None
 
 
@@ -95,10 +93,8 @@ async def rpo_candidates(session: SessionDep, principal: PrincipalDep) -> dict:
     return {"items": [{"id": row.id, "name": row.name, "step": (row.card or {}).get("step"),
                        "embodiment_env_id": row.embodiment_env_id,
                        "readiness": (row.card or {}).get("readiness"),
-                       "execution": (row.card or {}).get("execution"),
-                       "progress_unit": (row.card or {}).get("progress_unit"),
                        "created_at": row.created_at.isoformat() if row.created_at else None}
-                      for row in rows if (row.card or {}).get("schema_version") in {"eb/rpo-wbc-model/v1", "eb/rpo-amp-model/v1", "eb/rpo-flat-model/v1","eb/rpo-bfm-model/v1"}]}
+                      for row in rows if (row.card or {}).get("schema_version") in {"eb/rpo-wbc-model/v1", "eb/rpo-amp-model/v1", "eb/rpo-flat-model/v1"}]}
 
 
 async def _prepare_rpo(body: RpoEvalIn, session) -> tuple[JobSpec, dict]:
@@ -107,16 +103,10 @@ async def _prepare_rpo(body: RpoEvalIn, session) -> tuple[JobSpec, dict]:
 
     model = await session.get(ModelVersion, body.model_version_id)
     if body.video_quality == "hd" and (not body.record_video or not model
-            or (model.card or {}).get("schema_version") not in {"eb/rpo-flat-model/v1","eb/rpo-bfm-model/v1"}):
+            or (model.card or {}).get("schema_version") != "eb/rpo-flat-model/v1"):
         raise ValueError("高清录像需要启用 RPO-Flat 录像评估")
     card = (model.card or {}) if model else {}
-    if body.profile in {"validation", "acceptance"} and card.get("schema_version") != "eb/rpo-bfm-model/v1":
-        raise ValueError("RPO validation/acceptance profiles currently require BFM")
-    if body.profile in {"validation", "acceptance"} and not body.record_video:
-        raise ValueError("BFM validation/acceptance requires actual case videos")
-    if (body.eval_gpus!=1 or body.envs_per_gpu!=1) and card.get("schema_version")!="eb/rpo-bfm-model/v1":
-        raise ValueError("批量四卡评估目前仅支持BFM")
-    if card.get("schema_version") in {"eb/rpo-flat-model/v1","eb/rpo-bfm-model/v1"}:
+    if card.get("schema_version") == "eb/rpo-flat-model/v1":
         return await _prepare_rpo_flat(body, model, session)
     amp = card.get("schema_version") == "eb/rpo-amp-model/v1"
     expected_env = "ee_rpo_v2_amp_locomotion_23dof_v1" if amp else "ee_rpo_v2_wbc_23dof_v1"
@@ -204,40 +194,6 @@ async def _prepare_rpo_flat(body: RpoEvalIn, model: ModelVersion, session) -> tu
     from eb.checkpoints import checkpoint_model
     from eb.rpo_flat import FLAT_ENV, FLAT_TASK, FLAT_SUITE, flat_suite_spec
     from eb.store.ebd import EbdClient
-    bfm=(model.card or {}).get("schema_version")=="eb/rpo-bfm-model/v1"
-    native = (model.card or {}).get("execution")
-    if native:
-        from eb.domain.training_recipe import ExecutionBinding, RECIPES
-        binding = ExecutionBinding.model_validate(native)
-        if binding.recipe_id not in RECIPES or binding != RECIPES[binding.recipe_id].binding or not bfm:
-            raise ValueError("Unknown native model execution binding")
-    native_four = bool(native and binding.topology_id == "one_learner_three_samplers")
-    if native_four and body.envs_per_gpu != 1:
-        raise ValueError("UFO evaluation currently admits one environment per GPU")
-    if native and not native_four and (body.eval_gpus != 1 or body.envs_per_gpu != 1):
-        raise ValueError("UFO 四卡评估尚未通过资格，当前仅支持单卡独立 case")
-    parallel=body.eval_gpus!=1 or body.envs_per_gpu!=1
-    if bfm and body.profile in {"validation", "acceptance"}:
-        parallel = True
-    if parallel and not bfm:raise ValueError("批量四卡评估目前仅支持BFM")
-    eval_template="rpo_v2_bfm_zero_eval" if bfm else "rpo_v2_flat_eval"
-    if native:
-        eval_template = "rpo_bfm_ufo_agent_rlinf_isaac_eval_v1"
-    if bfm:
-        from eb.rpo_bfm import ENV_ID,TASK_ID,EVAL_SUITE,eval_suite_spec,eval_case_seeds
-        FLAT_ENV,FLAT_TASK,FLAT_SUITE,flat_suite_spec=ENV_ID,TASK_ID,EVAL_SUITE,eval_suite_spec
-        if parallel:
-            from eb.rpo_bfm import EVAL_BATCH_SUITE,batch_suite_spec
-            FLAT_SUITE,flat_suite_spec=EVAL_BATCH_SUITE,batch_suite_spec
-        if body.profile in {"validation", "acceptance"}:
-            from eb.rpo_bfm import VALIDATION_SUITE, ACCEPTANCE_SUITE, frozen_eval_suite_spec
-            FLAT_SUITE = VALIDATION_SUITE if body.profile == "validation" else ACCEPTANCE_SUITE
-            if native_four:
-                from eb.rpo_bfm import UFO_VALIDATION_SUITE, UFO_ACCEPTANCE_SUITE, UFO_REPAIR_ACCEPTANCE_SUITE
-                FLAT_SUITE = UFO_VALIDATION_SUITE if body.profile == "validation" else UFO_ACCEPTANCE_SUITE
-                if body.profile == "acceptance" and body.suite_id == UFO_REPAIR_ACCEPTANCE_SUITE:
-                    FLAT_SUITE = UFO_REPAIR_ACCEPTANCE_SUITE
-            flat_suite_spec = lambda: frozen_eval_suite_spec(FLAT_SUITE, body.profile)
 
     if body.backend != "isaac" or body.suite_id not in {None, FLAT_SUITE} or model.embodiment_env_id != FLAT_ENV:
         raise ValueError("RPO-Flat 使用官方 Isaac 速度/转向套件；当前不提供 MuJoCo 验收")
@@ -245,26 +201,19 @@ async def _prepare_rpo_flat(body: RpoEvalIn, model: ModelVersion, session) -> tu
     source_run = await session.get(Run, (model.card or {}).get("run_id"))
     source_job = await session.get(Job, source_run.job_id) if source_run else None
     suite = await session.get(EvalSuite, FLAT_SUITE)
-    frozen_seeds = (eval_case_seeds(FLAT_SUITE, body.profile)
-                    if bfm and body.profile in {"validation", "acceptance"} else list(range(50000, 50100)))
     if (not artifact or artifact.kind != "rlinf_checkpoint" or not source_run or source_run.status != "finished"
             or not source_job or not suite or not suite.frozen or suite.embodiment_env_id != FLAT_ENV
-            or suite.spec != flat_suite_spec() or suite.seeds != frozen_seeds):
+            or suite.spec != flat_suite_spec() or suite.seeds != list(range(50000, 50100))):
         raise ValueError("RPO-Flat 模型、源训练或冻结套件未就绪")
     checkpoint = checkpoint_model(get_settings().data_root / "runs" / source_run.id,
-                                  source_run.id, verify_hashes=not native)
+                                  source_run.id, verify_hashes=True)
     digest = "sha256:" + hashlib.sha256(json.dumps(checkpoint["manifest"],
                                   sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if (checkpoint["path"] != artifact.storage or checkpoint["step"] != model.card.get("step")
-            or digest != artifact.sha256 or checkpoint["manifest"].get("template_id") != (native["recipe_id"] if native else "rpo_v2_bfm_zero_pretrain" if bfm else "rpo_v2_flat_ppo")):
+            or digest != artifact.sha256 or checkpoint["manifest"].get("template_id") != "rpo_v2_flat_ppo"):
         raise ValueError("RPO-Flat 模型登记与完整 checkpoint 不一致")
     refs = source_job.spec.get("code_refs") or {}
-    legacy_bfm_assets=bfm and not (refs.get("embodiment") or {}).get("commit", "").startswith("sha256:")
-    if legacy_bfm_assets:
-        if body.profile!="smoke":
-            raise ValueError("历史BFM训练只有资产manifest绑定，完整验收需新的资产快照训练")
-        refs={**refs,"embodiment":{"kind":"content_snapshot","path":str(get_settings().assets_root/"roboparty/rpo-v2")}}
-    if not legacy_bfm_assets and not (refs.get("embodiment") or {}).get("commit", "").startswith("sha256:"):
+    if not (refs.get("embodiment") or {}).get("commit", "").startswith("sha256:"):
         raise ValueError("RPO-Flat 源训练缺少冻结的官方环境和资产快照")
     # Preserve producer provenance; independently freeze the evaluator runtime at preview.
     provenance = source_run.provenance
@@ -276,18 +225,11 @@ async def _prepare_rpo_flat(body: RpoEvalIn, model: ModelVersion, session) -> tu
     producer = await EbdClient().image_info(source_image)
     if not producer.get("ok") or producer.get("digest") != source_image:
         raise ValueError("RPO-Flat 源训练镜像不可用")
-    if native:
-        from eb.domain.training_recipe import recipe_eval_image_digest
-    image = await EbdClient().image_info(recipe_eval_image_digest(binding.recipe_id) if native else template_image(get_template(eval_template)))
+    image = await EbdClient().image_info(template_image(get_template("rpo_v2_flat_eval")))
     if not image.get("ok") or not str(image.get("digest", "")).startswith("sha256:"):
         raise ValueError("RPO-Flat 评估镜像不可用")
-    if bfm and body.seed is not None:
-        raise ValueError("BFM评估使用冻结独立seeds，不提供临时seed覆盖")
-    seeds = [body.seed] if body.seed is not None else list(range(60000,60004 if bfm else 60003) if body.profile == "smoke" else suite.seeds)
-    if bfm:
-        from eb.rpo_bfm import eval_case_seeds
-        seeds = eval_case_seeds(suite.id, body.profile)
-    plan = {"schema_version":"eb/rpo-bfm-eval-plan/v1" if bfm else "eb/rpo-flat-eval-plan/v1", "model_version_id":model.id,
+    seeds = [body.seed] if body.seed is not None else list(range(60000, 60003) if body.profile == "smoke" else suite.seeds)
+    plan = {"schema_version":"eb/rpo-flat-eval-plan/v1", "model_version_id":model.id,
             "source_run_id":source_run.id, "checkpoint_step":checkpoint["step"],
             "checkpoint_sha256":artifact.sha256, "image_digest":image["digest"],
             "source_image_digest":source_image,
@@ -296,46 +238,17 @@ async def _prepare_rpo_flat(body: RpoEvalIn, model: ModelVersion, session) -> tu
             "backend":"isaac", "criterion":"velocity_commands", "required_steps":1000,
             "suite_spec":suite.spec, "seeds":seeds, "seed_override":body.seed is not None,
             "asset_snapshot":refs["embodiment"]}
-    if legacy_bfm_assets:plan["source_asset_snapshot"]="not_available_for_legacy_smoke"
-    if parallel:
-        plan["parallelism"]={"gpus":body.eval_gpus,"envs_per_gpu":body.envs_per_gpu,
-                             "protocol":"independent_cases_fixed_terrain_v2" if native_four else "independent_cases_shared_terrain_v1"}
-    datasets=[]
-    if bfm:
-        import pathlib
-        from eb.data_validation import require_bfm_motion_dataset
-        from eb.data_validation import require_ufo_robot_state_dataset
-        from eb.rpo_bfm import CODEC_HASH
-        frozen=(source_job.spec.get("inputs") or {}).get("datasets") or []
-        if len(frozen)!=1:raise ValueError("BFM评估必须绑定源训练的单个冻结motion view")
-        dataset=await session.get(Dataset,frozen[0]["id"])
-        if not dataset:raise ValueError("BFM源数据版本缺失")
-        validation=require_ufo_robot_state_dataset(dataset) if native else require_bfm_motion_dataset(dataset)
-        if validation.get("manifest_sha256")!=(frozen[0].get("validation") or {}).get("manifest_sha256"):
-            raise ValueError("BFM源训练motion hash改变")
-        assets=pathlib.Path(refs["embodiment"]["path"])/"asset-manifest.json"
-        asset_sha=hashlib.sha256(assets.read_bytes()).hexdigest()
-        if asset_sha!=validation.get("asset_sha256"):raise ValueError("BFM评估资产与motion失配")
-        datasets=frozen
-        plan.update(codec_sha256=CODEC_HASH,asset_sha256=asset_sha,motion_manifest_sha256=validation["manifest_sha256"],
-            source_weights_sha256=next(item["sha256"] for item in checkpoint["manifest"]["files"] if item["path"]==checkpoint["manifest"].get("weights_path", "model/model_state_dict/full_weights.pt")),
-            source_config_sha256=hashlib.sha256((get_settings().data_root/"runs"/source_run.id/"output/resolved-config.yaml").read_bytes()).hexdigest(),
-            diagnostic_commands=body.profile=="smoke")
-        if native:
-            plan.update(execution=native, progress_unit="learner_joint_update")
     environment = await _bind_environment(body.environment_id, suite, FLAT_TASK, plan, session)
     plan["hash"] = "sha256:" + hashlib.sha256(json.dumps(
         {k:v for k,v in plan.items() if k != "hash"}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     spec = JobSpec(kind=JobKind.EVAL_SIM, embodiment_env_id=FLAT_ENV, task_id=FLAT_TASK,
         name=f"{model.name}-flat-isaac-{body.profile}", image=image["digest"],
-        inputs={"base_model":checkpoint["path"],"datasets":datasets}, code_refs=refs,
-        params={"rpo_checkpoint_eval":True, "stack":"rlinf", "template_id":eval_template,
+        inputs={"base_model":checkpoint["path"]}, code_refs=refs,
+        params={"rpo_checkpoint_eval":True, "stack":"rlinf", "template_id":"rpo_v2_flat_eval",
                 "model_version_id":model.id, "suite_id":suite.id, "seeds":seeds,
                 "record_video":body.record_video, "video_quality":body.video_quality, "rpo_eval_plan":plan,
-                **({"model_execution": native} if native else {}),
                 **({"environment_profile":environment} if environment else {})},
-        resources={"gpus":body.eval_gpus, "cpus":64 if body.eval_gpus==4 else 32 if body.video_quality == "hd" else 4,
-                   "memory_gb":96 if body.eval_gpus==4 else 24, "shm_gb":32 if body.eval_gpus==4 else 8},
+        resources={"gpus":1, "cpus":32 if body.video_quality == "hd" else 4, "memory_gb":24, "shm_gb":8},
         policy={"timeout_h":6})
     return spec, plan
 
@@ -474,7 +387,7 @@ async def _prepare_robotwin(body: EvalIn, suite: EvalSuite, session):
     require_template_ready(template)
     from eb.checkpoints import checkpoint_model
     checkpoint = checkpoint_model(get_settings().data_root / "runs" / artifact.run_id, artifact.run_id,
-                                  verify_hashes=(candidate.get("execution") or {}).get("checkpoint_format") != "ufo_agent_state_v1")
+                                  verify_hashes=True)
     if checkpoint["path"] != artifact.storage:
         raise ValueError("模型包路径与不可变 Artifact 不一致")
     if body.runtime_profile_id or body.resource_variant_id:

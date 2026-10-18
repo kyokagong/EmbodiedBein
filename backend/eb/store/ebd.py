@@ -10,8 +10,9 @@ class EbdClient:
         self.settings = get_settings()
 
     def _client(self, timeout: float = 30.0) -> httpx.AsyncClient:
+        # This is plain HTTP over a local Unix socket; no TLS context is needed.
         return httpx.AsyncClient(
-            transport=httpx.AsyncHTTPTransport(uds=self.settings.ebd_uds), timeout=timeout
+            transport=httpx.AsyncHTTPTransport(uds=self.settings.ebd_uds, verify=False), timeout=timeout
         )
 
     async def health(self) -> dict:
@@ -89,15 +90,21 @@ class EbdClient:
             r.raise_for_status()
             return r.json()
 
-    async def motion_preview(self, run_id: str, clip_id: str) -> dict:
-        async with self._client() as c:
-            r = await c.get(f"http://ebd/v1/runs/{run_id}/motion-preview/{clip_id}")
-            r.raise_for_status()
-            return r.json()
-
     async def cancel_run(self, run_id: str) -> dict:
         async with self._client() as c:
             r = await c.post(f"http://ebd/v1/runs/{run_id}/cancel")
+            r.raise_for_status()
+            return r.json()
+
+    async def live_control(self, run_id: str, command: dict) -> dict:
+        async with self._client(timeout=10.0) as c:
+            r = await c.post(f"http://ebd/v1/runs/{run_id}/live/control", json=command)
+            r.raise_for_status()
+            return r.json()
+
+    async def live_heartbeat(self, run_id: str) -> dict:
+        async with self._client(timeout=10.0) as c:
+            r = await c.post(f"http://ebd/v1/runs/{run_id}/live/heartbeat")
             r.raise_for_status()
             return r.json()
 

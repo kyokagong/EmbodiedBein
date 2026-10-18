@@ -5,13 +5,8 @@ from types import SimpleNamespace as NS
 import pytest
 
 from eb.runners import rlinf_entry
-from eb.runners.rlinf_entry import (
-    externalize_compressed_eval_plan,
-    prepare_eval_model,
-    prune_old_checkpoints,
-    publish_checkpoint,
-    validate_rlinf_image_receipt,
-)
+from eb.runners.rlinf_entry import (prepare_eval_model, prune_old_checkpoints, publish_checkpoint,
+                                    externalize_compressed_eval_plan, validate_rlinf_image_receipt)
 
 
 def test_compressed_eval_plan_is_externalized_before_child_processes(tmp_path, monkeypatch):
@@ -230,87 +225,6 @@ def test_amp_checkpoint_requires_discriminator_at_resume_root(tmp_path, monkeypa
     assert (output / "model/model_state_dict/full_weights.pt").is_file()
 
 
-def test_bfm_checkpoint_requires_replay_state_and_publishes_its_normalizer(tmp_path, monkeypatch):
-    monkeypatch.setenv("EB_RUN_ID", "run_bfm")
-    monkeypatch.setenv("EB_RESUME_FINGERPRINT", "sha256:" + "a" * 64)
-    monkeypatch.setenv("EB_INPUT_RECEIPT", json.dumps({"template_id":"rpo_v2_bfm_zero_pretrain"}))
-    output = tmp_path / "output"
-    checkpoint = output / "bfm/checkpoints/global_step_1"
-    for relative in ("actor/dcp_checkpoint/.metadata", "actor/dcp_checkpoint/__0_0.distcp",
-                     "actor/model_state_dict/full_weights.pt"):
-        path = checkpoint / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(relative.encode())
-    cfg = NS(runner=NS(logger=NS(experiment_name="bfm")),
-             actor=NS(model=NS(model_path="", model_type="mlp_policy")))
-
-    with pytest.raises(ValueError, match="state.pt"):
-        rlinf_entry.write_resume_manifest(checkpoint, "trainer_state")
-    (checkpoint / "bfm").mkdir()
-    (checkpoint / "bfm/state.pt").write_bytes(b"full BFM trainer state")
-    manifest = rlinf_entry.write_resume_manifest(checkpoint, "trainer_state")
-    assert "bfm/state.pt" in {item["path"] for item in manifest["files"]}
-    progress = checkpoint / "bfm/progress.json"
-    progress.write_text(json.dumps(dict(schema_version="eb/bfm-learner-progress/v1", runner_round=1,
-        learner_updates=2, updates_per_round=1, z_pool_count=8)))
-    with pytest.raises(ValueError, match="learner"):
-        publish_checkpoint(output, cfg, {"template_id":"rpo_v2_bfm_zero_pretrain"})
-    progress.write_text(json.dumps(dict(schema_version="eb/bfm-learner-progress/v1", runner_round=1,
-        learner_updates=1, updates_per_round=1, z_pool_count=8)))
-    publish_checkpoint(output, cfg, {"template_id":"rpo_v2_bfm_zero_pretrain"})
-    assert json.loads((output / "checkpoint-manifest.json").read_text())["bfm_progress"]["learner_updates"] == 1
-    normalization = json.loads((output / "model/actor-normalization.json").read_text())
-    assert normalization == {"schema_version":"eb/rpo-bfm-normalization/v1",
-                             "kind":"frozen_running_stats", "observation_dim":733,
-                             "history_length":4, "latent_dim":256}
-
-
-@pytest.mark.asyncio
-async def test_bfm_checkpoint_is_promoted_to_its_own_unqualified_model_family(tmp_path):
-    from eb.orchestrator.collect import promote_rpo_model
-
-    class Session:
-        def __init__(self):
-            self.rows = []
-
-        async def scalar(self, _query):
-            return None
-
-        async def get(self, _model, _key):
-            return None
-
-        def add(self, row):
-            self.rows.append(row)
-
-        async def flush(self):
-            return None
-
-    checkpoint_root = tmp_path / "checkpoint"
-    checkpoint_root.mkdir()
-    (checkpoint_root / "actor-normalization.json").write_text(json.dumps(
-        {"schema_version":"eb/rpo-bfm-normalization/v1", "kind":"frozen_running_stats",
-         "observation_dim":733, "history_length":4, "latent_dim":256}))
-    job = NS(id="job_bfm", kind="train.rl", spec={
-        "params":{"template_id":"rpo_v2_bfm_zero_pretrain", "model_name":"bfm-smoke"},
-        "inputs":{"datasets":[{"id":"ds_motion"}]}, "image":"eb/rlinf:rpo-v2-bfm-zero",
-        "resources":{"gpus":1}, "overrides":[]})
-    run = NS(id="run_bfm")
-    checkpoint = {"manifest":{"template_id":"rpo_v2_bfm_zero_pretrain",
-                               "files":[{"path":"model/actor-normalization.json"}]},
-                  "path":str(checkpoint_root), "bytes":123, "step":1}
-
-    session = Session()
-    await promote_rpo_model(session, job, run, checkpoint)
-    model = next(row for row in session.rows if row.__class__.__name__ == "ModelVersion")
-    assert model.family_id == "mf_rpo_v2_bfm_zero"
-    assert model.embodiment_env_id == "ee_rpo_v2_bfm_23dof_v1"
-    assert model.io_signature == {"observation_profile":"rpo_bfm_actor_history4_z256_v1",
-                                  "obs":375, "latent":256, "critic_obs":733,
-                                  "action_profile":"rpo_v2_joint23_position_v1", "act":23}
-    assert model.card["readiness"] == "simulation_unverified"
-    assert model.card["motion_prior"]["id"] == "ds_motion"
-
-
 def test_rpo_mlp_entry_reaches_upstream_training_without_openpi_assets(tmp_path, monkeypatch):
     import contextlib
     import sys
@@ -348,7 +262,6 @@ def test_rpo_mlp_entry_reaches_upstream_training_without_openpi_assets(tmp_path,
 def test_eval_dispatch_never_executes_training_or_publishes_model(tmp_path, monkeypatch):
     import contextlib
     import sys
-
     from eb.runners import rlinf_entry
 
     class Config(dict):
@@ -383,7 +296,6 @@ def test_eval_dispatch_never_executes_training_or_publishes_model(tmp_path, monk
 def test_robotwin_eval_dispatch_uses_evaluation_runner_and_plan(tmp_path, monkeypatch):
     import contextlib
     import sys
-
     from eb.runners import rlinf_entry
 
     class Config(dict):
@@ -431,7 +343,6 @@ async def test_successful_process_without_model_package_is_not_complete(tmp_path
         await claim_outputs(NS(),job,NS(id='run_missing',metrics_summary={}))
 def test_entrypoint_rejects_runner_mode_mismatch():
     from types import SimpleNamespace
-
     from eb.runners.rlinf_entry import validate_entrypoint_mode
 
     validate_entrypoint_mode('examples/sft/train_vla_sft.py',

@@ -31,12 +31,13 @@ class Settings(BaseSettings):
     fake_gpus: str = ""  # e.g. "0,1,2,3" for tests; empty means never invent GPUs
     bhl_repo: Path = Path("/data/kk/Berkeley-Humanoid-Lite")
     rlinf_repo: Path = Path("/data/kk/RLinf")
+    ufo_native_root: Path = Path('/data/kk/UFO')
     robotwin_repo: Path = Path("/data/kk/embodiedbein/sources/robotwin-rlinf-support")
     robotwin_assets_root: Path = Path("/data/kk/data/robotwin-assets/981c92aa34d8f94d4cff47e0d5bc2f7d4e0af042")
     web_dist: Path = Path("/app/web/dist")
     allowed_path_prefixes: str = (
         "/data/kk/embodiedbein,/data/kk/models,/data/kk/data,/data/kk/assets,"
-        "/data/kk/Berkeley-Humanoid-Lite,/data/kk/RLinf,/data/kk/berkeley_ego_data,"
+        "/data/kk/Berkeley-Humanoid-Lite,/data/kk/RLinf,/data/kk/UFO,/data/kk/berkeley_ego_data,"
         "/data/kk/roboparty/roboparty_train/robolab/data/motions/rpo_lab"
     )
 

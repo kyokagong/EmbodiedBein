@@ -51,6 +51,7 @@ const router = createRouter({
         { path: "/eval/failures", component: () => import("../views/EvalFailures.vue") },
         { path: "/eval/leaderboard", component: () => import("../views/Leaderboard.vue") },
         { path: "/deploy/bundles", component: () => import("../views/Bundles.vue") },
+        { path: "/deploy/simulation", component: () => import("../views/SimulationValidation.vue") },
         { path: "/deploy/robots/:id", component: () => import("../views/RobotDetail.vue") },
         { path: "/agent", component: () => import("../views/Agent.vue") },
         { path: "/agent/audit", component: () => import("../views/AgentAudit.vue") },

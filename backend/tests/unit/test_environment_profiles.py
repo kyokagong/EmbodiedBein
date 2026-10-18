@@ -22,24 +22,6 @@ from eb.runners.rpo_wbc_extension import training_settings_from_env
 from eb.store.models import EmbodimentRow, EnvironmentProfile
 
 
-@pytest.mark.asyncio
-async def test_bfm_catalog_derives_compatible_profile_without_mutating_old_profile():
-    from unittest.mock import Mock
-    from eb.environment_catalog import seed_environment_profiles
-    from eb.rpo_bfm import ENV_ID, TASK_ID, UFO_REPAIR_ACCEPTANCE_SUITE, frozen_eval_suite_spec
-    suite = SimpleNamespace(id=UFO_REPAIR_ACCEPTANCE_SUITE, name="repair acceptance", frozen=True,
-        embodiment_env_id=ENV_ID, spec=frozen_eval_suite_spec(UFO_REPAIR_ACCEPTANCE_SUITE, "acceptance"))
-    old = SimpleNamespace(id=f"env_eval_{suite.id}", task_id="", status="deprecated", content_hash="old")
-    scalars = AsyncMock(side_effect=[SimpleNamespace(all=lambda: [ENV_ID]), SimpleNamespace(all=lambda: [suite])])
-    session = SimpleNamespace(scalars=scalars, get=AsyncMock(side_effect=lambda table, id_: old if id_ == old.id else None), add=Mock())
-    await seed_environment_profiles(session)
-    rows = [call.args[0] for call in session.add.call_args_list if call.args[0].usage == "eval"]
-    assert len(rows) == 1 and rows[0].id != old.id
-    compatible_profile(rows[0], "eval", suite.id, ENV_ID, TASK_ID)
-    assert "0.20" in rows[0].definition["success"]
-    assert old.task_id == "" and old.status == "deprecated" and old.content_hash == "old"
-
-
 def test_environment_settings_are_executable_and_bounded():
     definition = {
         "task": "直立并直行",

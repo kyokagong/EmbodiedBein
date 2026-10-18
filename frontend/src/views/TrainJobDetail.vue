@@ -3,7 +3,6 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
 import Chart from "../components/Chart.vue";
-import EbKpi from "../components/EbKpi.vue";
 import DeleteButton from "../components/DeleteButton.vue";
 
 const route = useRoute();
@@ -37,28 +36,10 @@ const singleSample = computed(() => metricNames.value.length > 0 &&
 const isSft = computed(() => job.value?.kind === "sft" || job.value?.template_id?.endsWith("_sft"));
 const isRpo = computed(() => ["rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo"].includes(job.value?.template_id));
 const isRpoFlat = computed(() => job.value?.template_id === "rpo_v2_flat_ppo");
-const isBfm = computed(() => job.value?.template_id === "rpo_v2_bfm_zero_pretrain");
-const isUfo = computed(() => job.value?.params?.execution?.provider_id === "ufo");
 const latestMetric = (name: string) => {
   const points = metrics.value?.series?.[name] || [];
   return points.length ? points[points.length - 1].value : null;
 };
-const bfmSummary = computed(() => [
-  ["train/bfm/fb_loss", "FB loss"],
-  ["train/bfm/critic_loss", "Critic loss"],
-  ["train/bfm/aux_critic_loss", "Aux critic loss"],
-  ["train/bfm/disc_loss", "Discriminator loss"],
-  ["train/bfm/actor_loss", "Actor loss"],
-  ["train/bfm/update_count", "累计更新次数"],
-  ["rollout/bfm/collected_transitions", "本轮采样条数"],
-  ["train/bfm/replay_size", "Replay 条数"],
-].map(([name, label]) => ({ name, label, value: latestMetric(name) })));
-const ufoSummary = computed(() => [
-  ["train/ufo/fb_loss", "FB loss"], ["train/ufo/actor_loss", "Actor loss"],
-  ["train/ufo/critic_loss", "Critic loss"], ["train/ufo/aux_critic_loss", "Aux critic loss"],
-  ["train/ufo/learner_joint_updates", "累计联合更新"], ["train/ufo/online_transitions", "累计采样条数"],
-  ["train/ufo/sampling_rounds", "采样轮次"], ["train/ufo/environment_control_steps", "环境控制步"],
-].map(([name, label]) => ({ name, label, value: latestMetric(name) })));
 let timer: number | undefined;
 let controller: AbortController | undefined;
 let generation = 0;
@@ -221,8 +202,6 @@ function gb(n: number) { return n ? n > 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n 
       恢复自 <router-link :to="`/train/${job.resumed_from}`">{{ job.resumed_from }}</router-link>
       · step {{ job.resume_step }} · {{ job.resume_mode }}
     </p>
-    <p v-if="isUfo" class="muted">主进度：learner_joint_update（六个原生优化器的一次联合更新）。warmup 可为0；sampling round、transition 和环境控制步独立计数。恢复后图表沿累计联合更新继续。</p>
-    <details v-if="isUfo" class="panel"><summary>冻结执行来源和恢复格式</summary><pre>{{ JSON.stringify(job.params.execution, null, 2) }}</pre></details>
     <p v-if="job.params?.warm_start" class="muted xs">
       初始化来源（warm start）<router-link :to="`/models/${job.params.warm_start.model_id}`">{{ job.params.warm_start.model_id }}</router-link>
       · 源 step {{ job.params.warm_start.source_step }} · 保留权重与归一化，优化器和随机状态重新初始化；本页 step 为新增训练轮数。
@@ -247,20 +226,10 @@ function gb(n: number) { return n ? n > 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n 
       </div>
       <pre v-if="resumePreview" class="preview-box">{{ JSON.stringify(resumePreview, null, 2) }}</pre>
     </form>
-    <div v-if="isBfm || isUfo" class="panel">
-      <h3>{{ isUfo ? 'UFO 原生 BFM 最新训练数值' : 'BFM-Zero 最新训练数值' }}</h3>
-      <div class="kpis">
-        <EbKpi v-for="item in (isUfo ? ufoSummary : bfmSummary)" :key="item.name" :label="item.label"
-          :value="item.value == null ? '—' : Number(item.value.toPrecision(6))"
-          :foot="item.value == null ? '尚无实测值' : `${metrics.series[item.name].length} 个采样点`" />
-      </div>
-      <p class="muted xs">仅展示当前 Run；恢复前的指标见源作业。训练数值不代表独立评估已通过。</p>
-    </div>
     <div class="grid2">
       <div class="panel">
-        <h3>{{ isUfo ? 'UFO 指标（loss / 联合更新 / 采样）' : isBfm ? 'BFM-Zero 指标（loss / update / rollout）' : isSft ? '监督微调指标（loss）' : isRpoFlat ? '训练采样指标（reward / episode / throughput）' : '运行指标（reward / success / throughput）' }}</h3>
+        <h3>{{ isSft ? '监督微调指标（loss）' : isRpoFlat ? '训练采样指标（reward / episode / throughput）' : '运行指标（reward / success / throughput）' }}</h3>
         <p v-if="singleSample" class="muted">当前 Run 每项指标仅有 1 个采样点，图上只能显示一个点，无法形成趋势曲线。</p>
-        <p v-if="isBfm && latestMetric('env/num_trajectories') === 0" class="muted">最近一轮没有完整 episode 结束；episode reward / success 需等待轨迹结束后统计。</p>
         <p v-if="isRpoFlat" class="muted">env/success_once 表示轨迹中曾出现正奖励，不能当作速度／转向任务通过率。模型是否达标以独立的 100 例评估为准。</p>
         <p v-if="isRpo" class="muted">
           env/episode_len 是 Isaac 训练采样中已结束轨迹的均值，不代表冻结模型在 MuJoCo 的可运行步数。

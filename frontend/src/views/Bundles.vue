@@ -9,11 +9,16 @@ const confirmId = ref("");
 const err = ref("");
 const msg = ref("");
 const showPromoteModal = ref(false);
+const loading = ref(false);
+const isNative = (bundle: any) => bundle.manifest?.schema_version === "eb/rpo-ufo-native-bundle/v1" || bundle.manifest?.simulation_only === true;
 
 onMounted(load);
 
 async function load() {
-  rows.value = (await api("/bundles")).items || [];
+  loading.value = true; err.value = "";
+  try { rows.value = (await api("/bundles")).items || []; }
+  catch (e: any) { err.value = e.message; }
+  finally { loading.value = false; }
 }
 
 async function sign(id: string) {
@@ -66,9 +71,10 @@ async function executePromote() {
         <h2>策略包交付与真机放行 (PolicyBundles .ebp)</h2>
       </div>
       <router-link to="/deploy/robots/robot_bhl_01" class="btn-link">🤖 机器人台账与遥测</router-link>
+      <button type="button" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新列表' }}</button>
     </div>
-    <p class="muted small">策略包是训练与真机之间的唯一交付物，自包含 manifest.yaml、policy.onnx、门禁报告与 HMAC 签名。平台严禁直接向真机下发未签名的原始权重。</p>
-    <p class="error" v-if="err">{{ err }}</p>
+    <p class="muted small">策略包保存推理文件、来源和评估证据。UFO/RPO 原生包仅用于本机仿真（simulation_only），未签名且目标硬件未验证。</p>
+    <p class="error" v-if="err" role="alert">{{ err }}</p>
     <p class="ok-msg" v-if="msg">{{ msg }}</p>
 
     <!-- 策略包列表 -->
@@ -88,31 +94,36 @@ async function executePromote() {
           <tr v-for="b in rows" :key="b.id">
             <td>
               <div class="mono font-bold">{{ b.id }}</div>
-              <div class="muted xs">CAS: {{ (b.manifest?.provenance?.commit || '').slice(0, 8) || 'verified' }}</div>
+              <div v-if="isNative(b)" class="muted xs">UFO/RPO 原生推理包</div>
+              <div v-else class="muted xs">CAS: {{ (b.manifest?.provenance?.commit || '').slice(0, 8) || 'verified' }}</div>
             </td>
             <td><span class="mono small">{{ b.embodiment_env_id }}</span></td>
             <td>
-              <span class="badge" :class="b.stage === 'S2' ? 'b-green' : b.stage === 'S1' ? 'b-blue' : 'b-amber'">
+              <span v-if="isNative(b)" class="badge b-amber">simulation_only · 仅仿真</span>
+              <span v-else class="badge" :class="b.stage === 'S2' ? 'b-green' : b.stage === 'S1' ? 'b-blue' : 'b-amber'">
                 {{ b.stage || 'S0' }} {{ b.stage === 'S2' ? '全功率' : b.stage === 'S1' ? '限速' : '系留空载' }}
               </span>
             </td>
             <td>
-              <span class="badge" :class="b.signed ? 'b-green' : 'b-amber'">
+              <span v-if="isNative(b)" class="badge b-amber">未签名 · 目标硬件未验证</span>
+              <span v-else class="badge" :class="b.signed ? 'b-green' : 'b-amber'">
                 {{ b.signed ? '✓ 已签名认证' : '未签名 (草稿)' }}
               </span>
             </td>
             <td class="small">
-              <code>clip={{ b.manifest?.safety?.action_clip ?? '0.375' }}</code> · 
-              <code>watchdog={{ b.manifest?.safety?.watchdog_ms ?? '100' }}ms</code>
+              <template v-if="isNative(b)">MJLab：{{ b.manifest?.coverage?.mjlab?.qualification || '未提供' }}<br>MuJoCo：{{ b.manifest?.coverage?.mujoco?.qualification || '未提供' }}</template>
+              <template v-else><code>clip={{ b.manifest?.safety?.action_clip ?? '0.375' }}</code> ·
+                <code>watchdog={{ b.manifest?.safety?.watchdog_ms ?? '100' }}ms</code></template>
             </td>
             <td>
-              <div class="row" style="gap:6px">
+              <div v-if="isNative(b)"><a v-if="b.download_url || b.manifest?.download_url" :href="b.download_url || b.manifest.download_url" download>下载仿真包 .ebp</a><span v-else class="muted xs">下载入口未提供</span></div>
+              <div v-else class="row" style="gap:6px">
                 <button type="button" class="btn-sm" v-if="!b.signed" @click="sign(b.id)">✍️ 签名确认</button>
                 <button type="button" class="btn-sm b-cyan-btn" @click="openPromote(b)">🚀 阶段放行</button>
               </div>
             </td>
           </tr>
-          <tr v-if="!rows.length">
+          <tr v-if="!rows.length && !loading">
             <td colspan="6" class="text-center text-muted" style="padding:2rem">暂无已打包的策略包</td>
           </tr>
         </tbody>

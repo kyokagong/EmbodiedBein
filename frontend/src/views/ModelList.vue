@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { api } from "../api/client";
 import ListControls from "../components/ListControls.vue";
 import DeleteButton from "../components/DeleteButton.vue";
+import UfoNativePanel from "../components/UfoNativePanel.vue";
 import { useListView } from "../composables/useListView";
 
 const items = ref<any[]>([]);
@@ -38,9 +39,14 @@ async function load() {
   const [weights, models] = await Promise.all([api("/weights"), api("/models")]);
   const modelNames = new Map((models.items || []).map((w: any) => [w.id, w.train_job_name]));
   items.value = [
-    ...(models.versions || []).map((v: any) => ({...v, kind: v.tags?.includes("rpo-v2") ? "RPO WBC · RL" : "训练模型",
-      path: v.card?.checkpoint_path || v.card?.package_path, train_job_id: v.train_page_id || v.card?.train_job_id,
-      step: v.card?.step})),
+    ...(models.versions || []).map((v: any) => {
+      const native = ["eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(v.card?.schema_version);
+      return {...v, kind: native ? (v.card.schema_version === "eb/rpo-ufo-native-export/v1" ? "UFO/RPO · 原生推理导出" : "UFO/RPO · 原生模型") : v.tags?.includes("rpo-v2") ? "RPO WBC · RL" : "训练模型",
+        path: native ? v.card?.package_path : v.card?.checkpoint_path || v.card?.package_path,
+        train_job_id: native ? null : v.train_page_id || v.card?.train_job_id,
+        train_page_id: native ? null : v.train_page_id, train_job_name: native ? null : v.train_job_name,
+        step: native ? undefined : v.card?.step};
+    }),
     ...(weights.items || []).map((w: any) => ({ ...w, train_job_name: modelNames.get(w.id) })),
   ];
   embodiments.value = (await api("/embodiments")).items || [];
@@ -99,6 +105,7 @@ async function register() {
       <button class="primary" type="button" @click="show = !show">＋ 登记基座</button>
     </div>
     <p class="error" role="alert">{{ err }}</p>
+    <UfoNativePanel @changed="load" />
     <div class="panel">
       <h3>RoboTwin 模型能力</h3>
       <table>

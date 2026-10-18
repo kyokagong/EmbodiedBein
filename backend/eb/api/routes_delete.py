@@ -36,3 +36,13 @@ async def preview_eval_deletion(jid: str, session: SessionDep, principal: Princi
 @router.delete("/evals/jobs/{jid}")
 async def delete_eval(jid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     return await delete_object(session, principal, "eval", jid)
+
+
+@router.get("/jobs/{jid}/deletion-preview")
+async def preview_job_deletion(jid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    return await delete_object(session, principal, "job", jid, preview=True)
+
+
+@router.delete("/jobs/{jid}")
+async def delete_job(jid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    return await delete_object(session, principal, "job", jid)

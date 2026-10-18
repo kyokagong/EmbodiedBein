@@ -444,7 +444,16 @@ async def cancel_job(jid: str, session: SessionDep, principal: PrincipalDep) -> 
     job.status = JobStatus.CANCELLED.value
     if run:
         from eb.orchestrator.collect import archive_partial_eval
-        await archive_partial_eval(session, job, run)
+        try:
+            await archive_partial_eval(session, job, run)
+        except (ValueError, OSError, KeyError, TypeError, httpx.HTTPError) as exc:
+            operation = ((getattr(job, "spec", None) or {}).get("params") or {}).get("operation")
+            if operation != "ufo_native_live":
+                raise
+            # Confirmed removal must remain durable even if diagnostic files are damaged.
+            run.metrics_summary = {**(run.metrics_summary or {}), "diagnostic_only": True,
+                                   "complete": False, "evidence_errors": [str(exc)[:500]]}
+            job.error = "交互环境已关闭；部分诊断记录收集失败。"
     await session.commit()
     return _job_out(job)
 
@@ -571,7 +580,7 @@ async def get_report_episodes(eid: str, session: SessionDep, principal: Principa
         return {"items": [], "available": False, "total": 0}
     items = []
     evidence_files = sorted(root.glob("eval-episodes-rank*.jsonl"))
-    if not evidence_files and (row.suite_id or "").startswith(("suite_rpo_v2_wbc_", "suite_rpo_v2_amp_", "suite_rpo_v2_flat_", "suite_rpo_v2_bfm_", "suite_rpo_ufo_")):
+    if not evidence_files and (row.suite_id or "").startswith(("suite_rpo_v2_wbc_", "suite_rpo_v2_amp_", "suite_rpo_v2_flat_")):
         evidence_files = [root / "eval-cases.jsonl"] if (root / "eval-cases.jsonl").is_file() else []
     for path in evidence_files:
         if path.is_symlink() or path.stat().st_size > 1024 * 1024:
@@ -694,6 +703,8 @@ async def build_bundle(body: dict, session: SessionDep, principal: PrincipalDep)
 
     onnx = Path(body.get("onnx") or "/data/kk/Berkeley-Humanoid-Lite/checkpoints/policy_biped_25hz_a.onnx")
     cid = body.get("embodiment_env_id") or "ee_bhl_biped_12dof_v1"
+    if cid.startswith('ee_rpo_v2_ufo_native_'):
+        raise HTTPException(403, '原生 UFO 模型必须使用绑定仿真证据的专用交付入口')
     row = await session.get(EmbodimentEnvRow, cid)
     if not row:
         raise HTTPException(404, "embodiment env")
@@ -747,6 +758,8 @@ async def sign_bundle(bid: str, session: SessionDep, principal: PrincipalDep, re
     if not b:
         raise HTTPException(404)
     gates = [str(g) for g in (b.manifest or {}).get("gates_passed") or []]
+    if b.embodiment_env_id.startswith('ee_rpo_v2_ufo_native_') or (b.manifest or {}).get('simulation_only'):
+        raise HTTPException(403, '仿真交付包不支持此签名或真机资格提升')
     has_g4 = any(g.upper() == "G4" or g.lower() == "g4" for g in gates)
     has_s2s = any("sim2sim" in g.lower() for g in gates)
     if not (has_g4 and has_s2s):

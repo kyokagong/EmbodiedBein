@@ -1,5 +1,3 @@
-import pytest
-
 from eb.capacity import estimate_job
 from eb.domain.job import JobKind, JobSpec
 
@@ -50,26 +48,6 @@ def test_rpo_amp_cpu_motion_conversion_requires_no_gpu_memory():
         estimate = estimate_job(spec)
         assert estimate.verdict == 'fits'
         assert estimate.per_gpu_peak_gb == 0
-
-
-def test_ufo_raw_state_conversion_is_cpu_data_work():
-    spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id="ee_rpo_v2_bfm_23dof_v1",
-        params={"operation": "convert_rpo_ufo_robot_state"}, resources={"gpus": 0})
-    estimate = estimate_job(spec)
-    assert estimate.verdict == "fits"
-    assert estimate.per_gpu_peak_gb == 0
-
-
-@pytest.mark.parametrize('operation', ['convert_rpo_bfm_official', 'convert_rpo_bfm_local_pool', 'convert_rpo_bfm_reference_pool'])
-def test_bfm_isaac_motion_conversion_is_not_estimated_as_model_training(operation):
-    spec = JobSpec(kind=JobKind.DATA_CONVERT,
-                   embodiment_env_id='ee_rpo_v2_bfm_23dof_v1',
-                   params={'operation':operation}, resources={'gpus':1})
-    estimate = estimate_job(spec)
-    assert estimate.verdict == 'fits'
-    assert estimate.basis['inputs']['num_envs'] == 32
-    assert estimate.basis['inputs']['optimizer_bytes'] == 0
-    assert estimate.per_gpu_peak_gb < 10
 
 
 def test_libero_expert_sft_accounts_for_frozen_and_trainable_weights():
@@ -134,19 +112,6 @@ def test_rpo_amp_single_gpu_probe_is_estimated_as_small_policy_training():
     assert estimate.per_gpu_peak_gb < 24
 
 
-def test_rpo_bfm_bringup_is_estimated_as_small_six_component_training():
-    spec = JobSpec(kind=JobKind.TRAIN_RL,
-                   embodiment_env_id='ee_rpo_v2_bfm_23dof_v1',
-                   task_id='tsk_rpo_bfm_pretrain',
-                   params={'stack':'rlinf', 'template_id':'rpo_v2_bfm_zero_pretrain'},
-                   overrides=['env.train.total_num_envs=4'], resources={'gpus':1})
-    estimate = estimate_job(spec)
-    assert estimate.verdict == 'fits'
-    assert estimate.basis['inputs']['bfm_online_and_target_gb'] == 1.12
-    assert estimate.per_gpu_peak_gb < 24
-    assert estimate_job(spec, host_vram_gb=8).verdict == 'no_fit'
-
-
 def test_rpo_amp_isaac_evaluation_uses_inference_memory():
     spec = JobSpec(kind=JobKind.EVAL_SIM,
                    embodiment_env_id='ee_rpo_v2_amp_locomotion_23dof_v1',
@@ -184,26 +149,3 @@ def test_libero_ppo_expert_budget_supports_two_gpu_but_scales_batch():
     assert estimate_job(spec).verdict != 'no_fit'
     spec.overrides = ['actor.micro_batch_size=128']
     assert estimate_job(spec).verdict == 'no_fit'
-
-
-@pytest.mark.parametrize("recipe_id", ["rpo_bfm_ufo_agent_rlinf_isaac_v1",
-    "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_v1", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_safe_v2"])
-def test_ufo_capacity_counts_native_targets_and_cpu_replay(recipe_id):
-    from eb.domain.training_recipe import RECIPES, four_gpu_recipe
-    recipe = RECIPES[recipe_id]
-    four = four_gpu_recipe(recipe_id)
-    spec = JobSpec(kind="train.rl", embodiment_env_id=recipe.embodiment_env_id, task_id=recipe.task_id,
-        params={"template_id": recipe_id, "stack": "rlinf", "execution": recipe.binding.model_dump()},
-        resources={"gpus": 4 if four else 1})
-    estimate = estimate_job(spec, host_vram_gb=24)
-    assert estimate.verdict == "fits"
-    assert estimate.confidence != "measured"
-    assert estimate.basis["inputs"]["learner_count"] == 1
-    assert estimate.basis["inputs"]["cpu_replay_bytes"] == 703800000
-    assert estimate.basis["inputs"]["native_trainable_parameters"] == 57392580
-    assert estimate.basis["inputs"]["target_state_bytes"] == 197355328
-    assert estimate.basis["inputs"]["sampler_count"] == (3 if four else 1)
-    assert estimate.per_gpu_peak_gb < (6 if four else 12)
-    for operation in ("probe_rpo_bfm_ufo_agent", "probe_rpo_ufo_environment"):
-        probe = spec.model_copy(update={"kind": JobKind.ASSET_VALIDATE, "params": {"operation": operation}})
-        assert estimate_job(probe).per_gpu_peak_gb > 0

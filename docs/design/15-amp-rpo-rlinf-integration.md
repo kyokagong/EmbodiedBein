@@ -2,7 +2,7 @@
 
 日期：2026-09-24。状态：**设计真源；代码接入与真实训练、双仿真诊断见[实施记录](../progress/2026-09-24-rpo-amp-rlinf.md)，基础站立/行走验收尚未通过**。本文汇总 [Gemini 建议](../gemini_wbc_suggest.md)的可行性核验，以及真实网络结构、环境数、step 和 rollout 预算。执行顺序见[执行计划](../superpowers/plans/2026-09-24-rpo-amp-rlinf.md)。不执行 Git 提交。
 
-遵循 [01 · 领域](01-product-domain.md)、[02 · 架构](02-system-architecture.md)、[03 · 数据](03-data-collection.md)、[04 · 训练](04-model-training.md)、[05 · 评估交付](05-evaluation-delivery.md)、[10 · RPO WBC](10-roboparty-rpo-wbc-integration.md)、[11 · 直立直行](11-rpo-stand-walk-phase-a.md)、[12 · 环境目录](12-environment-catalog-and-selection.md)。与 [13 · SONIC](13-sonic-rpo-rlinf-integration.md)、[14 · BFM-Zero](14-bfm-zero-rpo-rlinf-integration.md) 是并列路线，不能把这些方案的存在当作组件已经实现。
+遵循 [01 · 领域](01-product-domain.md)、[02 · 架构](02-system-architecture.md)、[03 · 数据](03-data-collection.md)、[04 · 训练](04-model-training.md)、[05 · 评估交付](05-evaluation-delivery.md)、[10 · RPO WBC](10-roboparty-rpo-wbc-integration.md)、[11 · 直立直行](11-rpo-stand-walk-phase-a.md)、[12 · 环境目录](12-environment-catalog-and-selection.md)。与 [13 · SONIC](13-sonic-rpo-rlinf-integration.md) 是并列路线，不能把方案的存在当作组件已经实现。
 
 ## 1. 可行性结论与范围
 

@@ -245,16 +245,24 @@ pub fn ingest_run_logs(root: &Path, run_id: &str) -> std::io::Result<usize> {
 
 pub async fn spawn(root: PathBuf) {
     loop {
-        let runs_dir = root.join("runs");
-        if runs_dir.exists() {
-            if let Ok(rd) = fs::read_dir(&runs_dir) {
-                for ent in rd.flatten() {
-                    if ent.path().is_dir() {
-                        let run_id = ent.file_name().to_string_lossy().to_string();
-                        let _ = ingest_run_logs(&root, &run_id);
+        let sweep_root = root.clone();
+        // A full log sweep must not stall UDS requests or live WebSocket frames.
+        if let Err(error) = tokio::task::spawn_blocking(move || {
+            let runs_dir = sweep_root.join("runs");
+            if runs_dir.exists() {
+                if let Ok(rd) = fs::read_dir(&runs_dir) {
+                    for ent in rd.flatten() {
+                        if ent.path().is_dir() {
+                            let run_id = ent.file_name().to_string_lossy().to_string();
+                            let _ = ingest_run_logs(&sweep_root, &run_id);
+                        }
                     }
                 }
             }
+        })
+        .await
+        {
+            tracing::warn!(%error, "log collector sweep failed");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
@@ -264,6 +272,32 @@ pub async fn spawn(root: PathBuf) {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn collector_waiting_for_storage_does_not_block_runtime_timers() {
+        let root =
+            std::env::temp_dir().join(format!("eb-collector-responsive-{}", std::process::id()));
+        fs::create_dir_all(root.join("runs/run_test")).unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let blocker = std::thread::spawn(move || {
+            let _guard = super::INGEST_LOCK.lock().unwrap();
+            ready_tx.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(180));
+        });
+        ready_rx.recv().unwrap();
+        let collector = tokio::spawn(super::spawn(root.clone()));
+        let start = std::time::Instant::now();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let timer_delay = start.elapsed();
+        blocker.join().unwrap();
+        collector.abort();
+        let _ = collector.await;
+        let _ = fs::remove_dir_all(root);
+        assert!(
+            timer_delay < std::time::Duration::from_millis(100),
+            "collector blocked timer for {timer_delay:?}"
+        );
+    }
 
     #[test]
     fn streams_past_large_records_and_retries_partial_tail() {

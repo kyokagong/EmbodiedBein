@@ -196,6 +196,12 @@ class Orchestrator:
             if existing:
                 return existing
         await validate_flat_warm_start_submission(session, spec)
+        from eb.ufo_native import ENV_ID as UFO_NATIVE_ENV, OPERATIONS as UFO_NATIVE_OPERATIONS
+        if spec.embodiment_env_id == UFO_NATIVE_ENV or spec.params.get('operation') in UFO_NATIVE_OPERATIONS:
+            if principal.startswith('agent:'):
+                raise PermissionError('Native deployment jobs require an operator; use ToolBus for platform Agent actions')
+            from eb.orchestrator.ufo_native import validate_submission
+            await validate_submission(session, spec)
         if spec.kind == JobKind.EVAL_SIM and spec.params.get("template_id", "").startswith("libero_"):
             await validate_libero_eval_submission(session, spec)
         row = await session.get(EmbodimentEnvRow, spec.embodiment_env_id)

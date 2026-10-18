@@ -1,3 +1,0 @@
-FROM eb/rlinf:rpo-ufo-dynamics-finalizer-v2
-COPY backend/eb/runners/rpo_ufo_contact_factor.py /workspace/eb_runner/rpo_ufo_contact_factor.py
-RUN /workspace/isaaclab_extension_template/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; p=Path("/workspace/eb_runner/rpo_ufo_contact_factor.py"); Path("/opt/contact-factor-source.json").write_text(json.dumps({"schema_version":"eb/rpo-contact-factor-source/v1","parent_image":"sha256:66b8b7ea6665ee9d5713c020ffc1c5185829cbfc5929ef4bf98271d1588ab894","diagnostic_sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"factor":"ground geom.solref[0] only","optimizer_updates":0}))'

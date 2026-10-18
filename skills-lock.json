@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "skills": {
+    "data": {
+      "source": "robium-ai/robium",
+      "sourceType": "github",
+      "skillPath": "skills/data/SKILL.md",
+      "computedHash": "0f643cfe99916f0fbb6613c506531f0355949f17d70d964d3828b7ddda7fa305"
+    },
+    "isaac-lab": {
+      "source": "robium-ai/robium",
+      "sourceType": "github",
+      "skillPath": "skills/isaac-lab/SKILL.md",
+      "computedHash": "2f4608da6e0ca5ef69a5094e2721fd179c412cbc7e9885054839db1f2ca17094"
+    },
+    "isaac-sim": {
+      "source": "robium-ai/robium",
+      "sourceType": "github",
+      "skillPath": "skills/isaac-sim/SKILL.md",
+      "computedHash": "9cd1157e643cea40716f38a5b0ff76c6fae4bcc08c8898e50ccd26f98f6d904f"
+    },
+    "learning-loop": {
+      "source": "robium-ai/robium",
+      "sourceType": "github",
+      "skillPath": "skills/learning-loop/SKILL.md",
+      "computedHash": "09864308a2e6f01e7824d5b9f842a3f878e5c233bc39831724244146bbe6ec39"
+    },
+    "mujoco": {
+      "source": "robium-ai/robium",
+      "sourceType": "github",
+      "skillPath": "skills/mujoco/SKILL.md",
+      "computedHash": "18c89abce5da80ce42faed6ebb40445626bfa1a486ba3d2b0a1a01232a00a22e"
+    },
+    "ros2": {
+      "source": "robium-ai/robium",
+      "sourceType": "github",
+      "skillPath": "skills/ros2/SKILL.md",
+      "computedHash": "8304caed4c1ce0a762fead521af88570c55a14b690b7ca2416b38807db10f6c6"
+    },
+    "visualization": {
+      "source": "robium-ai/robium",
+      "sourceType": "github",
+      "skillPath": "skills/visualization/SKILL.md",
+      "computedHash": "ba5931dc7733b9350b8ba9965ee8e4b1236a1cb13aba851870d1597b7f0b6091"
+    }
+  }
+}

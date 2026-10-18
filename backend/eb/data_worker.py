@@ -4,8 +4,7 @@ import json
 import shutil
 from pathlib import Path
 
-from eb.data_validation import (validate_amp_motion, validate_bfm_motion, validate_lerobot_v3,
-                                validate_opendm_robotwin2, validate_ufo_robot_state)
+from eb.data_validation import validate_amp_motion, validate_lerobot_v3, validate_opendm_robotwin2
 
 
 def main():
@@ -16,8 +15,6 @@ def main():
     parser.add_argument("--revision")
     parser.add_argument("--local-only", action="store_true")
     parser.add_argument("--amp-asset-manifest")
-    parser.add_argument("--bfm-asset-manifest")
-    parser.add_argument("--ufo-asset-manifest")
     args = parser.parse_args()
     root, output = Path(args.src), Path(args.output)
     source = {"kind": "path", "uri": args.src}
@@ -40,20 +37,13 @@ def main():
                               allow_patterns=["meta/**", "data/**", "videos/**"])
         if args.repo_id:
             source = {"kind": "huggingface", "uri": args.repo_id, "revision": args.revision}
-        result = (validate_ufo_robot_state(root, Path(args.ufo_asset_manifest), [])
-                  if args.ufo_asset_manifest else
-                  validate_amp_motion(root, Path(args.amp_asset_manifest), [source])
+        result = (validate_amp_motion(root, Path(args.amp_asset_manifest), [source])
                   if args.amp_asset_manifest else
-                  validate_bfm_motion(root, Path(args.bfm_asset_manifest), [source])
-                  if args.bfm_asset_manifest else
                   validate_opendm_robotwin2(root, [source])
                   if (root / "index_cache.json").is_file() and (root / "norm_stats.json").is_file()
                   else validate_lerobot_v3(root, [source]))
     except Exception as exc:
-        scope = ("rpo_ufo_robot_state_v1" if args.ufo_asset_manifest else
-                 "rpo_bfm_motion_v1" if args.bfm_asset_manifest else
-                 "rpo_amp_motion_v1" if args.amp_asset_manifest else "lerobot_v3_structure")
-        result = {"validation": {"status": "invalid", "scope": scope,
+        result = {"validation": {"status": "invalid", "scope": "rpo_amp_motion_v1" if args.amp_asset_manifest else "lerobot_v3_structure",
                                   "training_ready": False, "errors": [str(exc)]}}
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_suffix(".tmp")

@@ -10,85 +10,6 @@ from eb.store.models import EmbodimentEnvRow, EnvironmentProfile, EvalSuite
 
 
 def _training_definition(tpl) -> dict:
-    if tpl.id == 'rpo_bfm_ufo_agent_rlinf_mjlab_4gpu_viability_v13':
-        definition = _training_definition(next(t for t in TEMPLATES if t.id == 'rpo_bfm_ufo_agent_rlinf_mjlab_4gpu_v12'))
-        definition['task'] += ' RSI检查当前与20ms外推q均距原位置边界至少1mrad；仅筛选，参考q/dq不改。'
-        definition['failure'] += ' 训练位置终止容差±0.02rad；严格影子±0.001rad与MJCF物理限位不变。'
-        definition['success'] = '从头100更新验证流程，完整状态恢复新增500更新至600；预算完成不自动扩训，训练未达标不独立评估。'
-        return definition
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_mjlab_4gpu_v12":
-        return {"task": "RPO23DoF原生MJCF/MJLab/MuJoCo-Warp；GPU0 learner，GPU1–3各2048环境；435M UFO六优化器，Batch2048、Replay4M；独立环境250步Tracking。",
-            "reward": "九项raw aux；八个物理子步速度罚均值，权重-25；Actor裁剪1，其余5，w<=50，D lr3e-6/reward[-2,2]。",
-            "failure": "400Hz原生物理/50Hz控制；MJCF质量惯量碰撞掩码，零延迟DC motor PD，踝Kd2.5、armature0.01；RSI与运行时几何一致，足法向速度<=0.15m/s；1.3倍训练速度终止，原额定限位严格影子。",
-            "success": "新后端从头16→24完整恢复后新增500更新，最多2小时/无重试；训练未达标不独立评估。原physics_hz=200为历史codec元数据，实际物理频率由本Profile明确。", "settings": {}}
-    if tpl.id=='rpo_bfm_ufo_agent_rlinf_isaac_4gpu_compliance_v11':
-        definition=_training_definition(next(t for t in TEMPLATES if t.id=='rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_kd_v10'))
-        definition['task']+=' 柔顺地面接触60000N/m、600Ns/m；RSI支撑腿膝>=0.15rad、髋pitch<=0.10rad，不限制摆动腿，只筛选不改q/dq。'
-        definition['reward']+=' 子步速度raw罚relu(r-0.7)^2+8relu(r-1)^2，保留8帧均值与-25一次加权。'
-        definition['success']='新16→24完整恢复后新增500更新；末两100更新窗口严格影子>35、全段物理速度比<2.5等门禁通过，才允许同配方524→3524新增3000更新/4h。训练未达标不独立评估。'
-        return definition
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_kd_v10":
-        definition=_training_definition(next(t for t in TEMPLATES if t.id=="rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_v10"))
-        definition["task"]+=" 配对接触诊断选定踝关节Kd2.5，原Kp40/27Nm限幅/目标slew保持，无新增低通。"
-        return definition
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_v10":
-        return {"task":"RPO23DoF完整435M网络；GPU0 learner、GPU1–3各2048环境；batch2048、CPU replay400万。固定50%独立环境跟随250步train专家片段，与RSI起点绑定；512m地面覆盖。",
-            "reward":"九项UFO aux；速度罚为8个已完成物理子步的归一化均值，软阈值0.70、系数-25。原生六优化器；Actor梯度裁剪1，其余5；w<=50，D lr3e-6/reward[-2,2]。",
-            "failure":"train接触点|v_normal|<=0.15m/s；物理400Hz、控制50Hz。探索速度终止1.3倍，原位置/力矩/宏观跌倒约束保持；原严格标准影子存活与所有子步违规独立记录。",
-            "success":"四卡16→24完整状态恢复后新增500联合更新；最多2小时/无自动重试。训练不足不独立评估，不改变正常行走验收门槛。","settings":{}}
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_ground_v9":
-        definition = _training_definition(next(t for t in TEMPLATES if t.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_contact_v8"))
-        definition["task"] += " 512m离线地面；启动核对实际网格+所有RSI足碰撞网格包络与20m余量。"
-        definition["failure"] += " 每步记录世界XY与足部保守覆盖余量，越界拒绝继续采样。"
-        return definition
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_contact_v8":
-        definition = _training_definition(next(t for t in TEMPLATES if t.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_reachable_v7"))
-        definition["task"] += " RSI仅train接触候选、足底2mm间隙、有限root上移；写入后刷新FK，专家数据不改。"
-        definition["failure"] += " 显式PD增益保持，physics dt=2.5ms/decimation8/50Hz；物理子步硬限位锁存，接触/高度/倾角原因分列。"
-        return definition
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_reachable_v7":
-        return {"task": "RPO v2有限URDF动作目标，原始q/dq与观察零点保持；6144环境，每个sampler2048；435M原生网络、batch2048、replay100万，每24576新转移触发16次联合更新。",
-            "reward": "九项raw aux，limits_dof_vel=sum relu(abs(dq)/Vmax-0.70)^2，权重-25仅加权一次；判别奖励截[-2,2]，D lr=3e-6；Actor正则尺度上限50。",
-            "failure": "真实硬位置/速度/力矩终止保持；target slew每步0.5×Vmax；Actor裁剪1，其余五Adam裁剪5，非有限梯度失败。",
-            "success": "训练/完整恢复资格16→24后新增500联合更新，最多2小时且不自动重试；训练指标不足不启动独立评估。正常行走尚未验证。", "settings": {}}
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_scale6144_v6":
-        definition = _training_definition(next(t for t in TEMPLATES if t.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_slew_velocity_v5"))
-        definition["task"] = definition["task"].replace("batch1024", "batch2048") + " 6144环境，每个sampler2048；每24576新转移触发16次联合更新。"
-        definition["success"] = "先16→24完整恢复与独立资格，再增加5000联合更新；Job最多6小时，段末独立评估。"
-        return definition
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_slew_velocity_v5":
-        definition = _training_definition(next(t for t in TEMPLATES if t.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_slew_v4"))
-        definition["reward"] += " 第九项limits_dof_vel=sum relu(abs(dq)/Vmax-0.8)^2，原生agent固定权重-5，仅加权一次。"
-        return definition
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_slew_v4":
-        return {"task": "RPO v1应用动作codec、train RSI；原生完整2048×6网络、batch1024、replay100万，关闭tracking覆盖。",
-            "reward": "原生八项raw aux保持，action-rate以实际执行动作计算；replay保留请求动作。",
-            "failure": "safe-v2硬终止保持；每步PD target限速为0.5×硬Vmax，reset投影anchor并保留实际q/dq。超盒首步残差和实际dq仍需测量。",
-            "success": "先16→24资格、完整回读、独立速度/held-out评估和媒体；target限速不代表正常行走验收。",
-            "settings": {}}
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_stable_v3":
-        return {"task": "RPO v1 codec、仅train RobotState RSI；原生F/actor/critic/aux critic 2048×6，D 1024×3，B 256×1；batch1024、replay100万。",
-                "reward": "八项原生raw aux与权重保持；关闭rollout_expert_trajectories，保留expert学习、mixed latent和每100步原生提示更新。",
-                "failure": "平地/无噪声；继承safe-v2位置/速度/力矩硬限位及真实terminated，拒绝初始已越限参考帧。",
-                "success": "先16→24完整恢复、独立ONNX验证和媒体资格；正常保存或loss下降不代表正常行走。",
-                "settings": {}}
-    if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_safe_v2":
-        return {"task": "RPO v1 codec、仅train RobotState RSI；原生UFO agent及四卡拓扑不变。",
-                "reward": "八项原生raw aux与权重不变；flat/无噪声保持单因素对照。",
-                "failure": "继承高度/倾斜/接触终止；追加与验收相同的位置/速度/力矩硬限位(容差0.001)，RSI拒绝已越限参考帧。",
-                "success": "先16→24完整恢复资格；训练正常结束不代表行走合格。每步记录requested/applied/target/速度/力矩及越限。",
-                "settings": {}}
-    if tpl.id in {"rpo_bfm_ufo_agent_rlinf_isaac_v1", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_v1"}:
-        return {"task": "RPO v1 codec；仅 train 原始 RobotState 参考初态；RLinf 管理采样，固定 UFO FBcprAuxAgent 更新。无教师。",
-            "reward": "八项原始 aux 不乘 dt、不预加权；UFO 原生权重只应用一次。平地、无噪声/延迟，native norm 每次 replay 更新。",
-            "failure": "高度 <0.50m、倾角 >0.80rad 或关键躯干接触终止；20s 超时保留 terminal bootstrap。缺少 raw 状态/映射直接拒绝。",
-            "success": "单段至绝对 learner_joint_updates 目标后正常保存释放；资格运行最多24更新、1h。独立录像/恢复/GPU资格尚未验证，不代表正常行走。",
-            "settings": {}}
-    if tpl.id == "rpo_v2_bfm_zero_tracking_teacher":
-        return {"task":"100STYLE 冻结参考条件下的 RLinf PPO 残差动作跟踪，平地、无物理辅助。",
-                "reward":"q/root position/orientation/velocity 指数跟踪奖励与 alive，乘 0.02；signed limit/torque/action-rate penalties，跌倒 -2。详见设计17。",
-                "failure":"高度低于 .50m、倾角超过 .80rad 或关键躯干接触；参考尾端 truncation，保留真实终态。",
-                "success":"作业完成不代表教师合格；独立 seeds 完整片段须达到冻结跟踪门限，才能生产正式 BFM prior。", "settings":{}}
     if tpl.id == "rpo_v2_flat_ppo":
         return {
             "task": "官方 RPO-Flat：按前后、横向速度及 heading/转向指令运动；20% 站立指令，每 10 秒重采样。",
@@ -159,14 +80,6 @@ def training_definition(tpl, settings: dict | None = None) -> dict:
 
 def _eval_definition(suite) -> dict:
     spec = suite.spec or {}
-    if spec.get("benchmark") == "rpo_bfm":
-        return {
-            "task": f"冻结的{spec.get('planned_cases', 100)}个独立case，每例20秒；保持官方指令、地形和随机化。",
-            "reward": "独立加载实际checkpoint导出的ONNX，不以训练回报判断成功。",
-            "failure": "倒地、非有限状态、硬限位、提前终止或速度/转向误差超标。",
-            "success": "每例速度向量RMSE≤0.20 m/s、yaw RMSE≤0.30 rad/s，无跌倒/非有限数/硬限位且完成1000步；验收至少80/100。",
-            "settings": {},
-        }
     if spec.get("benchmark") == "rpo_flat":
         return {
             "task": "100 个独立种子，每例 20 秒；保留官方速度/转向指令、20% 站立、70/30 地形及随机化。",
@@ -248,8 +161,6 @@ def evaluation_definition(suite, settings: dict | None = None) -> dict:
 
 def suite_task_id(suite) -> str:
     spec = suite.spec or {}
-    if spec.get("benchmark") == "rpo_bfm":
-        return "tsk_rpo_bfm_pretrain"
     if spec.get("benchmark") == "rpo_flat":
         return "tsk_rpo_flat"
     if spec.get("benchmark") == "rpo_amp":
@@ -271,7 +182,7 @@ def suite_executable(suite) -> bool:
     spec = suite.spec or {}
     suite_name = spec.get("suite")
     return (
-        spec.get("benchmark") in {"rpo_wbc", "rpo_amp", "rpo_flat", "rpo_bfm", "robotwin"}
+        spec.get("benchmark") in {"rpo_wbc", "rpo_amp", "rpo_flat", "robotwin"}
         or isinstance(suite_name, str)
         and suite_name
         in {
@@ -288,8 +199,7 @@ async def seed_environment_profiles(session) -> None:
     for tpl in TEMPLATES:
         if tpl.kind not in {"sft", "ppo"} or tpl.embodiment_env_id not in env_ids:
             continue
-        from eb.domain.training_recipe import RECIPES, recipe_profile_id
-        id_ = recipe_profile_id(tpl.id) if tpl.id in RECIPES else f"env_train_{tpl.id}"
+        id_ = f"env_train_{tpl.id}"
         if await session.get(EnvironmentProfile, id_):
             continue
         definition = validate_definition("train", tpl.id, training_definition(tpl))
@@ -313,9 +223,6 @@ async def seed_environment_profiles(session) -> None:
                 or suite.id.startswith("suite_rpo_v2_wbc_") and suite.id.endswith("_stand_walk_v1")):
             continue
         id_ = f"env_eval_{suite.id}"
-        if (suite.spec or {}).get("benchmark") == "rpo_bfm":
-            # Earlier BFM profiles have an empty task binding; retain them unchanged.
-            id_ += "_binding_v2"
         if await session.get(EnvironmentProfile, id_):
             continue
         task_id = suite_task_id(suite)

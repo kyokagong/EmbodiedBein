@@ -17,15 +17,6 @@ def resume_fingerprint(spec: JobSpec) -> str:
         payload["image"] = source_image
     for key in ("resume_mode", "resume_step", "source_train_job_id", "model_name"):
         payload["params"].pop(key, None)
-    if payload["params"].get("template_id") == "rpo_v2_bfm_zero_pretrain":
-        payload["params"].pop("bfm_update_target", None)
-    if payload["params"].get("execution"):
-        from eb.domain.training_recipe import execution_binding
-        execution_binding(spec)
-        for key in ("target_learner_updates", "purpose"):
-            payload["params"].pop(key, None)
-        if payload["params"]["execution"]["recipe_id"] in {"rpo_bfm_ufo_agent_rlinf_mjlab_4gpu_viability_v13", "rpo_bfm_ufo_agent_rlinf_mjlab_4gpu_v12", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_v10", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_compliance_v11", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_kd_v10", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_scale6144_v6", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_reachable_v7", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_contact_v8", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_ground_v9"}:
-            payload["policy"].pop("timeout_h", None)
     payload["overrides"] = [item for item in payload["overrides"]
                             if item.split("=", 1)[0] not in {"runner.max_steps", "runner.max_epochs"}]
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -52,15 +43,6 @@ def _resume_candidate(checkpoint: Path, run_id: str) -> dict:
         raise ValueError("resume manifest is invalid") from exc
     if not isinstance(receipt, dict):
         raise ValueError("resume manifest is invalid")
-    if receipt.get("format") in {"ufo_agent_state_v1", "ufo_agent_state_v2"}:
-        from eb.domain.training_recipe import ExecutionBinding, RECIPES
-        from eb.runners.bfm_ufo_checkpoint import validate_ufo_checkpoint
-        binding = ExecutionBinding.model_validate(receipt.get("execution"))
-        if binding.recipe_id not in RECIPES or binding != RECIPES[binding.recipe_id].binding:
-            raise ValueError("Unknown native resume execution binding")
-        return validate_ufo_checkpoint(checkpoint, run_id=run_id, verify_hashes=False)
-    if receipt.get("format") is not None:
-        raise ValueError("Unknown checkpoint format")
     fingerprint = receipt.get("compatibility_fingerprint")
     if (receipt.get("schema_version") != "eb/resume-checkpoint/v1"
             or receipt.get("status") != "complete" or receipt.get("run_id") != run_id
@@ -111,31 +93,14 @@ def resume_checkpoint(run_root: Path, run_id: str, *, step: int | None = None) -
     output = run_root / "output"
     if run_root.is_symlink() or output.is_symlink() or not output.is_dir():
         raise ValueError("source Run output is unavailable")
-    published = output / "checkpoint-manifest.json"
-    if published.is_file() and not published.is_symlink() and published.stat().st_size <= 64 * 1024:
-        receipt = json.loads(published.read_text())
-        if isinstance(receipt, dict) and receipt.get("format") in {"ufo_agent_state_v1", "ufo_agent_state_v2"}:
-            model = checkpoint_model(run_root, run_id)
-            relative = PurePosixPath(model["manifest"]["native_checkpoint_path"]).relative_to("model")
-            candidate = _resume_candidate(Path(model["path"]) / relative, run_id)
-            if step is None or candidate["step"] == step:
-                return candidate
     candidates, errors = [], []
-    paths = [(output, path) for path in output.glob("*/checkpoints/global_step_*")]
-    configured_models = getattr(get_settings(), "models_root", None)
-    if configured_models:
-        model_root = Path(configured_models) / "runs" / run_id
-        if (model_root.is_symlink()
-                or not model_root.resolve().is_relative_to(Path(configured_models).resolve())):
-            raise ValueError("native checkpoint escapes source model storage")
-        paths.extend((model_root, path) for path in (model_root / ".checkpoint-source").glob("global_step_*"))
-    for boundary, checkpoint in paths:
+    for checkpoint in output.glob("*/checkpoints/global_step_*"):
         if not checkpoint.is_dir() or not checkpoint.name.removeprefix("global_step_").isdigit():
             continue
         if step is not None and int(checkpoint.name.removeprefix("global_step_")) != step:
             continue
         try:
-            if not checkpoint.resolve().is_relative_to(boundary.resolve()):
+            if not checkpoint.resolve().is_relative_to(output.resolve()):
                 raise ValueError("checkpoint escapes source Run output")
             candidates.append(_resume_candidate(checkpoint, run_id))
         except ValueError as exc:
@@ -263,22 +228,7 @@ def checkpoint_model(run_root: Path, run_id: str, *, verify_hashes: bool = False
                     raise ValueError("checkpoint file digest changed")
         seen.add(file)
         total += item["bytes"]
-    if receipt.get("format") in {"ufo_agent_state_v1", "ufo_agent_state_v2"}:
-        from eb.domain.training_recipe import ExecutionBinding, RECIPES
-        from eb.runners.bfm_ufo_checkpoint import validate_ufo_checkpoint
-        binding = ExecutionBinding.model_validate(receipt.get("execution"))
-        recipe = RECIPES.get(binding.recipe_id)
-        if not recipe or binding != recipe.binding or receipt.get("template_id") != binding.recipe_id:
-            raise ValueError("Unknown native model execution binding")
-        native = validate_ufo_checkpoint(member(receipt.get("native_checkpoint_path")), run_id=run_id,
-            verify_hashes=verify_hashes)
-        if native["step"] != receipt.get("step") or native["execution"] != receipt["execution"]:
-            raise ValueError("Native model and trainer manifest disagree")
-        weights = member(receipt.get("weights_path"))
-    elif receipt.get("format") is not None:
-        raise ValueError("Unknown model checkpoint format")
-    else:
-        weights = model / "model_state_dict" / "full_weights.pt"
+    weights = model / "model_state_dict" / "full_weights.pt"
     if weights not in seen or weights.stat().st_size == 0:
         raise ValueError("completed checkpoint has no weights")
     return {"path": str(model), "bytes": total, "step": receipt.get("step"), "manifest": receipt}

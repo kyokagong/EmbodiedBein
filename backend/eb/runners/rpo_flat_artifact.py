@@ -279,7 +279,6 @@ def export(checkpoint: Path, output: Path) -> dict:
 
 
 def _numpy(value) -> np.ndarray:
-    if isinstance(value,np.ndarray):return value.copy()
     return value.detach().cpu().numpy().copy()
 
 
@@ -288,10 +287,10 @@ def _trace_array(value) -> list:
     return np.where(np.isfinite(array), array, None).tolist()
 
 
-def _state(env, index=0) -> dict[str, np.ndarray]:
+def _state(env) -> dict[str, np.ndarray]:
     data = env.robot.data
     return {
-        name: _numpy(getattr(data, name)[index])
+        name: _numpy(getattr(data, name)[0])
         for name in (
             "root_pos_w",
             "root_quat_w",
@@ -350,7 +349,7 @@ def _violates_hard_limit(state: dict, limits: dict) -> bool:
     )
 
 
-def _initial_state(env, seed: int, limits: dict, index=0) -> dict:
+def _initial_state(env, seed: int, limits: dict) -> dict:
     from rpo_wbc_artifact import actuator_delay_steps
 
     terrain = env.scene.terrain
@@ -364,21 +363,21 @@ def _initial_state(env, seed: int, limits: dict, index=0) -> dict:
     return {
         "seed": seed,
         "terrain_seed": seed,
-        "terrain_level": int(terrain.terrain_levels[index]) if hasattr(terrain,"terrain_levels") else None,
-        "terrain_column": int(terrain.terrain_types[index]) if hasattr(terrain,"terrain_types") else None,
-        "env_origin": _trace_array(_numpy(env.scene.env_origins[index])),
-        "startup_parameters": {name: _trace_array(_numpy(value[index])) for name, value in parameters.items()},
+        "terrain_level": int(terrain.terrain_levels[0]),
+        "terrain_column": int(terrain.terrain_types[0]),
+        "env_origin": _trace_array(_numpy(env.scene.env_origins[0])),
+        "startup_parameters": {name: _trace_array(_numpy(value[0])) for name, value in parameters.items()},
         "actuator_delay_steps": actuator_delay_steps(env.robot),
         "actuator_gains": {
             name: {
-                "stiffness": _trace_array(_numpy(actuator.stiffness[index])),
-                "damping": _trace_array(_numpy(actuator.damping[index])),
+                "stiffness": _trace_array(_numpy(actuator.stiffness[0])),
+                "damping": _trace_array(_numpy(actuator.damping[0])),
             }
             for name, actuator in env.robot.actuators.items()
         },
         "hard_limits": {name: _trace_array(value) for name, value in limits.items()},
-        "state": {name: _trace_array(value) for name, value in _state(env, index).items()},
-        "command": _trace_array(_numpy(env.command_generator.command[index])),
+        "state": {name: _trace_array(value) for name, value in _state(env).items()},
+        "command": _trace_array(_numpy(env.command_generator.command[0])),
     }
 
 
@@ -401,7 +400,7 @@ def _add_camera(cfg, video_quality: str = "standard") -> None:
     cfg.num_rerenders_on_reset = 1
 
 
-def _video_frames(env):
+def _video_frame(env):
     import torch
 
     camera = env.scene["eval_camera"]
@@ -409,21 +408,17 @@ def _video_frames(env):
     offset = torch.tensor([[3.0, 3.0, 1.5]], device=env.device)
     camera.set_world_poses_from_view(position + offset, position)
     env.sim.render()
-    return _numpy(camera.data.output["rgb"][:, :, :, :3]).astype(np.uint8)
-
-
-def _video_frame(env):
-    return _video_frames(env)[0]
+    return _numpy(camera.data.output["rgb"][0, :, :, :3]).astype(np.uint8)
 
 
 def _evaluate_case(session, env, seed: int, output: Path, record_video: bool,
-                   video_quality: str = "standard", *, recipe="flat",fixed_command=None) -> dict:
+                   video_quality: str = "standard") -> dict:
     import torch
 
     row = {
         "seed": seed,
-        "case_id": f"rpo-{recipe}-seed-{seed}",
-        "task_id": "tsk_rpo_bfm_pretrain" if recipe=="bfm" else "tsk_rpo_flat",
+        "case_id": f"rpo-flat-seed-{seed}",
+        "task_id": "tsk_rpo_flat",
         "completed": False,
         "status": "infra_failure",
         "success": False,
@@ -440,11 +435,7 @@ def _evaluate_case(session, env, seed: int, output: Path, record_video: bool,
     trace_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         obs, _ = env.reset(seed=seed)
-        if recipe=="bfm":
-            from rpo_bfm_eval import pack_observation
-            obs=pack_observation(obs)
-            session.command=lambda:_numpy(env.command_generator.command)
-        if tuple(obs["policy"].shape) != (1, 375 if recipe=="bfm" else OBS_DIM) or tuple(obs["critic"].shape) != (1, 733 if recipe=="bfm" else CRITIC_DIM):
+        if tuple(obs["policy"].shape) != (1, OBS_DIM) or tuple(obs["critic"].shape) != (1, CRITIC_DIM):
             raise ValueError("official RPO-Flat environment observation contract mismatch")
         if abs(env.step_dt - CONTROL_PERIOD_S) > 1e-9:
             raise ValueError("official RPO-Flat environment policy period mismatch")
@@ -471,9 +462,6 @@ def _evaluate_case(session, env, seed: int, output: Path, record_video: bool,
             writer.append_data(_video_frame(env))
         with gzip.open(trace_path, "wt", encoding="utf-8") as trace:
             for step in range(REQUIRED_STEPS):
-                if fixed_command is not None:
-                    env.command_generator.command[0]=torch.tensor(fixed_command,device=env.device)
-                    env.command_generator.is_standing_env[0]=not any(fixed_command)
                 actor_obs = _numpy(obs["policy"]).astype(np.float32)
                 command = _numpy(env.command_generator.command[0])
                 heading = float(env.command_generator.heading_target[0])
@@ -511,7 +499,7 @@ def _evaluate_case(session, env, seed: int, output: Path, record_video: bool,
                         + "\n"
                     )
                     break
-                if np.any(np.abs(action) > (1.000001 if recipe=="bfm" else env.clip_actions)):
+                if np.any(np.abs(action) > env.clip_actions):
                     row.update(hard_limit=True, reason="action_clip_limit")
                     trace.write(
                         json.dumps(
@@ -528,7 +516,6 @@ def _evaluate_case(session, env, seed: int, output: Path, record_video: bool,
                     )
                     break
                 obs, _, terminated, truncated, _ = env.step(torch.from_numpy(action).to(env.device))
-                if recipe=="bfm":obs=pack_observation(obs)
                 row["actual_steps"] += 1
                 row["episode_len"] = row["actual_steps"]
                 state = _state(env)
@@ -566,11 +553,8 @@ def _evaluate_case(session, env, seed: int, output: Path, record_video: bool,
                     "nan": row["nan"],
                     "fall": row["fall"],
                     "hard_limit": row["hard_limit"],
-                    **({"z":_trace_array(session.last_latent[0])} if recipe=="bfm" else {}),
                     **{name: _trace_array(value) for name, value in state.items()},
                 }
-                if getattr(env, "bfm_slew", False):
-                    entry["applied_action"] = _trace_array(_numpy(env.bfm_last_action[0]))
                 trace.write(json.dumps(entry, allow_nan=False) + "\n")
                 if writer is not None and ((step + 1) % round(1 / (CONTROL_PERIOD_S * fps)) == 0
                         or done or row["fall"] or row["nan"] or row["hard_limit"]):
@@ -616,7 +600,7 @@ def _evaluate_case(session, env, seed: int, output: Path, record_video: bool,
 
 def evaluate_isaac(
     policy: Path, output: Path, seeds: list[int], *, record_video: bool = False,
-    video_quality: str = "standard", plan_hash: str | None = None,recipe="flat",diagnostic_commands=False
+    video_quality: str = "standard", plan_hash: str | None = None
 ) -> dict:
     if video_quality not in VIDEO_SETTINGS or video_quality == "hd" and not record_video:
         raise ValueError("HD video requires recording with a supported quality")
@@ -626,23 +610,11 @@ def evaluate_isaac(
     from isaaclab.app import AppLauncher
 
     exported = json.loads((policy.parent / "export-manifest.json").read_text())
-    if recipe not in {"flat","bfm"} or diagnostic_commands and recipe!="bfm":
-        raise ValueError("Unsupported RPO evaluation recipe")
     if exported.get("status") != "verified" or exported["onnx"]["sha256"] != sha256(policy):
         raise ValueError("verified RPO-Flat export receipt missing or policy hash changed")
     session = ort.InferenceSession(str(policy), providers=["CPUExecutionProvider"])
-    if session.get_inputs()[0].shape[-1] != (375 if recipe=="bfm" else OBS_DIM) or session.get_outputs()[0].shape[-1] != ACTION_DIM:
+    if session.get_inputs()[0].shape[-1] != OBS_DIM or session.get_outputs()[0].shape[-1] != ACTION_DIM:
         raise ValueError("evaluation requires the measured official 780x23 ONNX contract")
-    if recipe=="bfm":
-        from rpo_bfm import CODEC_HASH
-        from rpo_bfm_eval import CommandActorSession, configure_action_control
-        configure_action_control(exported)
-        command_path=policy.parent/"command-to-latent.onnx"
-        if (exported.get("schema_version")!="eb/rpo-bfm-export/v1" or exported.get("codec_sha256")!=CODEC_HASH
-                or exported["command_latent"]["sha256"]!=sha256(command_path)
-                or len(session.get_inputs())!=2 or session.get_inputs()[1].shape[-1]!=256):
-            raise ValueError("BFM actor/command frontend/codec hash or dimensions differ")
-        session=CommandActorSession(session,ort.InferenceSession(str(command_path),providers=["CPUExecutionProvider"]))
     output.mkdir(parents=True, exist_ok=True)
     if (output / "eval-cases.jsonl").exists():
         raise ValueError("evaluation case output already exists; use a new output directory")
@@ -654,10 +626,7 @@ def evaluate_isaac(
         import omni.usd
         from isaaclab.sim import SimulationContext
         from isaaclab.sensors import RayCaster
-        if recipe=="bfm":
-            from rpo_bfm_extension import GYM_ID as TASK_ID,RPOBFMEnvCfg as RPOFlatEnvCfg,register_task
-        else:
-            from rpo_flat_extension import TASK_ID, RPOFlatEnvCfg, register_task
+        from rpo_flat_extension import TASK_ID, RPOFlatEnvCfg, register_task
 
         register_task()
         for seed in seeds:
@@ -669,9 +638,6 @@ def evaluate_isaac(
                 RayCaster.meshes.clear()
                 omni.usd.get_context().new_stage()
                 cfg = RPOFlatEnvCfg()
-                if recipe=="bfm" and not diagnostic_commands:
-                    from rpo_bfm_eval import standard_configuration
-                    cfg=standard_configuration(cfg)
                 cfg.seed = seed
                 cfg.scene.num_envs = 1
                 cfg.scene.terrain.terrain_generator.seed = seed
@@ -698,20 +664,14 @@ def evaluate_isaac(
                 )
                 if record_video:
                     _add_camera(cfg, video_quality)
-                if recipe=="bfm" and not diagnostic_commands:
-                    from rpo_bfm_eval import standard_environment_type
-                    env=standard_environment_type()(cfg=cfg,render_mode=None)
-                else:
-                    env = gym.make(TASK_ID, cfg=cfg, render_mode=None).unwrapped
-                fixed_command=([0.,0.,0.],[.3,0.,0.],[0.,.2,0.],[.2,0.,.5])[seeds.index(seed)] if diagnostic_commands else None
-                row = _evaluate_case(session, env, seed, output, record_video, video_quality,recipe=recipe,fixed_command=fixed_command)
-                if fixed_command is not None:row["diagnostic_command"]=fixed_command
+                env = gym.make(TASK_ID, cfg=cfg, render_mode=None).unwrapped
+                row = _evaluate_case(session, env, seed, output, record_video, video_quality)
             except Exception as exc:
                 traceback.print_exc()
                 row = {
                     "seed": seed,
-                    "case_id": f"rpo-{recipe}-seed-{seed}",
-                    "task_id": "tsk_rpo_bfm_pretrain" if recipe=="bfm" else "tsk_rpo_flat",
+                    "case_id": f"rpo-flat-seed-{seed}",
+                    "task_id": "tsk_rpo_flat",
                     "completed": False,
                     "status": "infra_failure",
                     "success": False,
@@ -756,14 +716,13 @@ def evaluate_isaac(
     code_paths = [Path(__file__)]
     runner_root = Path(__file__).parent
     code_paths += [runner_root / name for name in ("rpo_flat_policy.py", "rpo_flat_extension.py")]
-    if recipe=="bfm":code_paths += [runner_root/name for name in ("rpo_bfm_eval.py","rpo_bfm_extension.py","rpo_bfm_codec.py","rpo_bfm_artifact.py")]
     asset_root = Path(os.environ.get("RPO_ASSET_ROOT", "/workspace/rpo-assets"))
     code_paths += [
         asset_root / "robolab/robolab/tasks/direct/base" / name
         for name in ("base_env.py", "base_config.py", "rpo_env_cfg.py", "terrain_generator_cfg.py")
     ]
     receipt = {
-        "schema_version": f"eb/rpo-{recipe}-eval/v1",
+        "schema_version": "eb/rpo-flat-eval/v1",
         "backend": "isaac",
         "criterion": "velocity_commands",
         "required_steps": REQUIRED_STEPS,
@@ -778,11 +737,6 @@ def evaluate_isaac(
         "velocity_frame": "yaw_aligned",
         "yaw_rate_frame": "world_z",
         "onnx": exported["onnx"],
-        **({"command_latent":exported["command_latent"],"codec_sha256":exported["codec_sha256"],
-            "action_control": exported.get("action_control"),
-            **({"auxiliary_profile": exported["auxiliary_profile"]} if exported.get("auxiliary_profile") else {}),
-            "diagnostic_commands":diagnostic_commands,"asset_sha256":exported["asset_sha256"],
-            "motion_manifest_sha256":exported["motion_manifest_sha256"]} if recipe=="bfm" else {}),
         "code_trace": [{"path": str(path), "sha256": sha256(path)} for path in code_paths if path.is_file()],
         "environment_settings": environment_settings,
         **summarize_cases(rows, len(seeds)),

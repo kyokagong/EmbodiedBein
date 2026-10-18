@@ -44,7 +44,7 @@
 
 ### 第一轮：设计、源码与既有指导
 
-对照设计 04/05/07、BFM 四卡及后续参考设计，读取训练/评估请求、GPU placement、恢复限制、checkpoint 清理、collector、取消和页面入口。确认并写入：
+对照设计 04/05/07 及当前 recipe 的专项设计，读取训练/评估请求、GPU placement、恢复限制、checkpoint 清理、collector、取消和页面入口。确认并写入：
 
 - 四张 4090 不是共享 96GB 显存；单 learner 多卡采样、DDP/FSDP 和 case 并行是不同能力，不继承其他 recipe 的验证状态。
 - 加 env 会改变采样与更新比例；扩容须测真实组合、保存/录像峰值和有效吞吐，不以 GPU 忙碌度推导学习改善。

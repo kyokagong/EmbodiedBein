@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
 import DeleteButton from "../components/DeleteButton.vue";
 import LineageGraph from "../components/LineageGraph.vue";
+import UfoNativePanel from "../components/UfoNativePanel.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -19,6 +20,7 @@ const evalPreview = ref<any>(null);
 const evalBusy = ref(false);
 const evalError = ref("");
 const isRpo = computed(() => data.value?.card?.schema_version === "eb/rpo-wbc-model/v1");
+const isNative = computed(() => ["eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(data.value?.card?.schema_version));
 watch([evalBackend, evalGoal, evalProfile, evalSeed, recordVideo], () => { evalPreview.value = null; evalError.value = ""; });
 
 function evalBody() {
@@ -70,7 +72,7 @@ watch(() => route.params.id, async id => {
       <DeleteButton v-if="data" :path="`/models/${data.id}`" :name="data.name" :disabled="data.kind === 'downloading'" @deleted="router.push('/models')" />
     </div>
     <p class="muted" v-if="data">
-      {{ data.kind || data.provenance || "model" }} · {{ data.path || data.card?.source_path || "—" }}
+      {{ isNative ? 'UFO/RPO 原生模型' : data.kind || data.provenance || "model" }} · {{ data.path || data.card?.package_path || data.card?.source_path || "—" }}
     </p>
     <div class="kpis" v-if="data">
       <div class="card"><div class="l">类型</div><div class="v">{{ data.kind || "version" }}</div></div>
@@ -78,6 +80,7 @@ watch(() => route.params.id, async id => {
       <div class="card"><div class="l">训练 Job</div><div class="v xs"><router-link v-if="data.train_page_id || data.train_job_id" :to="`/train/${data.train_page_id || data.train_job_id}`">{{ data.train_job_name || data.train_job_id || data.card?.train_job_id }}</router-link><span v-else>—</span><br v-if="data.train_page_id || data.train_job_id"><span class="mono muted xs">{{ data.train_page_id || data.train_job_id }}</span></div></div>
       <div class="card"><div class="l">父模型</div><div class="v"><router-link v-if="data.parent_model_id" :to="`/models/${data.parent_model_id}`">{{ data.parent_model_id }}</router-link><span v-else>—</span></div></div>
     </div>
+    <UfoNativePanel v-if="isNative" :key="data.id" :model="data" />
     <div class="panel" v-if="data?.card">
       <h3>模型元数据</h3>
       <p>来源 Run：<router-link v-if="data.card.run_id" :to="`/train/runs/${data.card.run_id}`">{{ data.card.run_id }}</router-link><span v-else>—</span> · checkpoint step {{ data.card.step ?? '—' }}</p>

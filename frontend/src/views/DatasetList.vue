@@ -13,14 +13,14 @@ const sortOptions = [
 ];
 const filters = [
   { key: "name", label: "名称 / ID", type: "text" as const, value: (r: any) => `${r.name || ""} ${r.id || ""}` },
-  { key: "usage", label: "用途", type: "text" as const, value: (r: any) => `${r.usage === "eval" ? "评估集 eval" : "训练集 train"} ${r.meta?.purpose ? '参考动作' : ''}` },
+  { key: "usage", label: "用途", type: "text" as const, value: (r: any) => r.usage === "eval" ? "评估集 eval" : "训练集 train" },
   { key: "embodiment", label: "本体", type: "text" as const, value: (r: any) => r.embodiment_name },
   { key: "environment", label: "本体环境", type: "text" as const, value: (r: any) => r.embodiment_env_id },
   { key: "source", label: "来源", type: "text" as const, value: (r: any) => `${r.source_kind || "path"} ${r.meta?.native_embodiment || ""}` },
   { key: "path", label: "路径", type: "text" as const, value: (r: any) => r.dest_path || r.source_uri || r.meta?.root },
   { key: "status", label: "状态", type: "multi" as const, value: (r: any) => r.status || "ready" },
 ];
-const list = useListView(rows, sortOptions, (r) => [r.name, r.id, r.usage, r.embodiment_name, r.embodiment_env_id, r.source_kind, r.status, r.dest_path, r.source_uri, r.format, r.meta?.purpose ? '参考动作' : ''].join(" "), filters);
+const list = useListView(rows, sortOptions, (r) => [r.name, r.id, r.usage, r.embodiment_name, r.embodiment_env_id, r.source_kind, r.status, r.dest_path, r.source_uri].join(" "), filters);
 onMounted(async () => {
   rows.value = (await api("/datasets")).items || [];
 });
@@ -58,10 +58,8 @@ function st(s: string) {
           <td>
             <router-link :to="`/data/${r.id}`">{{ r.name }}</router-link><br>
             <span class="muted xs">{{ r.id }}</span>
-            <br v-if="['rpo_bfm_motion', 'rpo_ufo_robot_state'].includes(r.format)">
-            <router-link v-if="['rpo_bfm_motion', 'rpo_ufo_robot_state'].includes(r.format)" class="badge" :to="`/data/${r.id}`">查看参考动作</router-link>
           </td>
-          <td><span class="badge">{{ r.usage === 'eval' ? '评估集' : '训练集' }}</span><br><span v-if="r.meta?.purpose" class="muted xs">参考动作</span></td>
+          <td><span class="badge">{{ r.usage === 'eval' ? '评估集' : '训练集' }}</span></td>
           <td>{{ r.embodiment_name || "未关联" }}<br><span class="mono xs muted">{{ r.embodiment_env_id || "—" }}</span></td>
           <td><span class="badge">{{ r.source_kind || "path" }}</span><br><span v-if="r.meta?.native_embodiment" class="muted xs">{{ r.meta.native_embodiment }} · {{ r.meta.compatibility }}</span></td>
           <td class="mono xs">{{ r.dest_path || r.source_uri || r.meta?.root || "—" }}</td>

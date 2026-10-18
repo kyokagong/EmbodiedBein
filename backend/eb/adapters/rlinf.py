@@ -38,24 +38,10 @@ class RlinfAdapter(Adapter):
     name = "rlinf"
 
     def render(self, spec: JobSpec, run_id: str) -> RenderedJob:
-        from eb.domain.training_recipe import validate_training_execution
-        binding = validate_training_execution(spec)
-        native_ufo = binding is not None
         settings = get_settings()
         tpl = get_template(str(spec.params.get("template_id") or "berkeley_wbc_ppo_mlp"))
         require_template_ready(tpl)
-        if native_ufo:
-            from types import SimpleNamespace
-            from eb.domain.environment_profile import profile_hash
-            from eb.domain.training_recipe import recipe_profile_id
-            from eb.environment_catalog import training_definition
-            definition = training_definition(tpl)
-            profile = SimpleNamespace(usage="train", embodiment_env_id=tpl.embodiment_env_id,
-                task_id=tpl.task_id, template_id=tpl.id, suite_id=None, definition=definition)
-            if spec.params.get("environment_profile") != {"id": recipe_profile_id(tpl.id),
-                    "hash": profile_hash(profile), "definition": definition}:
-                raise ValueError("UFO requires the frozen reference-reset Profile; old/custom Profiles cannot substitute")
-        expected_kind = (JobKind.TRAIN_RL if native_ufo or tpl.id in {"rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo", "rpo_v2_amp_stand_walk_ppo", "rpo_v2_flat_ppo", "rpo_v2_bfm_zero_pretrain", "rpo_v2_bfm_zero_tracking_teacher"} else
+        expected_kind = (JobKind.TRAIN_RL if tpl.id in {"rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo", "rpo_v2_amp_stand_walk_ppo", "rpo_v2_flat_ppo"} else
                          {"sft": JobKind.TRAIN_SFT, "ppo": JobKind.TRAIN_RLFT,
                           "eval": JobKind.EVAL_SIM, "collect": JobKind.DATA_COLLECT}[tpl.kind])
         expected_task = ("tsk_rpo_stand_walk" if tpl.id == "rpo_v2_wbc_eval"
@@ -69,11 +55,6 @@ class RlinfAdapter(Adapter):
         if tpl.requires_dataset and len(spec.inputs.datasets) != 1:
             raise ValueError("此模板必须绑定一个已验证的数据版本")
         flat_warm_start_binding = tpl.id == "rpo_v2_flat_ppo" and spec.params.get("warm_start")
-        tracking = tpl.id == "rpo_v2_bfm_zero_tracking_teacher"
-        if tracking and (spec.image not in (None, "eb/rlinf:rpo-v2-bfm-zero")
-                         or spec.inputs.datasets or spec.inputs.base_model or spec.inputs.resume_from
-                         or spec.policy.timeout_h > 1 or spec.policy.max_retries != 0):
-            raise ValueError("Tracking teacher requires fresh single-GPU exploration bounded to 1h without retries")
         flat_warm_start = flat_warm_start_binding if not spec.inputs.resume_from else None
         if tpl.id in {"rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo", "rpo_v2_flat_ppo"} and (spec.inputs.datasets or (spec.inputs.base_model and not flat_warm_start_binding)):
             raise ValueError("RPO WBC 在线 PPO 不接受数据集或基座大模型")
@@ -83,56 +64,6 @@ class RlinfAdapter(Adapter):
             raise ValueError("RPO AMP 首期不接受基座模型")
         if spec.runtime.get("env"):
             raise ValueError("训练环境变量由运行配置管理，不允许覆盖")
-        if tpl.id in {"rpo_v2_bfm_zero_eval", "rpo_bfm_ufo_agent_rlinf_isaac_eval_v1"}:
-            from eb.rpo_bfm import frozen_eval_suite_spec,eval_case_seeds,CODEC_HASH,EVAL_BATCH_SUITE,VALIDATION_SUITE,ACCEPTANCE_SUITE,UFO_VALIDATION_SUITE,UFO_ACCEPTANCE_SUITE,UFO_REPAIR_ACCEPTANCE_SUITE
-            from eb.adapters.isaaclab_rslrl import IsaacLabRslRlAdapter
-            plan=spec.params.get("rpo_eval_plan") or {}
-            if plan.get("profile") in {"validation", "acceptance"} and plan.get("record_video") is not True:
-                raise ValueError("BFM validation/acceptance requires actual case videos")
-            invariant = plan.get("suite_id") in {UFO_VALIDATION_SUITE,UFO_ACCEPTANCE_SUITE,UFO_REPAIR_ACCEPTANCE_SUITE}
-            parallel=plan.get("suite_id") in {EVAL_BATCH_SUITE, VALIDATION_SUITE, ACCEPTANCE_SUITE,UFO_VALIDATION_SUITE,UFO_ACCEPTANCE_SUITE,UFO_REPAIR_ACCEPTANCE_SUITE}
-            parallelism=plan.get("parallelism") or {}
-            if tpl.id == "rpo_bfm_ufo_agent_rlinf_isaac_eval_v1" and parallelism.get("envs_per_gpu", 1) != 1:
-                raise ValueError("UFO evaluation currently admits one environment per GPU")
-            if parallel and (parallelism.get("gpus") not in (1,4) or parallelism.get("envs_per_gpu") not in (1,4)
-                    or parallelism.get("protocol")!=("independent_cases_fixed_terrain_v2" if invariant else "independent_cases_shared_terrain_v1")):
-                raise ValueError("BFM parallel evaluation profile differs")
-            expected=eval_case_seeds(plan.get("suite_id"), plan.get("profile"))
-            canonical=json.dumps({k:v for k,v in plan.items() if k!="hash"},sort_keys=True,separators=(",", ":"))
-            if (plan.get("schema_version")!="eb/rpo-bfm-eval-plan/v1"
-                    or plan.get("suite_spec")!=frozen_eval_suite_spec(plan.get("suite_id"),plan.get("profile")) or plan.get("codec_sha256")!=CODEC_HASH
-                    or plan.get("hash")!="sha256:"+hashlib.sha256(canonical.encode()).hexdigest()
-                    or spec.image!=plan.get("image_digest") or spec.resources.gpus!=(parallelism["gpus"] if parallel else 1)
-                    or plan.get("seeds")!=expected or spec.params.get("seeds")!=expected
-                    or plan.get("record_video") is not spec.params.get("record_video")
-                    or plan.get("diagnostic_commands") is not (plan.get("profile")=="smoke")):
-                raise ValueError("BFM independent evaluation plan, inputs or seeds differ")
-            dataset=spec.inputs.datasets[0] if len(spec.inputs.datasets)==1 else {}
-            if (dataset.get("validation") or {}).get("manifest_sha256")!=plan.get("motion_manifest_sha256"):
-                raise ValueError("BFM evaluation needs the source training motion view")
-            export_spec=spec.model_copy(update={"kind":JobKind.EXPORT_POLICY,"image":None,
-                "params":{**spec.params,"source_run_id":plan["source_run_id"],"asset_sha256":plan["asset_sha256"]}})
-            rendered=IsaacLabRslRlAdapter().render(export_spec,run_id)
-            rendered.image=spec.image
-            runner="rpo_bfm_parallel_eval.py" if parallel else "rpo_bfm_eval.py"
-            rendered.command=[rendered.command[0],"/workspace/eb_runner/"+runner,*rendered.command[3:]]
-            rendered.command[-1]="/workspace/output"
-            rendered.command.extend(["--seeds",",".join(map(str,expected)),"--plan-hash",plan["hash"],
-                "--video-quality",plan.get("video_quality","standard"),
-                "--weights-sha256",plan["source_weights_sha256"],"--motion-sha256",plan["motion_manifest_sha256"],
-                "--config-sha256",plan["source_config_sha256"]])
-            if plan.get("record_video"):rendered.command.append("--record-video")
-            if plan.get("diagnostic_commands"):rendered.command.append("--diagnostic-commands")
-            if parallel:rendered.command.extend(["--eval-gpus",str(parallelism["gpus"]),"--envs-per-gpu",str(parallelism["envs_per_gpu"])])
-            if invariant:rendered.command.append("--partition-invariant")
-            assets=Path(spec.code_refs.embodiment.path) if spec.code_refs and spec.code_refs.embodiment else settings.assets_root/"roboparty/rpo-v2"
-            asset_file=assets/"asset-manifest.json"
-            if asset_file.is_symlink() or hashlib.sha256(asset_file.read_bytes()).hexdigest()!=plan["asset_sha256"]:
-                raise ValueError("BFM evaluation asset hash changed")
-            rendered.mounts.extend([(str(assets),"/workspace/rpo-assets","ro"),
-                (str(assets/"rpo_description"),"/workspace/rpo-assets/robolab/data/robots/roboparty/rpo","ro")])
-            rendered.env.update({"EB_RUN_ID":run_id,"RPO_ASSET_ROOT":"/workspace/rpo-assets"})
-            return rendered
         if tpl.id in {"rpo_v2_wbc_eval", "rpo_v2_amp_eval", "rpo_v2_flat_eval"}:
             amp_eval = tpl.id == "rpo_v2_amp_eval"
             flat_eval = tpl.id == "rpo_v2_flat_eval"
@@ -210,13 +141,13 @@ class RlinfAdapter(Adapter):
         if refs and refs.embodiment and not robotwin_eval:
             mounts.append((refs.embodiment.path, "/workspace/berkeley", "ro"))
         stack_source = refs.stack.path if refs and refs.stack else str(settings.rlinf_repo)
-        image_owned_rlinf = robotwin_eval or tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_"))
+        image_owned_rlinf = robotwin_eval or tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_"))
         mounts.append((stack_source,
                        "/workspace/source-receipts/rlinf" if image_owned_rlinf else "/workspace/rlinf",
                        "ro"))
-        if tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_")):
+        if tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")):
             asset_root = settings.assets_root / "roboparty/rpo-v2"
-            if (native_ufo or tpl.id in {"rpo_v2_flat_ppo","rpo_v2_bfm_zero_pretrain"}) and refs and refs.embodiment:
+            if tpl.id == "rpo_v2_flat_ppo" and refs and refs.embodiment:
                 asset_root = Path(refs.embodiment.path)
             required = (
                 "robolab/robolab/tasks/direct/base/base_env.py",
@@ -238,28 +169,6 @@ class RlinfAdapter(Adapter):
             mounts.append((str(asset_root), "/workspace/rpo-assets", "ro"))
             mounts.append((str(asset_root / "rpo_description"),
                            "/workspace/rpo-assets/robolab/data/robots/roboparty/rpo", "ro"))
-            if native_ufo:
-                from eb.runners.rpo_ufo_motion import validate_robot_state_manifest
-                from eb.rpo_bfm import CODEC_HASH, codec_hash_for_execution
-                codec_sha256 = codec_hash_for_execution(binding.model_dump())
-                state_scope = "rpo_ufo_robot_state_v1" if codec_sha256 == CODEC_HASH else "rpo_ufo_robot_state_v2"
-                dataset = spec.inputs.datasets[0]
-                motion_root = Path(dataset["path"])
-                manifest = motion_root / "manifest.json"
-                validation = dataset.get("validation") or {}
-                asset_sha256 = hashlib.sha256((asset_root / "asset-manifest.json").read_bytes()).hexdigest()
-                if (motion_root.is_symlink() or manifest.is_symlink() or not manifest.is_file()
-                        or validation.get("scope") != state_scope
-                        or validation.get("status") != "validated"
-                        or hashlib.sha256(manifest.read_bytes()).hexdigest() != validation.get("manifest_sha256")
-                        or asset_sha256 != validation.get("asset_sha256")):
-                    raise ValueError("UFO raw state DatasetVersion/asset changed after validation")
-                validate_robot_state_manifest(json.loads(manifest.read_text()), asset_sha256=asset_sha256,
-                                              expected_codec_sha256=codec_sha256)
-                overrides.extend((f"actor.model.motion_root=/workspace/data/{dataset['id']}",
-                    f"actor.model.asset_sha256={asset_sha256}"))
-                if codec_sha256 != CODEC_HASH:
-                    overrides.append(f"+actor.model.codec_sha256={codec_sha256}")
             if tpl.id == "rpo_v2_amp_stand_walk_ppo":
                 dataset = spec.inputs.datasets[0]
                 validation = dataset.get("validation") or {}
@@ -275,56 +184,6 @@ class RlinfAdapter(Adapter):
                     raise ValueError("AMP motion DatasetVersion or RPO asset changed after validation")
                 overrides.extend((f"motion_prior.manifest_path=/workspace/data/{dataset['id']}/manifest.json",
                                   f"motion_prior.asset_sha256={asset_sha256}"))
-            if tpl.id == "rpo_v2_bfm_zero_pretrain":
-                from eb.rpo_bfm import validate_motion_manifest, REFERENCE_POOL_CONVERTER_REVISION, UNCHECKED_REFERENCE_REVISION,G1_CONVERTER_REVISION,G1_IMAGE
-                dataset = spec.inputs.datasets[0]
-                validation = dataset.get("validation") or {}
-                motion_root = Path(str(dataset.get("path", "")))
-                manifest = motion_root / "manifest.json"
-                asset_sha256 = hashlib.sha256((asset_root / "asset-manifest.json").read_bytes()).hexdigest()
-                if (dataset.get("purpose") != "behavior_prior"
-                        or validation.get("scope") != "rpo_bfm_motion_v1"
-                        or validation.get("status") != "validated"
-                        or validation.get("smoke_ready") is not True
-                        or validation.get("storage_ref") != str(motion_root)
-                        or validation.get("asset_sha256") != asset_sha256
-                        or manifest.is_symlink() or not manifest.is_file()
-                        or hashlib.sha256(manifest.read_bytes()).hexdigest() != validation.get("manifest_sha256")):
-                    raise ValueError("BFM motion DatasetVersion or RPO asset changed after validation")
-                current = validate_motion_manifest(json.loads(manifest.read_text()), asset_sha256=asset_sha256)
-                if (json.loads(manifest.read_text()).get("converter_revision")==G1_CONVERTER_REVISION
-                        and spec.image not in (None,G1_IMAGE)):
-                    raise ValueError("G1 BFM view needs the calibrated G1 codec image")
-                if (json.loads(manifest.read_text()).get("converter_revision")
-                        in {REFERENCE_POOL_CONVERTER_REVISION, UNCHECKED_REFERENCE_REVISION}
-                        and spec.image == "eb/rlinf:rpo-v2-bfm-zero"):
-                    raise ValueError("BFM reference motion needs the versioned reference image")
-                if not current["smoke_ready"]:
-                    raise ValueError("BFM legacy source quaternion conversion is incorrect; derive a new DatasetVersion")
-                from eb.rpo_bfm import learner_updates, validate_training_budget
-                values = dict(item.split("=", 1) for item in overrides if "=" in item)
-                per_round = int(values.get("actor.model.updates_per_round", 1))
-                updates = learner_updates(int(values["runner.max_epochs"]), per_round)
-                purpose=validate_training_budget(updates,current,
-                    start_update=int(spec.params.get("resume_step", 0)) * per_round)
-                if spec.params.get("bfm_update_target", updates) != updates:
-                    raise ValueError("BFM frozen learner target differs from runner rounds")
-                if validation.get("training_ready")!=current["training_ready"]:
-                    raise ValueError("BFM frozen training qualification differs from current manifest")
-                if spec.params.get("bfm_experiment_purpose",purpose)!=purpose:
-                    raise ValueError("BFM frozen experiment purpose differs from its data/budget")
-                overrides.extend((f"actor.model.motion_root=/workspace/data/{dataset['id']}",
-                                  f"actor.model.asset_sha256={asset_sha256}"))
-            if tracking:
-                from eb.runners.rpo_tracking_reference import reference_receipt
-                binding = spec.params.get("tracking_reference") or {}
-                source_id = str(binding.get("run_id", ""))
-                if not re.fullmatch(r"run_[0-9a-f]+", source_id):
-                    raise ValueError("Tracking teacher requires a frozen retarget source Run")
-                reference_root = settings.data_root / "runs" / source_id / "outputs/retargeted"
-                asset_sha256 = hashlib.sha256((asset_root / "asset-manifest.json").read_bytes()).hexdigest()
-                reference_receipt(reference_root, binding.get("receipt_sha256"), asset_sha256)
-                mounts.append((str(reference_root), "/workspace/tracking-reference", "ro"))
         if eval_plan and eval_plan.get("schema_version") == "eb/libero-eval-plan/v1":
             dataset_id = str(spec.params.get("benchmark_dataset_id", ""))
             digest = spec.params.get("benchmark_sha256")
@@ -468,7 +327,7 @@ class RlinfAdapter(Adapter):
         if spec.inputs.resume_from:
             if not re.fullmatch(r"run_[A-Za-z0-9_-]+", spec.inputs.resume_from):
                 raise ValueError("非法的源 Run ID")
-            if not tpl.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_")) or tpl.kind not in {"sft", "ppo"}:
+            if not tpl.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")) or tpl.kind not in {"sft", "ppo"}:
                 raise ValueError("该 RLInf 模板尚未验证 checkpoint 恢复")
             checkpoint = resume_checkpoint(
                 settings.data_root / "runs" / spec.inputs.resume_from, spec.inputs.resume_from,
@@ -478,17 +337,11 @@ class RlinfAdapter(Adapter):
             if tpl.id == "rpo_v2_amp_stand_walk_ppo" and "amp/state.pt" not in {
                     item["path"] for item in checkpoint["files"]}:
                 raise ValueError("AMP checkpoint lacks discriminator, optimizer or sampler state")
-            if tpl.id == "rpo_v2_bfm_zero_pretrain" and "bfm/state.pt" not in {
-                    item["path"] for item in checkpoint["files"]}:
-                raise ValueError("BFM checkpoint lacks replay, prompt RNG or expert sampler state")
             if checkpoint["compatibility_fingerprint"] != fingerprint:
                 raise ValueError("checkpoint 与恢复任务的训练配置不兼容")
             if (spec.params.get("resume_mode") != checkpoint["mode"]
                     or spec.params.get("resume_step") != checkpoint["step"]):
                 raise ValueError("checkpoint 与恢复任务回执不一致")
-            if binding and binding.recipe_id=="rpo_bfm_ufo_agent_rlinf_isaac_4gpu_compliance_v11" and checkpoint['step']==524:
-                from eb.runners.rpo_ufo_compliance import require_long_training_gate
-                require_long_training_gate(Path(checkpoint['path']),step=checkpoint['step'])
             destination = f"/workspace/resume/global_step_{checkpoint['step']}"
             mounts.append((checkpoint["path"], destination, "ro"))
             overrides.append(f"runner.resume_dir={destination}")
@@ -502,11 +355,11 @@ class RlinfAdapter(Adapter):
         command = ["/workspace/isaaclab_extension_template/.venv/bin/python", "/workspace/eb_runner/rlinf_entry.py",
                    "--script", entrypoint, "--config-path", f"/workspace/rlinf/{tpl.config_path}",
                    "--config-name", tpl.config_name, *overrides]
-        if not tpl.id.startswith(("libero_", "robotwin_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_")):
+        if not tpl.id.startswith(("libero_", "robotwin_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")):
             command = [command[0], entrypoint, "--config-path", f"/workspace/rlinf/{tpl.config_path}",
                        "--config-name", tpl.config_name, *overrides]
         pythonpath = "/workspace/berkeley:/workspace/rlinf:/workspace/eb_runner:/opt/eb-openpi"
-        if tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_")):
+        if tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")):
             pythonpath = ("/workspace/isaaclab/source/isaaclab:"
                           "/workspace/isaaclab/source/isaaclab_tasks:"
                           "/workspace/rpo-assets/robolab:" + pythonpath)
@@ -526,58 +379,9 @@ class RlinfAdapter(Adapter):
                "HF_HOME": "/workspace/output/cache/huggingface", "HF_HUB_OFFLINE": "1",
                "EB_INPUT_RECEIPT": json.dumps({"template_id": tpl.id, "inputs": spec.inputs.model_dump()}, ensure_ascii=False),
                "EB_RESUME_FINGERPRINT": fingerprint}
-        if native_ufo:
-            from eb.runners.bfm_ufo_agent import validate_source_receipt
-            source = validate_source_receipt(spec.params.get("source_receipt") or {})
-            receipt = json.loads(env["EB_INPUT_RECEIPT"])
-            receipt.update(execution=binding.model_dump(), source_receipt=source,
-                target_learner_updates=spec.params["target_learner_updates"], purpose=spec.params["purpose"],
-                environment_profile=spec.params.get("environment_profile"), asset_sha256=asset_sha256)
-            env.update(EB_INPUT_RECEIPT=json.dumps(receipt),
-                EB_UFO_TARGET_UPDATES=str(spec.params["target_learner_updates"]),
-                EB_UFO_MOTION_ROOT=f"/workspace/data/{dataset['id']}", EB_UFO_ASSET_SHA256=asset_sha256)
-            env["PYTHONPATH"] = "/opt/ufo:" + env["PYTHONPATH"]
-            if binding.recipe_id in {"rpo_bfm_ufo_agent_rlinf_isaac_4gpu_safe_v2", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_stable_v3"}:
-                env["EB_UFO_LEARNING_PROFILE"] = "physical_limits_v2"
-            if binding.recipe_id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_slew_v4":
-                env["EB_UFO_LEARNING_PROFILE"] = "physical_limits_slew_v4"
-            if binding.recipe_id in {"rpo_bfm_ufo_agent_rlinf_isaac_4gpu_slew_velocity_v5", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_scale6144_v6"}:
-                env.update(EB_UFO_LEARNING_PROFILE="physical_limits_slew_v4", EB_UFO_AUXILIARY_PROFILE="soft_velocity_v5")
-            if binding.recipe_id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_scale6144_v6":
-                env["EB_UFO_WALL_SECONDS"] = str(int(spec.policy.timeout_h * 3600) - 300)
-            if binding.recipe_id in {"rpo_bfm_ufo_agent_rlinf_isaac_4gpu_reachable_v7", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_contact_v8", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_ground_v9"}:
-                env.update(EB_UFO_LEARNING_PROFILE="physical_limits_slew_v4", EB_UFO_AUXILIARY_PROFILE="soft_velocity_v7",
-                           EB_UFO_CONTROL_PROFILE="reachable_v2", EB_UFO_WALL_SECONDS=str(int(spec.policy.timeout_h * 3600) - 300))
-            if binding.recipe_id in {"rpo_bfm_ufo_agent_rlinf_isaac_4gpu_contact_v8", "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_ground_v9"}:
-                env.update(EB_UFO_CONTACT_PROFILE="contact_stable_v8", EB_UFO_DIAGNOSTICS_DIR="/workspace/output/contact-pools")
-            if binding.recipe_id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_ground_v9":
-                env["EB_UFO_GROUND_PROFILE"] = "wide_plane_v9"
-            if binding.recipe_id in {"rpo_bfm_ufo_agent_rlinf_isaac_4gpu_compliance_v11","rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_v10","rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_kd_v10"}:
-                env.update(EB_UFO_LEARNING_PROFILE="physical_limits_slew_v4", EB_UFO_AUXILIARY_PROFILE="soft_velocity_v7",
-                    EB_UFO_CONTROL_PROFILE="reachable_v2",EB_UFO_CONTACT_PROFILE="contact_stable_v8",
-                    EB_UFO_GROUND_PROFILE="wide_plane_v9",EB_UFO_CONTEXT_PROFILE="environment_tracking_v10",
-                    EB_UFO_ANKLE_CONTROL="lpf15",EB_UFO_DIAGNOSTICS_DIR="/workspace/output/contact-pools",
-                    EB_UFO_WALL_SECONDS=str(int(spec.policy.timeout_h*3600)-300))
-                if binding.recipe_id == "rpo_bfm_ufo_agent_rlinf_isaac_4gpu_tracking_contact_kd_v10":
-                    env["EB_UFO_ANKLE_CONTROL"]="kd25"
-            if binding.recipe_id=="rpo_bfm_ufo_agent_rlinf_isaac_4gpu_compliance_v11":
-                env.update(EB_UFO_DYNAMICS_PROFILE="contact_compliance_v11",EB_UFO_ANKLE_CONTROL="kd25")
-            if binding.simulator_id == "mjlab":
-                env.update(EB_UFO_LEARNING_PROFILE="physical_limits_slew_v4", EB_UFO_AUXILIARY_PROFILE="soft_velocity_v7",
-                    EB_UFO_CONTROL_PROFILE="reachable_v2", EB_UFO_CONTEXT_PROFILE="environment_tracking_v10",
-                    EB_UFO_PHYSICS_PROFILE="native_mjcf_viability_v13" if binding.recipe_id.endswith("viability_v13") else "native_mjcf_v12", EB_UFO_DIAGNOSTICS_DIR="/workspace/output/contact-pools",
-                    EB_UFO_WALL_SECONDS=str(int(spec.policy.timeout_h * 3600) - 300),
-                    WARP_CACHE_PATH="/workspace/output/cache/warp")
         if flat_warm_start:
             env["EB_WARM_START_RECEIPT"] = json.dumps(flat_warm_start, ensure_ascii=False)
-        if tracking:
-            env.update({"EB_TRACKING_REFERENCE_ROOT":"/workspace/tracking-reference",
-                        "EB_TRACKING_REFERENCE_SHA256":binding["receipt_sha256"],
-                        "EB_TRACKING_ASSET_SHA256":asset_sha256})
-            receipt = json.loads(env["EB_INPUT_RECEIPT"])
-            receipt["tracking_reference"] = binding
-            env["EB_INPUT_RECEIPT"] = json.dumps(receipt)
-        if tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_")):
+        if tpl.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")):
             env["RPO_ASSET_ROOT"] = "/workspace/rpo-assets"
         if tpl.id == "rpo_v2_flat_ppo":
             from eb.rpo_flat import ROBOLAB_REVISION
@@ -628,7 +432,6 @@ class RlinfAdapter(Adapter):
                             "EB_ROBOTWIN_REVISION":str(eval_plan["suite_spec"]["robotwin_revision"]),
                             "EB_RLINF_CONTENT_HASH":str(eval_plan["model"]["runtime"]["rlinf_content_hash"]),
                             "EB_RLINF_PATCH_SHA256":RLINF_PATCH_SHA256})
-        from eb.domain.training_recipe import recipe_image_digest
-        return RenderedJob(image=recipe_image_digest(tpl.id) if native_ufo else _image(spec, template_image(tpl)), command=command, env=env,
+        return RenderedJob(image=_image(spec, template_image(tpl)), command=command, env=env,
             writable_paths=["output", "tb"], mounts=mounts, gpus=spec.resources.gpus,
             shm_gb=spec.resources.shm_gb, workdir="/workspace/rlinf", outputs=["output"])

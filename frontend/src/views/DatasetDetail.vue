@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import MotionBrowser from "../components/MotionBrowser.vue";
 
 const route = useRoute();
 const data = ref<any>(null);
@@ -14,7 +13,6 @@ const segment = ref<any>(null);
 const episodes = ref<any>({ items: [], total: 0, next_cursor: null });
 const cursor = ref(0);
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
-const isMotion = computed(() => ['rpo_bfm_motion', 'rpo_ufo_robot_state'].includes(data.value?.format));
 
 async function setUsage(usage: "train" | "eval") {
   try {
@@ -63,8 +61,8 @@ async function load() {
     err.value = "";
     data.value = await api(`/datasets/${route.params.id}`);
     media.value = "";
-    if (data.value.status === "validated" && !isMotion.value) await loadTree("");
-    if (data.value.source_kind !== "libero_benchmark" && !isMotion.value) await loadEpisodes();
+    if (data.value.status === "validated") await loadTree("");
+    if (data.value.source_kind !== "libero_benchmark") await loadEpisodes();
   } catch (e: any) { err.value = e.message; }
 }
 watch(() => route.params.id, load);
@@ -132,19 +130,18 @@ function gb(n: number | null) {
     <button @click="validate(data.source_kind === 'libero_benchmark' && data.status !== 'registered')" :disabled="!['registered', 'failed', 'invalid'].includes(data.status)">{{ data.source_kind === 'libero_benchmark' ? '下载 / 重试校验' : '提交下载 / 结构校验' }}</button>
     <button v-if="!['libero_benchmark', 'robotwin'].includes(data.source_kind)" @click="validate(true)" :disabled="!['validated', 'invalid', 'failed'].includes(data.status)">本地重新索引</button>
     <button @click="load">刷新状态</button>
-    <MotionBrowser v-if="isMotion" :key="data.id" :dataset-id="data.id" :embodiment-id="data.embodiment_id || ''" />
-    <p v-if="data.source_kind !== 'libero_benchmark' && !isMotion">{{ data.overview?.episodes }} episodes · {{ data.overview?.frames }} 帧 · {{ data.overview?.fps }} Hz · action {{ data.overview?.action_dim }} / state {{ data.overview?.state_dim }}</p>
-    <p v-if="data.source_kind !== 'libero_benchmark' && !isMotion">G2：{{ data.overview?.g2 }} · {{ data.overview?.g2_foot }}</p>
+    <p v-if="data.source_kind !== 'libero_benchmark'">{{ data.overview?.episodes }} episodes · {{ data.overview?.frames }} 帧 · {{ data.overview?.fps }} Hz · action {{ data.overview?.action_dim }} / state {{ data.overview?.state_dim }}</p>
+    <p v-if="data.source_kind !== 'libero_benchmark'">G2：{{ data.overview?.g2 }} · {{ data.overview?.g2_foot }}</p>
     <p class="error xs">{{ data.error_message || err }}</p>
-    <p v-if="data.source_kind !== 'libero_benchmark' && !isMotion">{{ episodes.total }} episodes
+    <p v-if="data.source_kind !== 'libero_benchmark'">{{ episodes.total }} episodes
       <button :disabled="cursor === 0" @click="loadEpisodes(Math.max(0, cursor - 50))">上一页</button>
       <button :disabled="episodes.next_cursor === null" @click="loadEpisodes(episodes.next_cursor)">下一页</button>
     </p>
-    <div v-for="ep in data.source_kind === 'libero_benchmark' || isMotion ? [] : episodes.items" :key="ep.episode_id">
+    <div v-for="ep in data.source_kind === 'libero_benchmark' ? [] : episodes.items" :key="ep.episode_id">
       Episode {{ ep.episode_id }} · {{ ep.length }} 帧 · {{ ep.tasks?.join('; ') || '任务未索引' }}
       <button v-for="stream in ep.streams" :key="stream.key" @click="playEpisode(stream)">{{ stream.key }} · {{ stream.from_timestamp }}–{{ stream.to_timestamp }}s</button>
     </div>
-    <div v-if="data.status === 'validated' && !isMotion" class="grid2">
+    <div v-if="data.status === 'validated'" class="grid2">
       <div v-if="data.source_kind !== 'libero_benchmark'" class="panel">
         <h3>惰性文件树</h3>
         <div class="row" style="margin-bottom:.4rem">

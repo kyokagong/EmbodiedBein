@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-import re
 from pathlib import Path
+import math
+import hashlib
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,20 +91,8 @@ async def promote_robotwin_model(session: AsyncSession, job: Job, run: Run, chec
 
 async def promote_rpo_model(session: AsyncSession, job: Job, run: Run, checkpoint: dict) -> ModelVersion:
     template_id = (job.spec.get("params") or {}).get("template_id")
-    from eb.domain.training_recipe import execution_binding, RECIPES
-    from eb.domain.job import JobSpec
-    native_binding = (execution_binding(JobSpec.model_validate(job.spec))
-        if (job.spec.get("params") or {}).get("execution") or template_id in RECIPES else None)
-    if native_binding and (checkpoint["manifest"].get("execution") != native_binding.model_dump()
-            or checkpoint["manifest"].get("format") != native_binding.checkpoint_format
-            or checkpoint["step"] != job.spec["params"]["target_learner_updates"]):
-        raise ValueError("Native model package differs from frozen recipe/target")
     amp = template_id == "rpo_v2_amp_stand_walk_ppo"
     flat = template_id == "rpo_v2_flat_ppo"
-    bfm = template_id == "rpo_v2_bfm_zero_pretrain" or native_binding is not None
-    from eb.rpo_bfm import ENV_ID, ENV_V2_ID, codec_hash_for_execution, action_control_for_execution, auxiliary_profile_for_execution
-    bfm_env_id = RECIPES[template_id].embodiment_env_id if native_binding else ENV_ID
-    action_profile = "rpo_v2_joint23_position_v2" if bfm and bfm_env_id == ENV_V2_ID else "rpo_v2_joint23_position_v1"
     if flat:
         from eb.rpo_flat import ROBOLAB_REVISION
         files = {item["path"] for item in checkpoint["manifest"]["files"]}
@@ -119,22 +108,6 @@ async def promote_rpo_model(session: AsyncSession, job: Job, run: Run, checkpoin
                 or "model/actor-normalization.json" not in files
                 or len((job.spec.get("inputs") or {}).get("datasets") or []) != 1):
             raise ValueError("AMP model package lacks normalization or motion provenance")
-    if bfm:
-        files = {item["path"] for item in checkpoint["manifest"]["files"]}
-        normalization = json.loads((Path(checkpoint["path"]) / "actor-normalization.json").read_text())
-        if (checkpoint["manifest"].get("template_id") != template_id
-                or "model/actor-normalization.json" not in files
-                or normalization != {"schema_version":"eb/rpo-bfm-normalization/v1",
-                                    "kind":"frozen_running_stats", "observation_dim":733,
-                                    "history_length":4, "latent_dim":256}
-                or len((job.spec.get("inputs") or {}).get("datasets") or []) != 1):
-            raise ValueError("BFM model package lacks frozen normalization or motion provenance")
-        if (job.spec.get("params") or {}).get("bfm_update_target") is not None:
-            progress = checkpoint["manifest"].get("bfm_progress") or {}
-            if (progress.get("learner_updates") != job.spec["params"]["bfm_update_target"]
-                    or "model/bfm-progress.json" not in files
-                    or json.loads((Path(checkpoint["path"]) / "bfm-progress.json").read_text()) != progress):
-                raise ValueError("BFM completed learner updates differ from frozen target")
     canonical = json.dumps(checkpoint["manifest"], sort_keys=True, separators=(",", ":"))
     digest = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
     artifact = await session.scalar(select(Artifact).where(Artifact.sha256 == digest))
@@ -148,32 +121,26 @@ async def promote_rpo_model(session: AsyncSession, job: Job, run: Run, checkpoin
                             meta={"manifest":checkpoint["manifest"], "step":checkpoint["step"]}, pinned=True)
         session.add(artifact)
         await session.flush()
-    family_id = "mf_rpo_v2_bfm_zero" if bfm else "mf_rpo_v2_flat" if flat else "mf_rpo_v2_amp_locomotion" if amp else "mf_rpo_v2_wbc"
+    family_id = "mf_rpo_v2_flat" if flat else "mf_rpo_v2_amp_locomotion" if amp else "mf_rpo_v2_wbc"
     family = await session.get(ModelFamily, family_id)
     if not family:
-        family = ModelFamily(id=family_id, name="RPO V2 BFM-Zero" if bfm else "RPO-Flat" if flat else "RPO V2 AMP Locomotion" if amp else "RPO V2 WBC", family="mlp")
+        family = ModelFamily(id=family_id, name="RPO-Flat" if flat else "RPO V2 AMP Locomotion" if amp else "RPO V2 WBC", family="mlp")
         session.add(family)
         await session.flush()
     model = ModelVersion(
         id=new_id("mv"), family_id=family.id, artifact_id=artifact.id,
-        name=(job.spec.get("params") or {}).get("model_name") or job.spec.get("name") or f"rpo-bfm-{run.id}" if bfm else (job.spec.get("params") or {}).get("model_name") or job.spec.get("name") or f"rpo-wbc-{run.id}",
-        embodiment_env_id=bfm_env_id if bfm else "ee_rpo_v2_flat_23dof_v1" if flat else "ee_rpo_v2_amp_locomotion_23dof_v1" if amp else "ee_rpo_v2_wbc_23dof_v1",
-        io_signature={"observation_profile":"rpo_bfm_actor_history4_z256_v1" if bfm else "rpo_v2_flat_actor_history10_v1" if flat else "rpo_v2_amp_actor_history10_v1" if amp else "rpo_v2_wbc_actor_history10_v1", "obs":375 if bfm else 780 if amp or flat else 890,
-                      **({"latent":256, "critic_obs":733} if bfm else {}),
-                      "action_profile":action_profile, "act":23},
-        tags=["roboparty", "rpo-v2", "bfm-zero", "rlinf", "checkpoint"] if bfm else ["roboparty", "rpo-v2", "flat", "rlinf", "checkpoint"] if flat else ["roboparty", "rpo-v2", "amp", "locomotion", "rlinf", "checkpoint"] if amp else ["roboparty", "rpo-v2", "wbc", "rlinf", "checkpoint"], provenance="full",
-        card={"schema_version":"eb/rpo-bfm-model/v1" if bfm else "eb/rpo-flat-model/v1" if flat else "eb/rpo-amp-model/v1" if amp else "eb/rpo-wbc-model/v1", "train_job_id":job.id,
+        name=(job.spec.get("params") or {}).get("model_name") or job.spec.get("name") or f"rpo-wbc-{run.id}",
+        embodiment_env_id="ee_rpo_v2_flat_23dof_v1" if flat else "ee_rpo_v2_amp_locomotion_23dof_v1" if amp else "ee_rpo_v2_wbc_23dof_v1",
+        io_signature={"observation_profile":"rpo_v2_flat_actor_history10_v1" if flat else "rpo_v2_amp_actor_history10_v1" if amp else "rpo_v2_wbc_actor_history10_v1", "obs":780 if amp or flat else 890,
+                      "action_profile":"rpo_v2_flat_joint23_position_v1" if flat else "rpo_v2_joint23_position_v1", "act":23},
+        tags=["roboparty", "rpo-v2", "flat", "rlinf", "checkpoint"] if flat else ["roboparty", "rpo-v2", "amp", "locomotion", "rlinf", "checkpoint"] if amp else ["roboparty", "rpo-v2", "wbc", "rlinf", "checkpoint"], provenance="full",
+        card={"schema_version":"eb/rpo-flat-model/v1" if flat else "eb/rpo-amp-model/v1" if amp else "eb/rpo-wbc-model/v1", "train_job_id":job.id,
               "run_id":run.id, "step":checkpoint["step"],
               "template_id":template_id,
               **({"official_source":checkpoint["manifest"].get("official_source"),
                   "network":{"hidden_dims":[512,256,128], "activation":"elu"},
                   "normalization":"empirical"} if flat else {}),
               "environment_profile":(job.spec.get("params") or {}).get("environment_profile"),
-              **({"execution": native_binding.model_dump(), "checkpoint_format": native_binding.checkpoint_format,
-                  "progress_unit": native_binding.progress_unit,
-                  "codec_sha256": codec_hash_for_execution(native_binding.model_dump()),
-                  "action_control": action_control_for_execution(native_binding.model_dump()),
-                  "auxiliary_profile": auxiliary_profile_for_execution(native_binding.model_dump())} if native_binding else {}),
               **({"warm_start": job.spec["params"]["warm_start"],
                   "cumulative_updates": job.spec["params"]["warm_start"]["source_cumulative_updates"] + checkpoint["step"]}
                  if flat and (job.spec.get("params") or {}).get("warm_start") else {}),
@@ -183,191 +150,16 @@ async def promote_rpo_model(session: AsyncSession, job: Job, run: Run, checkpoin
               **({"velocity_reward_weight":(job.spec.get("params") or {}).get("rpo_amp_velocity_reward_weight")} if amp else {}),
               **({"actuator_delay_steps":(job.spec.get("params") or {}).get("rpo_amp_actuator_delay_steps")} if amp else {}),
               **({"motion_prior": (job.spec.get("inputs") or {}).get("datasets")[0]} if amp else {}),
-              **({"motion_prior": (job.spec.get("inputs") or {}).get("datasets")[0],
-                  "learner_progress":checkpoint["manifest"].get("bfm_progress"),
-                  "normalization":"frozen_running_stats",
-                  "network":{"latent_dim":256, "history_length":4, "components":["actor", "forward_map", "backward_map", "discriminator", "critic", "aux_critic"]}} if bfm else {}),
               "readiness":"simulation_unverified", "hardware_verified":False,
               "artifact_sha256":digest, "checkpoint_path":checkpoint["path"],
               "training":{"kind":job.kind, "image":job.spec.get("image"),
                           "resources":job.spec.get("resources") or {},
                           "overrides":job.spec.get("overrides") or []}},
     )
-    if template_id == "rpo_v2_bfm_zero_tracking_teacher":
-        normalization = json.loads((Path(checkpoint["path"]) / "actor-normalization.json").read_text())
-        if (checkpoint["manifest"].get("template_id") != template_id
-                or normalization.get("schema_version") != "eb/rpo-tracking-normalization/v1"
-                or normalization.get("observation_dim") != 547 or normalization.get("critic_dim") != 905
-                or checkpoint["manifest"].get("tracking_reference") != job.spec["params"].get("tracking_reference")):
-            raise ValueError("Tracking teacher package lacks its frozen codec/reference")
-        family_id = "mf_rpo_v2_tracking_teacher"
-        if not await session.get(ModelFamily, family_id):
-            session.add(ModelFamily(id=family_id, name="RPO RLinf tracking teacher", family="mlp"))
-            await session.flush()
-        model.family_id = family_id
-        model.embodiment_env_id = "ee_rpo_v2_tracking_23dof_v1"
-        model.io_signature = {"observation_profile":"rpo_tracking_actor547_v1", "obs":547,
-                              "critic_obs":905, "act":23, "action_profile":"rpo_reference_residual23_v1"}
-        model.tags = ["roboparty", "rlinf", "tracking-teacher", "checkpoint"]
-        model.card.update({"schema_version":"eb/rpo-tracking-model/v1",
-                           "tracking_reference":job.spec["params"]["tracking_reference"],
-                           "normalization":"empirical", "network":{"hidden_dims":[512,256,128], "activation":"elu"}})
     session.add(model)
     session.add(LineageEdge(src_type="run", src_id=run.id, dst_type="model_version",
                             dst_id=model.id, relation="produced", run_id=run.id))
     return model
-
-
-def validate_rpo_bfm_export(root: Path, job: Job) -> dict:
-    params = job.spec.get("params") or {}
-    source_run_id = str(params.get("source_run_id", ""))
-    asset_sha256 = str(params.get("asset_sha256", ""))
-    if (params.get("operation") != "rpo_bfm_export"
-            or not re.fullmatch(r"run_[0-9a-f]+", source_run_id)
-            or not re.fullmatch(r"[0-9a-f]{64}", asset_sha256)):
-        raise ValueError("BFM export manifest has no pinned source Run or asset")
-    output = Path(root) / "output/exported"
-
-    def read_receipt(name: str) -> dict:
-        path = output / name
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024:
-            raise ValueError("BFM export manifest or prompt manifest is missing or invalid")
-        try:
-            value = json.loads(path.read_text())
-        except json.JSONDecodeError as exc:
-            raise ValueError("BFM export manifest JSON is invalid") from exc
-        if not isinstance(value, dict):
-            raise ValueError("BFM export manifest JSON is invalid")
-        return value
-
-    receipt = read_receipt("export-manifest.json")
-    prompt = read_receipt("prompt-manifest.json")
-    datasets = (job.spec.get("inputs") or {}).get("datasets") or []
-    if len(datasets) != 1:
-        raise ValueError("BFM export manifest requires one pinned motion dataset")
-    motion_manifest = Path(datasets[0].get("path", "")) / "manifest.json"
-    checkpoint = Path(get_settings().models_root) / "runs" / source_run_id
-    weights = checkpoint / "model_state_dict/full_weights.pt"
-    config = Path(get_settings().data_root) / "runs" / source_run_id / "output/resolved-config.yaml"
-    if params.get("model_execution"):
-        from eb.checkpoints import checkpoint_model
-        from eb.runners.bfm_ufo_checkpoint import digest, validate_ufo_checkpoint
-
-        package = checkpoint_model(config.parent.parent, source_run_id)
-        if package["manifest"].get("format") not in {"ufo_agent_state_v1", "ufo_agent_state_v2"}:
-            raise ValueError("Native BFM export requires a native model package")
-        relative = Path(package["manifest"]["native_checkpoint_path"]).relative_to("model")
-        native = validate_ufo_checkpoint(checkpoint / relative, run_id=source_run_id, verify_hashes=False)
-        if (native["execution"] != params["model_execution"]
-                or receipt.get("execution") != native["execution"]
-                or receipt.get("checkpoint_format") != native["format"]
-                or receipt.get("learner_joint_updates") != native["step"]
-                or receipt.get("native_manifest_sha256") != digest(checkpoint / relative / "resume-manifest.json")):
-            raise ValueError("Native BFM export differs from its checkpoint binding/step")
-        from eb.rpo_bfm import action_control_for_execution, auxiliary_profile_for_execution
-        if receipt.get("action_control") != action_control_for_execution(native["execution"]):
-            raise ValueError("Native BFM export action control differs from its checkpoint")
-        if receipt.get("auxiliary_profile") != auxiliary_profile_for_execution(native["execution"]):
-            raise ValueError("Native BFM export auxiliary profile differs from its checkpoint")
-        weights = checkpoint / relative / "model/model.safetensors"
-    for path in (motion_manifest, weights, config):
-        if path.is_symlink() or not path.is_file():
-            raise ValueError("BFM export source, checkpoint or motion manifest is missing")
-    from eb.rpo_bfm import codec_hash_for_execution
-    expected_codec_sha256 = codec_hash_for_execution(params.get("model_execution"))
-    onnx_receipt = receipt.get("onnx") or {}
-    prompt_receipt = receipt.get("prompts") or {}
-    golden_receipt = receipt.get("golden") or {}
-    command_receipt = receipt.get("command_latent") or {}
-    onnx_path = output / "policy.onnx"
-    command_path = output / "command-to-latent.onnx"
-    prompts_path = output / "prompts.npz"
-    golden_path = output / "golden-traces.npz"
-    prompt_items = prompt.get("prompts")
-    if (receipt.get("schema_version") != "eb/rpo-bfm-export/v1" or receipt.get("status") != "verified"
-            or receipt.get("readiness") != "diagnostic_smoke"
-            or receipt.get("model_weights_sha256") != sha256_file(weights)
-            or receipt.get("resolved_config_sha256") != sha256_file(config)
-            or receipt.get("codec_sha256") != expected_codec_sha256
-            or receipt.get("asset_sha256") != asset_sha256
-            or receipt.get("motion_manifest_sha256") != sha256_file(motion_manifest)
-            or onnx_receipt.get("path") != onnx_path.name or onnx_path.is_symlink()
-            or not onnx_path.is_file() or onnx_path.stat().st_size > 512 * 1024 * 1024
-            or onnx_receipt.get("sha256") != sha256_file(onnx_path)
-            or onnx_receipt.get("obs") != 375 or onnx_receipt.get("latent") != 256
-            or onnx_receipt.get("act") != 23 or onnx_receipt.get("opset") != 17
-            or onnx_receipt.get("inputs") != ["observation", "z"]
-            or onnx_receipt.get("batch_sizes") != [1, 4]
-            or onnx_receipt.get("normalization") != "embedded"
-            or type(onnx_receipt.get("max_joint_target_error_rad")) not in (float, int)
-            or not math.isfinite(onnx_receipt["max_joint_target_error_rad"])
-            or onnx_receipt["max_joint_target_error_rad"] > 1e-4):
-        raise ValueError("BFM export manifest differs from its pinned model/codec/motion or actor contract")
-    command_frontend = prompt.get("command_frontend") or {}
-    from eb.rpo_bfm import PROMPT_COMMAND
-    if (command_receipt.get("path") != command_path.name or command_path.is_symlink()
-            or not command_path.is_file() or command_path.stat().st_size > 64 * 1024 * 1024
-            or command_receipt.get("sha256") != sha256_file(command_path)
-            or command_receipt.get("command_dim") != 3 or command_receipt.get("latent_dim") != 256
-            or command_receipt.get("opset") != 17 or command_receipt.get("reference_split") != "train"
-            or type(command_receipt.get("reference_count")) is not int
-            or not 1 <= command_receipt["reference_count"] <= 4096
-            or command_receipt.get("reference_limit") != 4096
-            or command_receipt.get("batch_sizes") != [1, 6]
-            or type(command_receipt.get("max_abs_error")) not in (float, int)
-            or not math.isfinite(command_receipt["max_abs_error"])
-            or command_receipt["max_abs_error"] > 1e-4
-            or command_frontend.get("path") != command_path.name
-            or command_frontend.get("sha256") != command_receipt.get("sha256")
-            or command_frontend.get("inputs") != ["command"]
-            or command_frontend.get("outputs") != ["z"]
-            or command_frontend.get("reference_split") != "train"
-            or command_frontend.get("reference_count") != command_receipt.get("reference_count")
-            or command_frontend.get("reference_limit") != 4096
-            or command_frontend.get("minimum") != PROMPT_COMMAND["minimum"]
-            or command_frontend.get("maximum") != PROMPT_COMMAND["maximum"]
-            or command_frontend.get("formula") != "rpo-bfm-reward-inference/v1"):
-        raise ValueError("BFM command-to-latent artifact differs from its frozen reference or command contract")
-    if (prompt.get("schema_version") != "eb/rpo-bfm-prompts/v1"
-            or prompt.get("status") != "diagnostic_smoke"
-            or prompt.get("model_weights_sha256") != receipt["model_weights_sha256"]
-            or prompt.get("codec_sha256") != expected_codec_sha256
-            or prompt.get("asset_sha256") != asset_sha256
-            or prompt.get("motion_manifest_sha256") != receipt["motion_manifest_sha256"]
-            or prompt_receipt.get("path") != prompts_path.name or prompts_path.is_symlink()
-            or not prompts_path.is_file() or prompt_receipt.get("sha256") != sha256_file(prompts_path)
-            or prompt_receipt.get("manifest") != "prompt-manifest.json"
-            or prompt_receipt.get("manifest_sha256") != sha256_file(output / "prompt-manifest.json")
-            or not isinstance(prompt_items, dict) or set(prompt_items) != {
-                "goal_train_reference", "tracking_train_sequence", "reward_stand", "reward_walk_0p3mps"}
-            or any(not isinstance(item, dict) or type(item.get("z_norm")) not in (int, float)
-                   or not math.isclose(item["z_norm"], 16., abs_tol=1e-4)
-                   for item in (prompt_items or {}).values())):
-        raise ValueError("BFM export prompt manifest differs from its frozen source or latent contract")
-    if (golden_receipt.get("path") != golden_path.name or golden_path.is_symlink()
-            or not golden_path.is_file() or golden_receipt.get("sha256") != sha256_file(golden_path)
-            or golden_receipt.get("n_inputs") != 4 or golden_receipt.get("batch_sizes") != [1, 4]
-            or golden_receipt.get("n_command_inputs") != 6
-            or golden_receipt.get("command_batch_sizes") != [1, 6]):
-        raise ValueError("BFM export golden trace manifest is incomplete")
-    import onnx
-    graph = onnx.load(str(onnx_path), load_external_data=False).graph
-    command_graph = onnx.load(str(command_path), load_external_data=False).graph
-    def last_dimension(value):
-        dims = value.type.tensor_type.shape.dim
-        return dims[-1].dim_value if dims else None
-
-    if (len(graph.input) != 2
-            or {item.name:last_dimension(item) for item in graph.input} != {"observation":375, "z":256}
-            or len(graph.output) != 1 or graph.output[0].name != "action"
-            or last_dimension(graph.output[0]) != 23):
-        raise ValueError("BFM export ONNX measured inputs or action dimension are invalid")
-    if (len(command_graph.input) != 1 or command_graph.input[0].name != "command"
-            or last_dimension(command_graph.input[0]) != 3
-            or len(command_graph.output) != 1 or command_graph.output[0].name != "z"
-            or last_dimension(command_graph.output[0]) != 256):
-        raise ValueError("BFM command-to-latent ONNX measured dimensions are invalid")
-    return receipt
 
 
 def validate_amp_case_evidence(rows: list, seeds: list, receipt: dict, output: Path,
@@ -445,66 +237,6 @@ def validate_rpo_amp_motion_probe_receipt(path: Path, manifest_sha256: str) -> d
     return receipt
 
 
-def validate_rpo_bfm_motion_probe_receipt(path, manifest_sha, asset_sha, teacher_sha=None):
-    from eb.rpo_bfm import CODEC_HASH
-    from eb.runners.rpo_bfm_motion_probe import RECIPE, tracking_pass
-
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 8*1024*1024:
-        raise ValueError("BFM motion replay receipt is missing or oversized")
-    receipt = json.loads(path.read_text())
-    recipe = {**RECIPE, "id":"rpo-tracking-teacher-validation-v1", "seeds":[142,143,144]} if teacher_sha else RECIPE
-    if (receipt.get("schema_version") != "eb/rpo-bfm-motion-probe/v1" or receipt.get("status") != "succeeded"
-            or receipt.get("manifest_sha256") != manifest_sha or receipt.get("asset_sha256") != asset_sha
-            or receipt.get("codec_sha256") != CODEC_HASH or receipt.get("recipe") != recipe
-            or receipt.get("training_ready") is not False):
-        raise ValueError("BFM motion replay receipt has an invalid input/recipe binding")
-    cases = receipt.get("cases")
-    if not isinstance(cases, list) or not cases or len(cases) > 10000:
-        raise ValueError("BFM motion replay has no bounded physical cases")
-    try:
-        passed = [tracking_pass(item) for item in cases]
-        consistent = all(item.get("passed") == value for item, value in zip(cases, passed))
-        seed_groups = {}
-        for item in cases:
-            key = (item["clip"], item["begin"], item["end"])
-            seed_groups.setdefault(key, []).append(item["seed"])
-        consistent &= all(sorted(seeds) == recipe["seeds"] for seeds in seed_groups.values())
-    except (KeyError, TypeError, ValueError):
-        raise ValueError("BFM motion replay case metrics are invalid") from None
-    if (not consistent or receipt.get("total") != len(cases) or receipt.get("passed") != sum(passed)
-            or receipt.get("intervals_checked") != len(seed_groups)
-            or receipt.get("dynamic_replay_verified") != all(passed)):
-        raise ValueError("BFM motion replay quality disagrees with case evidence")
-    trajectory = receipt.get("trajectory") or {}
-    file = path.parent / "replay-trajectory.npz"
-    if (trajectory.get("file") != file.name or file.is_symlink() or not file.is_file()
-            or file.stat().st_size > 64*1024*1024
-            or hashlib.sha256(file.read_bytes()).hexdigest() != trajectory.get("sha256")):
-        raise ValueError("BFM motion replay trajectory hash mismatch")
-    if teacher_sha:
-        if (receipt.get("teacher_weights_sha256") != teacher_sha or len(receipt.get("videos", [])) != 12
-                or receipt.get("startup_randomization") != "fresh_process_per_seed"
-                or receipt.get("startup_seeds") != [142,143,144]):
-            raise ValueError("Tracking teacher evaluation lacks bound weights/videos")
-        startups = receipt.get("startups", [])
-        if [item.get("seed") for item in startups] != [142,143,144]:
-            raise ValueError("Tracking teacher evaluation lacks sampled physics witnesses")
-        for item in startups:
-            file = path.parent / item["file"]
-            if (item["file"] != f"seed_{item['seed']}/startup.json" or file.is_symlink()
-                    or file.parent.is_symlink() or not file.is_file() or file.stat().st_size > 1024*1024
-                    or hashlib.sha256(file.read_bytes()).hexdigest() != item["sha256"]
-                    or json.loads(file.read_text()).get("seed") != item["seed"]):
-                raise ValueError("Tracking teacher sampled physics witness changed")
-        for video in receipt["videos"]:
-            file = path.parent / video["file"]
-            if (not re.fullmatch(r"seed_(142|143|144)/[A-Za-z0-9_-]+\.mp4", video["file"])
-                    or file.is_symlink() or file.parent.is_symlink() or not file.is_file()
-                    or hashlib.sha256(file.read_bytes()).hexdigest() != video["sha256"]):
-                raise ValueError("Tracking teacher video evidence changed")
-    return receipt
-
-
 async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
     root = get_settings().data_root / "runs" / run.id
     outputs = root / "outputs"
@@ -512,168 +244,10 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
     cas_root.mkdir(parents=True, exist_ok=True)
 
     operation = (job.spec.get("params") or {}).get("operation")
-    if job.kind == 'asset.validate' and operation in {'probe_rpo_ufo_tracking_contact','probe_rpo_ufo_compliance_v11','probe_rpo_ufo_mjlab_v12','probe_rpo_ufo_mjlab_viability_v13','probe_rpo_ufo_learning_diagnostics_v1','probe_rpo_ufo_learning_diagnostics_v2','probe_rpo_ufo_learning_value_v3','probe_rpo_ufo_learning_diagnostics_v4','probe_rpo_ufo_dynamics_diagnostics_v1','probe_rpo_ufo_dynamics_finalize_v2','probe_rpo_ufo_contact_factor_v1','probe_rpo_ufo_integration_factor_v1','probe_rpo_ufo_action_replay_v1','probe_rpo_ufo_solver_cone_v1','probe_rpo_ufo_control_damping_v1','probe_rpo_ufo_friction_impedance_v1','probe_rpo_ufo_ground_stiffness_v1','probe_rpo_ufo_contact_margin_v1'}:
-        dynamics=operation in {'probe_rpo_ufo_dynamics_diagnostics_v1','probe_rpo_ufo_dynamics_finalize_v2','probe_rpo_ufo_contact_factor_v1','probe_rpo_ufo_integration_factor_v1','probe_rpo_ufo_action_replay_v1','probe_rpo_ufo_solver_cone_v1','probe_rpo_ufo_control_damping_v1','probe_rpo_ufo_friction_impedance_v1','probe_rpo_ufo_ground_stiffness_v1','probe_rpo_ufo_contact_margin_v1'}
-        value_only=operation=='probe_rpo_ufo_learning_value_v3'
-        learning=operation in {'probe_rpo_ufo_learning_diagnostics_v1','probe_rpo_ufo_learning_diagnostics_v2','probe_rpo_ufo_learning_diagnostics_v4'} or value_only
-        compliance=operation=='probe_rpo_ufo_compliance_v11'
-        native=operation in {'probe_rpo_ufo_mjlab_v12','probe_rpo_ufo_mjlab_viability_v13'}
-        if dynamics:
-            from eb.runners.rpo_ufo_dynamics_diagnostics import validate_receipt
-            if operation=='probe_rpo_ufo_contact_factor_v1':
-                from eb.runners.rpo_ufo_contact_factor import validate_receipt
-            if operation=='probe_rpo_ufo_integration_factor_v1':
-                from eb.runners.rpo_ufo_integration_factor import validate_receipt
-            if operation=='probe_rpo_ufo_action_replay_v1':
-                from eb.runners.rpo_ufo_action_replay import validate_receipt
-            if operation=='probe_rpo_ufo_solver_cone_v1':
-                from eb.runners.rpo_ufo_solver_cone import validate_receipt
-            if operation=='probe_rpo_ufo_control_damping_v1':
-                from eb.runners.rpo_ufo_control_damping import validate_receipt
-            if operation=='probe_rpo_ufo_friction_impedance_v1':
-                from eb.runners.rpo_ufo_friction_impedance import validate_receipt
-            if operation=='probe_rpo_ufo_ground_stiffness_v1':
-                from eb.runners.rpo_ufo_ground_stiffness import validate_receipt
-            if operation=='probe_rpo_ufo_contact_margin_v1':
-                from eb.runners.rpo_ufo_contact_margin import validate_receipt
-        elif value_only:
-            from eb.runners.rpo_ufo_learning_diagnostics import validate_value_receipt as validate_receipt
-        elif learning:
-            from eb.runners.rpo_ufo_learning_diagnostics import validate_receipt
-        elif native:
-            from eb.runners.rpo_ufo_mjlab_probe import validate_receipt
-        elif compliance:
-            from eb.runners.rpo_ufo_compliance_probe import validate_receipt
-        else:
-            from eb.runners.rpo_ufo_tracking_contact_probe import validate_receipt
-        path=outputs/('dynamics-diagnostics.json' if dynamics else 'learning-value.json' if value_only else 'learning-diagnostics.json' if learning else 'mjlab-probe.json' if native else 'contact-compliance-probe.json' if compliance else 'tracking-contact-probe.json')
-        if path.is_symlink() or not path.is_file() or path.stat().st_size>1024**2:
-            raise ValueError('Tracking/contact diagnostic receipt missing or unbounded')
-        receipt=json.loads(path.read_text())
-        validate_receipt(receipt,job.spec['inputs']['datasets'][0]['validation'],outputs)
-        if operation=='probe_rpo_ufo_contact_factor_v1' and receipt.get('contact_factor')!=job.spec['params']['candidate']:
-            raise ValueError('Contact factor receipt differs from requested candidate')
-        if operation in {'probe_rpo_ufo_integration_factor_v1','probe_rpo_ufo_action_replay_v1','probe_rpo_ufo_solver_cone_v1','probe_rpo_ufo_control_damping_v1','probe_rpo_ufo_friction_impedance_v1','probe_rpo_ufo_ground_stiffness_v1','probe_rpo_ufo_contact_margin_v1'}:
-            params=job.spec['params']
-            if (receipt.get('integration_factor')!=params['candidate']
-                    or receipt.get('trace_source_run_id')!=params['trace_source_run_id']
-                    or receipt.get('trace_source_receipt_sha256')!=params['trace_source_receipt_sha256']):
-                raise ValueError('Integration factor or trace source differs from requested identity')
-            if operation in {'probe_rpo_ufo_action_replay_v1','probe_rpo_ufo_solver_cone_v1','probe_rpo_ufo_control_damping_v1','probe_rpo_ufo_friction_impedance_v1','probe_rpo_ufo_ground_stiffness_v1','probe_rpo_ufo_contact_margin_v1'} and receipt.get('action_program_stage')!=params['stage']:
-                raise ValueError('Action program stage differs from requested identity')
-        if operation=='probe_rpo_ufo_dynamics_finalize_v2':
-            source=json.loads((outputs/'rsi-source-audit.json').read_text())
-            if (receipt.get('source_run_id')!=job.spec['params']['source_run_id']
-                    or receipt.get('source_receipt_sha256')!=job.spec['params']['source_receipt_sha256']
-                    or source.get('source_receipt_sha256')!=receipt['source_receipt_sha256']
-                    or source.get('environment_integration_steps')!=0 or source.get('optimizer_updates')!=0
-                    or source.get('dataset_changed') is not False or len(source.get('records',[]))!=3):
-                raise ValueError('RSI source audit identity differs')
-        run.metrics_summary={**(run.metrics_summary or {}),
-            ('dynamics_diagnostics' if dynamics else 'learning_value_diagnostics' if value_only else 'learning_diagnostics' if learning else 'mjlab_physics_probe' if native else 'contact_compliance_probe' if compliance else 'tracking_contact_probe'):receipt}
-        return
-    if job.kind == "asset.validate" and operation == "probe_rpo_ufo_contact_v8":
-        from eb.runners.rpo_ufo_contact_probe import validate_probe
-        output = get_settings().data_root / "runs" / run.id / "outputs"
-        path = output / "contact-probe.json"
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024**2:
-            raise ValueError("Contact v8 receipt invalid")
-        receipt = json.loads(path.read_text())
-        validate_probe(receipt, job.spec["inputs"]["datasets"][0]["validation"], output)
-        run.metrics_summary = {**(run.metrics_summary or {}), "contact_probe": receipt}
-        return
-    if job.kind == "asset.validate" and operation == "probe_rpo_ufo_initial_contact":
-        from eb.runners.rpo_ufo_initial_contact import validate_receipt
-        path = outputs / "initial-contact.json"
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024:
-            raise ValueError("RSI contact receipt unavailable or unbounded")
-        receipt = json.loads(path.read_text())
-        validation = job.spec["inputs"]["datasets"][0]["validation"]
-        validate_receipt(receipt, validation, outputs)
-        run.metrics_summary = {**(run.metrics_summary or {}), "initial_contact": receipt}
-        return
-    if job.kind == "asset.validate" and operation == "probe_rpo_ufo_tracking":
-        from eb.runners.bfm_ufo_tracking import SUITE, validate_tracking_receipt
-        path = outputs / "tracking.json"
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 128 * 1024:
-            raise ValueError("Held-out tracking receipt missing or unbounded")
-        receipt = json.loads(path.read_text())
-        validate_tracking_receipt(receipt, (job.spec.get("params") or {}).get("tracking_plan"), outputs)
-        import os
-        media = []
-        for row in receipt["cases"]:
-            digest = row["video_integrity"]["sha256"]
-            destination = cas_root / digest[:2] / digest
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if not destination.exists():
-                os.link(outputs / row["video"], destination)
-            artifact = await session.scalar(select(Artifact).where(Artifact.run_id == run.id, Artifact.sha256 == digest))
-            if artifact is None:
-                artifact = Artifact(id=new_id("art"), kind="video", sha256=digest,
-                    size_bytes=destination.stat().st_size, storage=str(destination), run_id=run.id,
-                    meta={"role": "heldout_tracking", "clip_id": row["clip_id"], "plan_hash": receipt["plan"]["hash"]})
-                session.add(artifact)
-                session.add(LineageEdge(src_type="run", src_id=run.id, dst_type="artifact", dst_id=artifact.id,
-                    relation="produced", run_id=run.id))
-            media.append({"artifact_id": artifact.id, "url": f"/media/{digest[:2]}/{digest}",
-                **{key: row[key] for key in ("clip_id", "case_id", "steps", "reason", "q_rmse_rad")}})
-        run.metrics_summary = {**(run.metrics_summary or {}), "tracking": receipt, "tracking_media": media, "suite_id": SUITE["id"]}
-        return
-    if job.kind == "asset.validate" and operation == "probe_rpo_ufo_environment":
-        from eb.runners.bfm_ufo_agent import AUX_NAMES
-        path = outputs / "probe.json"
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024:
-            raise ValueError("UFO environment probe receipt missing or unbounded")
-        receipt = json.loads(path.read_text())
-        dataset = (job.spec.get("inputs") or {}).get("datasets", [None])[0]
-        validation = (dataset or {}).get("validation") or {}
-        if (receipt.get("schema_version") != "eb/rpo-ufo-environment-probe/v1" or receipt.get("status") != "passed"
-                or receipt.get("backend") != "isaaclab" or receipt.get("gym_id") != "RPO-UFO-Isaac-RSI-v1"
-                or receipt.get("envs") != 2 or receipt.get("aux_names") != list(AUX_NAMES)
-                or receipt.get("checks") != ["observation_idempotent", "reference_partial_reset", "timeout_terminal", "raw_aux_eight"]
-                or receipt.get("asset_sha256") != validation.get("asset_sha256")
-                or receipt.get("manifest_sha256") != validation.get("manifest_sha256")):
-            raise ValueError("UFO environment probe evidence differs from frozen input")
-        run.metrics_summary = {**(run.metrics_summary or {}), "probe": receipt}
-        return
-    if job.kind == "asset.validate" and operation == "probe_rpo_bfm_ufo_agent":
-        from eb.runners.bfm_ufo_agent import validate_source_receipt, OPTIMIZERS, TARGETS
-        from eb.ufo_source import SOURCE_RECEIPT
-        import math
-        path = outputs / "probe.json"
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024:
-            raise ValueError("UFO agent probe receipt missing or unbounded")
-        receipt = json.loads(path.read_text())
-        validate_source_receipt(receipt.get("source") or {})
-        if (receipt.get("status") != "passed" or receipt.get("device") != "cuda"
-                or receipt.get("joint_updates") != 1
-                or receipt.get("source") != SOURCE_RECEIPT
-                or receipt.get("configuration") != {"hidden_dim": 1024, "hidden_layers": 3, "batch_size": 128}
-                or receipt.get("targets") != list(TARGETS) or receipt.get("z_pool_count") != 128
-                or receipt.get("optimizer_steps") != {name: 1 for name in OPTIMIZERS}
-                or not math.isfinite(receipt.get("parameter_delta_l1", float("nan")))
-                or receipt.get("parameter_delta_l1", 0) <= 0
-                or receipt.get("atol") != 1e-6 or receipt.get("rtol") != 1e-5):
-            raise ValueError("UFO agent native differential/update evidence invalid")
-        run.metrics_summary = {**(run.metrics_summary or {}), "probe": receipt}
-        return
-    if job.kind == "asset.validate" and operation in {"probe_rpo_bfm_motion", "probe_100style_retarget", "probe_100style_tracking_teacher"}:
-        params = job.spec.get("params") or {}
-        if operation == "probe_rpo_bfm_motion":
-            source_id = str(params.get("dataset_id", ""))
-            manifest = get_settings().datasets_root / source_id / "content/manifest.json"
-            valid_id = re.fullmatch(r"ds_[0-9a-f]+", source_id)
-        else:
-            source_id = str(params.get("source_run_id", ""))
-            manifest = get_settings().data_root / "runs" / source_id / "outputs/retargeted/retarget-receipt.json"
-            valid_id = re.fullmatch(r"run_[0-9a-f]+", source_id)
-        asset = get_settings().assets_root / "roboparty/rpo-v2/asset-manifest.json"
-        if not valid_id or manifest.is_symlink() or not manifest.is_file():
-            raise ValueError("BFM motion replay dataset is unavailable")
-        receipt = validate_rpo_bfm_motion_probe_receipt(outputs / "probe.json",
-            hashlib.sha256(manifest.read_bytes()).hexdigest(), hashlib.sha256(asset.read_bytes()).hexdigest(),
-            params.get("teacher_weights_sha256") if operation == "probe_100style_tracking_teacher" else None)
-        run.metrics_summary = {**(run.metrics_summary or {}), "probe":receipt}
+    from eb.ufo_native import OPERATIONS as UFO_NATIVE_OPERATIONS
+    if operation in UFO_NATIVE_OPERATIONS:
+        from eb.orchestrator.ufo_native import collect_native
+        await collect_native(session, job, run, outputs)
         return
     if job.kind == "asset.validate" and operation in {"probe_rpo_amp_env", "probe_rpo_amp_motion"}:
         if operation == "probe_rpo_amp_motion":
@@ -689,80 +263,28 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
         return
 
     train_template = (job.spec.get("params") or {}).get("template_id", "")
-    if job.kind in {"train.rl", "train.sft", "train.rlft"} and train_template.startswith(("libero_", "robotwin_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_", "rpo_bfm_ufo_")):
+    if job.kind in {"train.rl", "train.sft", "train.rlft"} and train_template.startswith(("libero_", "robotwin_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")):
         from eb.checkpoints import checkpoint_model
-        from eb.domain.training_recipe import RECIPES, four_gpu_recipe
-        checkpoint = checkpoint_model(root, run.id, verify_hashes=train_template.startswith(("robotwin_", "rpo_v2_amp_", "rpo_v2_flat_", "rpo_v2_bfm_zero_")))
+        checkpoint = checkpoint_model(root, run.id, verify_hashes=train_template.startswith(("robotwin_", "rpo_v2_amp_", "rpo_v2_flat_")))
         if train_template.startswith("libero_") and "model/physical-intelligence/libero/norm_stats.json" not in {item["path"] for item in checkpoint["manifest"]["files"]}:
             raise ValueError("LIBERO checkpoint manifest lacks normalization assets")
-        sync = None
-        if train_template in RECIPES and four_gpu_recipe(train_template):
-            from eb.runners.bfm_ufo_checkpoint import validate_sampler_identities
-            sync_path = root / "output/ufo-sampler-sync.json"
-            if sync_path.is_symlink() or not sync_path.is_file() or sync_path.stat().st_size > 64 * 1024:
-                raise ValueError("Four GPU sampler sync evidence missing")
-            sync = json.loads(sync_path.read_text())
-            validate_sampler_identities(sync["identity"], sync["samplers"], ranks=3)
-            if sync.get("schema_version") != "eb/ufo-sampler-sync/v1" or not 0 <= sync["identity"]["version"] <= checkpoint["step"]:
-                raise ValueError("Four GPU sync version differs from learner counter")
         model = (await promote_robotwin_model(session, job, run, checkpoint)
                  if train_template.startswith("robotwin_") else
                  await promote_rpo_model(session, job, run, checkpoint)
-                 if train_template in RECIPES or train_template in {"rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo", "rpo_v2_amp_stand_walk_ppo", "rpo_v2_flat_ppo", "rpo_v2_bfm_zero_pretrain", "rpo_v2_bfm_zero_tracking_teacher"} else None)
+                 if train_template in {"rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo", "rpo_v2_amp_stand_walk_ppo", "rpo_v2_flat_ppo"} else None)
         run.metrics_summary = {**(run.metrics_summary or {}),
             "checkpoint":{key:checkpoint[key] for key in ("path", "bytes", "step")},
             **({"model_version_id": model.id} if model else {})}
-        if sync is not None:
-            run.metrics_summary["sampler_sync"] = sync
         return
 
-    params = job.spec.get("params") or {}
-    bfm_export_receipt = None
-    bfm_command_artifact = None
-    source_model = None
-    if job.kind == "export.policy" and params.get("operation") == "rpo_bfm_export":
-        source_run_id = params.get("source_run_id")
-        source_model = await session.get(ModelVersion, params.get("source_model_version_id"))
-        source_artifact = await session.get(Artifact, source_model.artifact_id) if source_model else None
-        source_path = Path(get_settings().models_root) / "runs" / str(source_run_id)
-        if (not source_model or source_model.family_id != "mf_rpo_v2_bfm_zero"
-                or source_model.embodiment_env_id != "ee_rpo_v2_bfm_23dof_v1"
-                or (source_model.card or {}).get("run_id") != source_run_id
-                or not source_artifact or Path(source_artifact.storage).resolve() != source_path.resolve()
-                or job.embodiment_env_id != "ee_rpo_v2_bfm_23dof_v1"):
-            raise ValueError("BFM export source model version does not match its checkpoint")
-        bfm_export_receipt = validate_rpo_bfm_export(root, job)
-        command_path = root / "output/exported/command-to-latent.onnx"
-        command_digest = sha256_file(command_path)
-        command_dest_dir = cas_root / command_digest[:2]
-        command_dest_dir.mkdir(parents=True, exist_ok=True)
-        command_dest = command_dest_dir / command_digest
-        if not command_dest.exists():
-            command_dest.write_bytes(command_path.read_bytes())
-        bfm_command_artifact = await session.scalar(select(Artifact).where(Artifact.sha256 == command_digest))
-        if bfm_command_artifact is None:
-            bfm_command_artifact = Artifact(
-                id=new_id("art"), sha256=command_digest, kind="onnx",
-                size_bytes=command_path.stat().st_size, storage=str(command_dest), run_id=run.id,
-                meta={"name":command_path.name, "role":"bfm_command_to_latent",
-                      "command_dim":3, "latent_dim":256,
-                      "export_manifest":bfm_export_receipt["command_latent"]},
-            )
-            session.add(bfm_command_artifact)
-            await session.flush()
-        run.metrics_summary = {**(run.metrics_summary or {}),
-                               "bfm_export":{"onnx":bfm_export_receipt["onnx"],
-                                             "command_latent":bfm_export_receipt["command_latent"],
-                                             "prompts":bfm_export_receipt["prompts"],
-                                             "readiness":"diagnostic_smoke"}}
-
     eval_manifest = root / "output" / "eval-manifest.json"
+    params = job.spec.get("params") or {}
     template_id = params.get("template_id", "")
     embodiment_env_id = getattr(job, "embodiment_env_id", None) or job.spec.get("embodiment_env_id")
-    if job.kind == "eval.sim" and template_id in {"rpo_v2_flat_eval","rpo_v2_bfm_zero_eval", "rpo_bfm_ufo_agent_rlinf_isaac_eval_v1"}:
+    if job.kind == "eval.sim" and template_id == "rpo_v2_flat_eval":
         from eb.rpo_flat import validate_flat_eval
         plan = params.get("rpo_eval_plan") or {}
-        evidence = validate_flat_eval(root / "output", plan, run.id,bfm=template_id!="rpo_v2_flat_eval")
+        evidence = validate_flat_eval(root / "output", plan, run.id)
         existing = await session.scalar(select(EvalReport).where(EvalReport.run_id == run.id))
         if existing:
             run.metrics_summary = {**existing.metrics, "eval_report_id": existing.id,
@@ -770,9 +292,7 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
             return
         report = EvalReport(id=new_id("ev"), suite_id=plan["suite_id"],
             model_version_id=params["model_version_id"], run_id=run.id, metrics=evidence["metrics"],
-            gate_results={**{key:evidence[key] for key in ("qualification", "validity", "receipt")},
-                **({"execution": params["model_execution"], "source_step": plan["checkpoint_step"],
-                    "progress_unit": "learner_joint_update"} if params.get("model_execution") else {})})
+            gate_results={key:evidence[key] for key in ("qualification", "validity", "receipt")})
         session.add(report)
         session.add(LineageEdge(src_type="run", src_id=run.id, dst_type="eval_report",
                                 dst_id=report.id, relation="produced", run_id=run.id))
@@ -963,16 +483,10 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
     ckpt_files = ckpt_uniq
     if not uniq and not ckpt_files:
         return
-    if bfm_export_receipt:
-        uniq = [path for path in uniq if path == root / "output/exported/policy.onnx"]
-        if not uniq:
-            raise ValueError("BFM export actor ONNX is missing")
 
-    family_id = "mf_rpo_v2_bfm_zero" if bfm_export_receipt else "mf_run"
-    fam = await session.get(ModelFamily, family_id)
+    fam = await session.get(ModelFamily, "mf_run")
     if fam is None:
-        fam = ModelFamily(id=family_id,
-                          name="RPO V2 BFM-Zero" if bfm_export_receipt else "run policies", family="mlp")
+        fam = ModelFamily(id="mf_run", name="run policies", family="mlp")
         session.add(fam)
         await session.flush()
     ctr_row = await session.get(EmbodimentEnvRow, job.embodiment_env_id)
@@ -1002,9 +516,6 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
         dest = dest_dir / digest
         if not dest.exists():
             dest.write_bytes(path.read_bytes())
-        artifact_meta = {"name":path.name, **sig}
-        if bfm_export_receipt:
-            artifact_meta["bfm_export_manifest"] = bfm_export_receipt
         existing = await session.scalar(select(Artifact).where(Artifact.sha256 == digest))
         if existing:
             art = existing
@@ -1016,30 +527,20 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
                 size_bytes=path.stat().st_size,
                 storage=str(dest),
                 run_id=run.id,
-                meta=artifact_meta,
+                meta={"name": path.name, **sig},
             )
             session.add(art)
             await session.flush()
-        io_signature = ({"observation_profile":"rpo_bfm_actor_history4_z256_v1",
-                         "obs":375, "latent":256, "critic_obs":733,
-                         "action_profile":"rpo_v2_joint23_position_v2" if job.embodiment_env_id == "ee_rpo_v2_bfm_23dof_v2" else "rpo_v2_joint23_position_v1", "act":23}
-                        if bfm_export_receipt else {"obs":sig.get("obs"), "act":sig.get("act")})
         mv = ModelVersion(
             id=new_id("mv"),
             family_id=fam.id,
             name=(job.spec.get("params") or {}).get("model_name") or path.stem,
             embodiment_env_id=job.embodiment_env_id,
-            io_signature=io_signature,
+            io_signature={"obs": sig.get("obs"), "act": sig.get("act")},
             provenance="full",
             artifact_id=art.id,
-            tags=(["policy", "run", "rpo-v2", "bfm-zero", "onnx"]
-                  if bfm_export_receipt else ["policy", "run"]),
-            card=({"schema_version":"eb/rpo-bfm-exported-model/v1", "source_path":str(path),
-                   "measured":True, "readiness":"diagnostic_smoke",
-                   "source_model_version_id":source_model.id,
-                   "command_latent_artifact_id":bfm_command_artifact.id if bfm_command_artifact else None,
-                   "export_manifest":bfm_export_receipt}
-                  if bfm_export_receipt else {"source_path":str(path), "measured":True}),
+            tags=["policy", "run"],
+            card={"source_path": str(path), "measured": True},
         )
         session.add(mv)
         await session.flush()
@@ -1053,12 +554,6 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
                 run_id=run.id,
             )
         )
-        if bfm_export_receipt:
-            session.add(LineageEdge(src_type="model_version", src_id=source_model.id,
-                                    dst_type="model_version", dst_id=mv.id,
-                                    relation="exported_from", run_id=run.id))
-            run.metrics_summary = {**(run.metrics_summary or {}),
-                                   "exported_model_version_id":mv.id}
     for path in ckpt_files:
         try:
             digest = sha256_file(path)
@@ -1205,6 +700,14 @@ def validate_robotwin_episode(plan: dict, row: dict, case: dict, run_id: str | N
 
 async def archive_partial_eval(session: AsyncSession, job: Job, run: Run, *, invalid: bool = False) -> None:
     """Keep measured cases when an eval stops before its aggregate receipt is complete."""
+    if ((getattr(job, 'spec', None) or {}).get('params') or {}).get('operation') == 'ufo_native_live':
+        from eb.orchestrator.ufo_live import archive_partial_live
+        await archive_partial_live(session, job, run, invalid=invalid)
+        return
+    if ((getattr(job, 'spec', None) or {}).get('params') or {}).get('operation') == 'ufo_native_eval':
+        from eb.orchestrator.ufo_native_partial import archive_partial_native
+        await archive_partial_native(session, job, run, invalid=invalid)
+        return
     if getattr(job, "kind", None) != "eval.sim":
         return
     params = (getattr(job, "spec", None) or {}).get("params") or {}

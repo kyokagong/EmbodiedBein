@@ -10,7 +10,7 @@
 
 ## 端到端核对
 
-1. 读对应设计和外部实现（只读），确认真实入口、算法状态、loss/update、环境 reset/step、批量与 rollout 语义。SONIC/BFM/AMP 的设计文件存在不代表所有路线已完成；对照最新进度和实际代码。
+1. 读对应设计和外部实现（只读），确认真实入口、算法状态、loss/update、环境 reset/step、批量与 rollout 语义。设计文件存在不代表该路线已完成；对照最新进度和实际代码。
 2. 沿 `routes_train.py → _build_spec → domain/rlinf_form.py → get_adapter → render → orchestrator/service.py → ebd/eb-runner` 追踪。现有 RLinf 路由包含 `params.stack=rlinf` 分支，不能只按 JobKind 猜 adapter。
 3. 新模板需明确接口/Task、config、entrypoint、允许的 override、必需数据/基座模型、资源预算。更新能力/来源目录与 Profile 绑定，仅在需要可选择该功能时改前端；预览/提交复用解析，禁止任意 Hydra 键穿透安全/路径设置。
 4. 运行实现进入任务镜像：平台 runner/config 或 `deploy/patches/rlinf/` 的受管补丁；不编辑 `/data/kk/RLinf`。通过 Dockerfile 记录源码内容快照、补丁 hash 和镜像 digest，核对实际镜像中的代码版本。任务镜像单独构建，`make up` 不会替你更新它。

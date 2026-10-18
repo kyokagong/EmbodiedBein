@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -45,6 +46,92 @@ def test_references_match_nested_ids_paths_and_overrides_without_prefix_collisio
     assert not references("run_test2", {"run_test"}, [])
 
 
+@pytest.mark.parametrize("encode", [lambda value: value, json.dumps])
+def test_source_build_history_is_not_a_checkpoint_lease(encode):
+    receipt = {"guardfix_parent_run": "run_old", "extension_parent_run": "run_old"}
+    assert not references(encode({"params": {"source_receipt": receipt}}), {"run_old"}, [])
+    assert references(
+        encode({"inputs": {"resume_from": "run_old"}, "source_receipt": receipt}), {"run_old"}, []
+    )
+    assert references(
+        encode({"source_receipt": {**receipt, "checkpoint_run_id": "run_old"}}), {"run_old"}, []
+    )
+    assert references(encode({"inputs": {"guardfix_parent_run": "run_old"}}), {"run_old"}, [])
+
+
+@pytest.mark.asyncio
+async def test_ended_diagnostic_cleanup_keeps_its_model_input():
+    job = Job(
+        id="job_probe",
+        kind="asset.validate",
+        spec={"inputs": {"base_model": "mv_source"}},
+        status="succeeded",
+    )
+    run = Run(id="run_probe", job_id=job.id, status="finished")
+    source = ModelVersion(id="mv_source", card={})
+    plan = await deletion_plan(session_with(job, run, source), "job", job.id)
+    assert plan["run_ids"] == [run.id]
+    assert not plan["blockers"] and "mv_source" not in plan["ids"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["train.rl", "eval.sim", "data.convert"])
+async def test_diagnostic_delete_rejects_other_job_types(kind):
+    job = Job(id="job_other", kind=kind, spec={}, status="succeeded")
+    with pytest.raises(HTTPException) as exc:
+        await deletion_plan(session_with(job), "job", job.id)
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["train.rl", "eval.sim", "data.convert", "export.policy"])
+@pytest.mark.parametrize("status", ["failed", "infra_failed", "timeout"])
+async def test_failed_job_cleanup_handles_all_kinds_and_training_projection(kind, status):
+    job = Job(id="job_failed", kind=kind, spec={"inputs": {"model": "mv_input"}}, status=status)
+    run = Run(id="run_failed", job_id=job.id, status="aborted")
+    train = TrainJob(id="trn_failed", job_id=job.id, status="failed", run_dir="/state/trn_legacy")
+    model = ModelVersion(id="mv_input", card={})
+    records = [job, run, model] + ([train] if kind.startswith("train.") else [])
+    plan = await deletion_plan(session_with(*records), "job", job.id)
+    assert plan["run_ids"] == [run.id] and not plan["blockers"]
+    assert "mv_input" not in plan["ids"]
+    assert ("trn_failed" in plan["ids"]) == kind.startswith("train.")
+    assert plan["preserved_paths"] == ([train.run_dir] if kind.startswith("train.") else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["queued", "running", "cancelled", "succeeded"])
+async def test_generic_job_cleanup_does_not_expand_to_other_states(status):
+    job = Job(id="job_other", kind="data.convert", spec={}, status=status)
+    with pytest.raises(HTTPException) as exc:
+        await deletion_plan(session_with(job), "job", job.id)
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_failed_download_cleanup_owns_only_its_failed_model_and_checks_consumers():
+    job = Job(id="job_download", kind="data.convert", status="failed",
+              spec={"params": {"operation": "download_model", "model_id": "mdl_partial"}})
+    partial = WeightModel(id="mdl_partial", kind="download_failed", path="", metrics_at_checkpoint={
+        "download": {"job_id": job.id, "model_path": "/data/kk/models/mdl_partial"}})
+    source = WeightModel(id="mdl_source", kind="downloaded", path="/data/kk/models/mdl_source",
+                         metrics_at_checkpoint={})
+    plan = await deletion_plan(session_with(job, partial, source), "job", job.id)
+    assert plan["ids"] == [job.id, partial.id]
+    assert plan["paths"] == ["/data/kk/models/mdl_partial"] and not plan["blockers"]
+    consumer = Job(id="job_consumer", kind="train.rl", status="succeeded",
+                   spec={"inputs": {"base_model": partial.id}})
+    plan = await deletion_plan(session_with(job, partial, source, consumer), "job", job.id)
+    assert {b["id"] for b in plan["blockers"]} == {consumer.id}
+    partial.kind = "downloaded"
+    plan = await deletion_plan(session_with(job, partial), "job", job.id)
+    assert partial.id not in plan["ids"] and plan["blockers"]
+    partial.kind = "download_failed"
+    partial.metrics_at_checkpoint["download"]["model_path"] = "/data/kk/RLinf/weights"
+    plan = await deletion_plan(session_with(job, partial), "job", job.id)
+    assert not plan["paths"] and plan["preserved_paths"] == ["/data/kk/RLinf/weights"]
+
+
 @pytest.mark.asyncio
 async def test_training_deletes_all_attempts_and_keeps_models_as_blockers():
     records = train_records()
@@ -87,6 +174,24 @@ async def test_shared_model_path_and_derived_lineage_are_protected():
     derived = ModelVersion(id="mv_derived", card={})
     plan = await deletion_plan(session_with(source, shared, edge, derived), "model", source.id)
     assert {b["id"] for b in plan["blockers"]} == {"mdl_shared", "mv_derived"}
+
+
+@pytest.mark.asyncio
+async def test_model_output_summary_does_not_form_a_deletion_cycle_with_its_producer():
+    records = train_records()
+    records[1].metrics_summary = {"model_version_id": "mv_test"}
+    artifact = Artifact(
+        id="art_test", run_id=records[2].id, storage="/data/kk/models/runs/run_first", refcount=0
+    )
+    records[2].metrics_summary = {"model_version_id": "mv_test", "checkpoint": {"path": artifact.storage}}
+    model = ModelVersion(id="mv_test", card={"run_id": records[2].id}, artifact_id=artifact.id)
+    plan = await deletion_plan(session_with(*records, model, artifact), "model", model.id)
+    assert not plan["blockers"]
+    assert records[2].metrics_summary["model_version_id"] == model.id
+    assert records[2].metrics_summary["checkpoint"]["path"] == artifact.storage
+    consumer = Run(id="run_consumer", job_id="job_consumer", metrics_summary={"model_version_id": model.id})
+    plan = await deletion_plan(session_with(*records, model, artifact, consumer), "model", model.id)
+    assert {row["id"] for row in plan["blockers"]} == {consumer.id}
 
 
 @pytest.mark.asyncio

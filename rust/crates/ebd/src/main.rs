@@ -18,7 +18,8 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use tokio::net::UnixListener;
 mod storage;
-mod motion_preview;
+mod run_output;
+mod native_live;
 
 #[derive(Parser)]
 #[command(name = "ebd")]
@@ -83,9 +84,10 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/runs", post(submit_run))
         .route("/v1/runs/{id}", get(get_run))
         .route("/v1/runs/{id}/cancel", post(cancel_run))
+        .route("/v1/runs/{id}/live/control", post(native_live::control))
+        .route("/v1/runs/{id}/live/heartbeat", post(native_live::heartbeat))
         .route("/v1/runs/{id}/metrics", get(run_metrics))
         .route("/v1/runs/{id}/logs", get(run_logs))
-        .route("/v1/runs/{id}/motion-preview/{clip}", get(motion_preview_get))
         .route("/v1/ps", get(ps_handler))
         .route("/v1/scan", post(scan_handler))
         .route("/v1/snapshots", post(snapshot_handler))
@@ -96,6 +98,9 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let media = Router::new()
         .route("/healthz", get(health))
         .route("/media/{*path}", get(media_get))
+        .route("/v1/runs/{id}/outputs/{*path}", get(run_output::get))
+        .route("/v1/runs/{id}/live/stream", get(native_live::stream))
+        .route("/v1/runs/{id}/live/{kind}", get(native_live::get))
         .with_state(app_state.clone());
 
     let control_path = std::env::var("EB_EBD_UDS").unwrap_or_else(|_| "/run/eb/ebd.sock".into());
@@ -479,17 +484,6 @@ async fn scan_handler(Json(req): Json<ScanReq>) -> Json<Value> {
         .await
         .unwrap_or_else(|e| json!({"error": e.to_string()}));
     Json(value)
-}
-
-async fn motion_preview_get(State(st): State<Arc<App>>, Path((run, clip)): Path<(String, String)>) -> Response {
-    let Some(path) = motion_preview::preview_path(&st.data_root, &run, &clip) else {
-        return (StatusCode::NOT_FOUND, "motion preview unavailable").into_response();
-    };
-    match tokio::fs::read(path).await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "application/json"),
-                      (header::CACHE_CONTROL, "private, no-store")], bytes).into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "motion preview unavailable").into_response(),
-    }
 }
 
 async fn media_get(State(st): State<Arc<App>>, Path(path): Path<String>, req: Request) -> Response {
