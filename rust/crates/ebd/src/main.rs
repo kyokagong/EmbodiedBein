@@ -20,6 +20,7 @@ use tokio::net::UnixListener;
 mod storage;
 mod run_output;
 mod native_live;
+mod native_training_resources;
 
 #[derive(Parser)]
 #[command(name = "ebd")]
@@ -110,6 +111,8 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("ebd listening on {control_path} and {media_path}");
     let root = data_root.clone();
     tokio::spawn(async move { eb_collector::spawn(root).await });
+    let resource_root = data_root.clone();
+    tokio::spawn(async move { native_training_resources::spawn(resource_root).await });
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
     }
@@ -184,6 +187,8 @@ struct SubmitBody {
     #[serde(default)]
     network: Option<String>,
     #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
     cpus: Option<u32>,
     #[serde(default)]
     memory_gb: Option<u32>,
@@ -228,6 +233,7 @@ async fn submit_run(State(st): State<Arc<App>>, Json(body): Json<SubmitBody>) ->
         mounts: body.mounts,
         workdir: body.workdir,
         network: body.network,
+        hostname: body.hostname,
         cpus: body.cpus.unwrap_or(4),
         memory_gb: body.memory_gb.unwrap_or(8),
     };
@@ -353,6 +359,7 @@ async fn snapshot_handler(State(st): State<Arc<App>>, Json(req): Json<SnapshotRe
     let allowed = [
         std::env::var("EB_BHL_REPO").unwrap_or_else(|_| "/data/kk/Berkeley-Humanoid-Lite".into()),
         std::env::var("EB_RLINF_REPO").unwrap_or_else(|_| "/data/kk/RLinf".into()),
+        std::env::var("EB_UFO_NATIVE_ROOT").unwrap_or_else(|_| "/data/kk/UFO".into()),
         std::env::var("EB_ASSETS_ROOT").unwrap_or_else(|_| "/data/kk/assets".into()),
         st.data_root.to_string_lossy().into_owned(),
     ];

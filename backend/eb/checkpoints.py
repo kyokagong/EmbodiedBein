@@ -10,6 +10,11 @@ from eb.settings import get_settings
 
 
 def resume_fingerprint(spec: JobSpec) -> str:
+    if spec.params.get("template_id") == "rpo_ufo_fb_native":
+        fingerprint = (spec.params.get("native_train_plan") or {}).get("fingerprint")
+        if not isinstance(fingerprint, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint):
+            raise ValueError("native training plan has no frozen compatibility fingerprint")
+        return fingerprint
     payload = spec.model_dump(mode="json", exclude={"name", "labels", "experiment"})
     payload["inputs"]["resume_from"] = None
     source_image = payload["params"].pop("resume_source_image", None)
@@ -90,6 +95,15 @@ def _resume_candidate(checkpoint: Path, run_id: str) -> dict:
 
 def resume_checkpoint(run_root: Path, run_id: str, *, step: int | None = None) -> dict:
     run_root = Path(run_root)
+    baseline = run_root / "outputs/baseline-receipt.json"
+    if baseline.exists() or baseline.is_symlink():
+        raise ValueError("Diagnostic baseline checkpoints are not training restore inputs")
+    if (run_root / "outputs/native").exists() or (run_root / "outputs/native").is_symlink():
+        from eb.ufo_training_checkpoint import read_native_checkpoint
+        native = read_native_checkpoint(run_root, run_id)
+        if step is not None and native["step"] != step:
+            raise ValueError(f"source Run has no complete resumable native checkpoint at step {step}")
+        return native
     output = run_root / "output"
     if run_root.is_symlink() or output.is_symlink() or not output.is_dir():
         raise ValueError("source Run output is unavailable")
@@ -175,6 +189,13 @@ def checkpoint_inference(run_root: Path, template_id: str, source_overrides: lis
 
 
 def checkpoint_model(run_root: Path, run_id: str, *, verify_hashes: bool = False) -> dict:
+    run_root = Path(run_root)
+    baseline = run_root / "outputs/baseline-receipt.json"
+    if baseline.exists() or baseline.is_symlink():
+        raise ValueError("Diagnostic baseline checkpoints are not training model publications")
+    if (run_root / "outputs/native").exists() or (run_root / "outputs/native").is_symlink():
+        from eb.ufo_training_checkpoint import read_native_checkpoint
+        return read_native_checkpoint(run_root, run_id, verify_hashes=verify_hashes)
     output = run_root / "output"
     manifest = output / "checkpoint-manifest.json"
     if (run_root.is_symlink() or output.is_symlink() or manifest.is_symlink()

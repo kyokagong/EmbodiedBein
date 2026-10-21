@@ -13,6 +13,31 @@ images-ufo-native-deploy:
 	test "$(docker image inspect ufo-rpo:rpo-23dof-20261016 --format '{{.Id}}')" = "sha256:8733fd6e6ed852b4687d43e5499a5bd4f6dec58b12e5ff23a3bc92ff233f46fd"
 	docker build -t eb/ufo-native:rpo-deploy-v1 -f deploy/images/ufo-native-deploy.Dockerfile .
 
+.PHONY: images-ufo-native-train
+images-ufo-native-train:
+	test "$$(docker image inspect eb/ufo-native:rpo-deploy-v1 --format '{{.Id}}')" = "sha256:79ab792eeec399e1b979c2f4ddebaaa0bceaeecf3055f62a84df659e424b7adf"
+	docker build -t eb/ufo-native:rpo-train-v3 -f deploy/images/ufo-native-train.Dockerfile .
+
+.PHONY: images-ufo-native-reconfigure
+images-ufo-native-reconfigure:
+	test "$$(docker image inspect eb/ufo-native:rpo-train-v3 --format '{{.Id}}')" = "sha256:7a0babe5e5b8cff1b63bedee6c1746cb4710710a4305ec93667d8a52df58cb3e"
+	docker build --pull=false -t eb/ufo-native:rpo-train-v5 -f deploy/images/ufo-native-reconfigure.Dockerfile .
+
+.PHONY: images-ufo-grounded-a1
+images-ufo-grounded-a1:
+	test "$$(docker image inspect eb/ufo-native:rpo-train-v2 --format '{{.Id}}')" = "sha256:e122bb0c96f28c3d2006dd0c466bf392f2f4dc8f0e09fba0e5f2e36f6cefdfe6"
+	docker build --pull=false -t eb/ufo-native:rpo-ground-a1-v1 -f deploy/images/ufo-grounded-a1.Dockerfile .
+
+.PHONY: images-ufo-native-baseline
+images-ufo-native-baseline:
+	test "$$(docker image inspect eb/ufo-native:rpo-train-v2 --format '{{.Id}}')" = "sha256:e122bb0c96f28c3d2006dd0c466bf392f2f4dc8f0e09fba0e5f2e36f6cefdfe6"
+	docker build --pull=false -t eb/ufo-native:rpo-baseline-v2 -f deploy/images/ufo-native-baseline.Dockerfile .
+
+.PHONY: images-ufo-failure-probe
+images-ufo-failure-probe:
+	test "$$(docker image inspect eb/ufo-native:rpo-train-v3 --format '{{.Id}}')" = "sha256:7a0babe5e5b8cff1b63bedee6c1746cb4710710a4305ec93667d8a52df58cb3e"
+	docker build --pull=false -t eb/ufo-native:failure-probe-v4 -f deploy/images/ufo-failure-probe.Dockerfile .
+
 # Host ports from deploy/.env (compose still has :-defaults if a key is missing).
 env_value = $(or $(shell sed -n 's/^$(1)=//p' deploy/.env 2>/dev/null),$(2))
 EB_PORT_API := $(call env_value,EB_PORT_API,8000)

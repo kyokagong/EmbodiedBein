@@ -94,7 +94,10 @@ class EbdClient:
         async with self._client() as c:
             r = await c.post(f"http://ebd/v1/runs/{run_id}/cancel")
             r.raise_for_status()
-            return r.json()
+            result = r.json()
+            if not isinstance(result, dict) or result.get("ok") is not True:
+                raise RuntimeError("ebd cancellation was not confirmed")
+            return result
 
     async def live_control(self, run_id: str, command: dict) -> dict:
         async with self._client(timeout=10.0) as c:

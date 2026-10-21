@@ -11,6 +11,9 @@ class UfoNativeAdapter(Adapter):
     name = "ufo_native"
 
     def render(self, spec, run_id):
+        if spec.params.get("operation") == "ufo_native_prompt":
+            from eb.ufo_training_prompt import render_prompt
+            return render_prompt(spec, run_id)
         plan = validate_job(spec)
         settings = get_settings()
         root = settings.data_root / "runs" / run_id
@@ -51,6 +54,11 @@ class UfoNativeAdapter(Adapter):
         if plan["operation"] == "ufo_native_live":
             mounts.append((str(root / "live-control"), "/control", "ro"))
         mounts.append((str(root / "native-plan.json"), "/plan.json", "ro"))
+        for name, source in plan.get("code_sources", {}).items():
+            from pathlib import Path
+            path = Path(source["path"])
+            mounts.extend(((str(path), f"/sources/{name}", "ro"),
+                           (str(path.parent / "manifest.json"), f"/sources/{name}-manifest.json", "ro")))
         return RenderedJob(
             image=spec.image,
             command=["python", "-m", "eb.runners.ufo_native_package", "--plan", "/plan.json"],
@@ -61,6 +69,8 @@ class UfoNativeAdapter(Adapter):
                     else {}
                 ),
                 "EB_RUN_ID": run_id,
+                **({"PYTHONPATH": "/sources/ufo:/sources/rlinf:/opt/eb-native"}
+                   if plan.get("code_sources") else {}),
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONUNBUFFERED": "1",
                 "MUJOCO_GL": "egl" if spec.resources.gpus else "osmesa",

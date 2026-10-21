@@ -19,7 +19,7 @@ function setup(model, respond = async () => ({})) {
     api: async (path, init) => { calls.push([path, init]); return respond(path, init); },
   });
   const code = ts.transpile(source.replace(/^import .*;$/gm, ''), { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None });
-  vm.runInContext(`${code}\nglobalThis.subject = { check, submit, refresh, preview, busy, error, sourceName, sourcePath, backend, profile, lastJob, status };`, context);
+  vm.runInContext(`${code}\nglobalThis.subject = { check, submit, refresh, preview, busy, error, sourceName, sourcePath, backend, profile, lastJob, status, promptSeed, promptSamples, promptInputValid, currentModel, trained, exportChildren };`, context);
   return { ...context.subject, calls, events, timers, watchers, cleanup: () => cleanup() };
 }
 
@@ -96,5 +96,70 @@ test('active jobs stop automatic polling after the ten-minute budget', async () 
   }
   assert.equal(polls, 120);
   assert.equal(s.timers.size, 0);
+  s.cleanup();
+});
+
+test('trained UFO model derives task prompts only from a preview, preserving source readiness', async () => {
+  const model = { id: 'mv_trained', train_page_id: 'trn_source', card: {
+    schema_version: 'eb/rpo-ufo-native-trained-model/v1', readiness: 'prompt_required',
+    training_provenance: 'platform', run_id: 'run_train', counts: { optimizer_steps: 112 },
+  } };
+  let failed = false, complete = false;
+  const child = { id: 'mv_prompted', card: { schema_version: 'eb/rpo-ufo-native-model/v1' } };
+  const s = setup(model, async path => {
+    if (path.endsWith('/preview')) return { plan: { hash: 'prompt-plan' }, resources: { gpus: 0 } };
+    if (path.endsWith('/prompt')) {
+      if (!failed) { failed = true; throw new Error('temporary prompt failure'); }
+      return { id: 'job_prompt', status: 'queued' };
+    }
+    return { model: { id: model.id, card: model.card },
+      jobs: [{ id: 'job_prompt', status: complete ? 'succeeded' : 'running' }],
+      exports: complete ? [child] : [] };
+  });
+  await s.submit();
+  assert.equal(s.calls.length, 0, 'prompt submission requires a checked plan');
+  assert.equal(s.trained.value, true);
+  assert.equal(s.promptSeed.value, 71000);
+  assert.equal(s.promptSamples.value, 16384);
+  await s.check('prompt');
+  assert.equal(s.calls[0][0], '/ufo-native/models/mv_trained/prompt/preview');
+  assert.deepEqual(JSON.parse(s.calls[0][1].body), { seed: 71000, num_samples: 16384 });
+  await s.submit();
+  assert.match(s.error.value, /temporary prompt failure/);
+  await s.submit();
+  const writes = s.calls.filter(([path]) => path.endsWith('/prompt'));
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0][1].headers['Idempotency-Key'], writes[1][1].headers['Idempotency-Key']);
+  assert.deepEqual(JSON.parse(writes[1][1].body), {
+    seed: 71000, num_samples: 16384, preview_hash: 'prompt-plan',
+  });
+  assert.equal(s.timers.size, 1);
+  complete = true;
+  const [id, poll] = s.timers.entries().next().value;
+  s.timers.delete(id); await poll();
+  assert.equal(s.timers.size, 0);
+  assert.equal(s.status.value.exports[0].id, child.id);
+  assert.equal(s.exportChildren.value.length, 0, 'a derived prompt package is not an ONNX export');
+  assert.equal(s.currentModel.value.train_page_id, 'trn_source', 'lightweight status keeps training lineage');
+  assert.equal(model.card.readiness, 'prompt_required');
+  assert.equal(s.currentModel.value.card.readiness, 'prompt_required');
+  s.cleanup();
+});
+
+test('prompt inputs invalidate stale previews and reject unsupported sampling budgets', async () => {
+  let resolve;
+  const s = setup({ id: 'mv_trained', card: { schema_version: 'eb/rpo-ufo-native-trained-model/v1' } },
+    () => new Promise(done => { resolve = done; }));
+  const pending = s.check('prompt');
+  s.promptSeed.value = 71001;
+  s.watchers[0][1]();
+  resolve({ plan: { hash: 'old-seed' } });
+  await pending;
+  assert.equal(s.preview.value, null);
+  s.promptSamples.value = 257;
+  assert.equal(s.promptInputValid.value, false);
+  await s.check('prompt');
+  assert.equal(s.calls.length, 1, 'invalid inputs are not sent to the API');
+  assert.match(s.error.value, /256/);
   s.cleanup();
 });

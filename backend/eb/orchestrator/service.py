@@ -42,6 +42,8 @@ async def validate_flat_warm_start_submission(session, spec):
 
 
 def _stack_mount_destination(mounts: list[tuple[str, str, str]]) -> str:
+    if any(destination == "/sources/rlinf" for _, destination, _ in mounts):
+        return "/sources/rlinf"
     receipt = "/workspace/source-receipts/rlinf"
     return receipt if any(destination == receipt for _, destination, _ in mounts) else "/workspace/rlinf"
 
@@ -196,8 +198,37 @@ class Orchestrator:
             if existing:
                 return existing
         await validate_flat_warm_start_submission(session, spec)
+        from eb.ufo_training import TEMPLATE as UFO_TRAIN_TEMPLATE, DATA_OPERATION as UFO_DATA_OPERATION
+        native_training = spec.params.get("template_id") == UFO_TRAIN_TEMPLATE
+        native_data = spec.params.get("operation") == UFO_DATA_OPERATION
+        from eb.ufo_failure_probe import OPERATION as FAILURE_PROBE_OPERATION
+        failure_probe = spec.params.get("operation") == FAILURE_PROBE_OPERATION
+        if failure_probe:
+            if principal.startswith('agent:'):
+                raise PermissionError('GPU failure diagnostics require an operator')
+            from eb.ufo_failure_probe import validate_submission as validate_failure_probe
+            await validate_failure_probe(session, spec)
+        from eb.ufo_native_baseline import OPERATION as BASELINE_OPERATION
+        native_baseline = spec.params.get("operation") == BASELINE_OPERATION
+        if native_baseline:
+            if principal.startswith('agent:'):
+                raise PermissionError('Native training baseline requires an operator')
+            from eb.ufo_native_baseline_service import validate_submission as validate_baseline_submission
+            await validate_baseline_submission(session, spec)
+        from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
+        grounded_data = spec.params.get("operation") == GROUNDED_OPERATION
+        if grounded_data:
+            if principal.startswith('agent:'):
+                raise PermissionError('A1 reference candidate preparation requires an operator')
+            from eb.ufo_grounded_reference import validate_submission as validate_grounded_submission
+            await validate_grounded_submission(session, spec)
+        if native_training or native_data:
+            if principal.startswith('agent:'):
+                raise PermissionError('Native training and data preparation require an operator')
+            from eb.ufo_training_service import validate_submission as validate_train_submission
+            await validate_train_submission(session, spec)
         from eb.ufo_native import ENV_ID as UFO_NATIVE_ENV, OPERATIONS as UFO_NATIVE_OPERATIONS
-        if spec.embodiment_env_id == UFO_NATIVE_ENV or spec.params.get('operation') in UFO_NATIVE_OPERATIONS:
+        if (spec.embodiment_env_id == UFO_NATIVE_ENV or spec.params.get('operation') in UFO_NATIVE_OPERATIONS) and not (native_training or native_data or grounded_data or native_baseline or failure_probe):
             if principal.startswith('agent:'):
                 raise PermissionError('Native deployment jobs require an operator; use ToolBus for platform Agent actions')
             from eb.orchestrator.ufo_native import validate_submission
@@ -307,6 +338,16 @@ class Orchestrator:
         spec = JobSpec.model_validate(
             {**job.spec, "kind": job.kind, "embodiment_env_id": job.embodiment_env_id, "api_version": "eb/v1"}
         )
+        if spec.params.get("template_id") == "rpo_ufo_fb_native" and spec.inputs.resume_from:
+            from eb.ufo_training_service import validate_submission as validate_native_resume
+            try:
+                await validate_native_resume(session, spec)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                job.status = transition(JobStatus(job.status), JobStatus.BLOCKED).value
+                job.error = f"Native resume source verification failed: {exc}"
+                job.version += 1
+                await session.commit()
+                raise
         job.status = transition(JobStatus(job.status), JobStatus.ADMITTED).value
         job.status = transition(JobStatus(job.status), JobStatus.PREPARING).value
         job.attempts += 1
@@ -421,6 +462,7 @@ class Orchestrator:
                     "cpus": spec.resources.cpus,
                     "memory_gb": spec.resources.memory_gb,
                     "network": spec.runtime.get("network", "bridge"),
+                    "hostname": spec.runtime.get("hostname"),
                     "devices": rendered.devices,
                     "workdir": rendered.workdir,
                     "kind": spec.kind.value,

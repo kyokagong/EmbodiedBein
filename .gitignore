@@ -30,3 +30,4 @@ backup/*.zst
 .worktrees/
 deploy/.sources/
 docs/progress/artifacts/
+docs/progress/evidence

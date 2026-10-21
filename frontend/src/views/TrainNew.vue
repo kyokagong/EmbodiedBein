@@ -24,6 +24,7 @@ const form = ref({
   micro_batch_size: "", global_batch_size: "", save_interval: "", val_check_interval: "", seed: "",
   ppo_max_epochs: "1",
   lr: "", value_lr: "", extra_text: "",
+  native_target: 112, native_buffer: 262144, native_seed: 42,
 });
 const selectedTemplate = computed(() => templates.value.find(t => t.id === form.value.template_id));
 const compatibleEnvironments = computed(() => environments.value.filter(e => e.status === "active" && e.usage === "train"
@@ -35,11 +36,14 @@ const defaultLabel = (key: string) => templateDefaults.value[key] ? `默认 ${te
 const isRpoWbc = computed(() => ["rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo"].includes(form.value.template_id));
 const isRpoAmp = computed(() => form.value.template_id === "rpo_v2_amp_stand_walk_ppo");
 const isRpoFlat = computed(() => form.value.template_id === "rpo_v2_flat_ppo");
+const isUfoNative = computed(() => selectedTemplate.value?.kind === "native_rl");
 const compatibleEmbodiments = computed(() => embodiments.value.filter(e => !selectedTemplate.value?.embodiment_id || e.id === selectedTemplate.value.embodiment_id));
 const compatibleDatasets = computed(() => {
   const environmentIds = new Set((embodiments.value.find(e => e.id === form.value.embodiment_id)?.envs || []).map((e: any) => e.id));
   return datasets.value.filter(d => d.usage !== "eval" && environmentIds.has(d.embodiment_env_id) &&
     (!selectedTemplate.value?.embodiment_env_id || d.embodiment_env_id === selectedTemplate.value.embodiment_env_id) &&
+    (!isUfoNative.value || (d.source_kind === "ufo_native_motion" && d.status === "validated" &&
+      d.validation?.scope === "ufo_native_motion_v1" && d.validation?.training_ready === true)) &&
     (!isRpoAmp.value || (d.purpose === "motion_prior" && d.validation?.training_ready === true && d.status === "validated")));
 });
 const compatibleWeights = computed(() => weights.value.filter(w =>
@@ -53,6 +57,7 @@ let controller: AbortController | undefined;
 let timer: number | undefined;
 let generation = 0;
 let disposed = false;
+let nativeSubmitKey = "";
 onUnmounted(() => { disposed = true; generation++; clearTimeout(timer); controller?.abort(); });
 
 onMounted(async () => {
@@ -83,7 +88,7 @@ watch(() => form.value.template_id, () => {
   form.value.base_model_id = "";
   form.value.image = "";
   form.value.gym_id = "";
-  if (isRpoAmp.value || isRpoFlat.value) form.value.gpus = 1;
+  if (isRpoAmp.value || isRpoFlat.value || isUfoNative.value) form.value.gpus = 1;
   for (const [field, key] of Object.entries({
     max_epochs: "runner.max_epochs", max_steps: "runner.max_steps",
     total_num_envs: "env.train.total_num_envs", eval_num_envs: "env.eval.total_num_envs",
@@ -100,6 +105,7 @@ watch(() => form.value.embodiment_id, () => {
   form.value.base_model_id = "";
 });
 watch(form, () => {
+  nativeSubmitKey = "";
   generation++;
   controller?.abort();
   clearTimeout(timer);
@@ -120,6 +126,9 @@ function payload() {
     lr: form.value.lr || null,
     value_lr: form.value.value_lr || null,
     extra_overrides: form.value.extra_text.split("\n").map(s => s.trim()).filter(Boolean),
+    ...(isUfoNative.value ? { native_training: { target_updates: Number(form.value.native_target),
+      buffer_size: Number(form.value.native_buffer), seed: Number(form.value.native_seed) },
+      preview_hash: preview.value?.preview_hash || null } : {}),
   };
 }
 async function refreshPreview() {
@@ -150,7 +159,9 @@ async function submit() {
   submitting.value = true;
   err.value = "";
   try {
-    const row = await api("/train", { method: "POST", body: JSON.stringify(payload()) });
+    if (isUfoNative.value && !nativeSubmitKey) nativeSubmitKey = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    const row = await api("/train", { method: "POST", body: JSON.stringify(payload()),
+      ...(isUfoNative.value ? { headers: { "Idempotency-Key": nativeSubmitKey } } : {}) });
     if (!disposed) await router.push(`/train/${row.id}`);
   } catch (e: any) { if (!disposed) err.value = e.message; }
   finally { submitting.value = false; }
@@ -176,11 +187,11 @@ async function submit() {
           <p class="muted xs">{{ selectedTemplate?.kind === 'sft' ? 'SFT：使用数据集监督微调。' : selectedTemplate?.kind === 'ppo' ? '在线 PPO：通过仿真交互训练，可不挂数据集。' : selectedTemplate?.kind === 'eval' ? '评估：运行模板指定的仿真套件。' : '按模板执行作业。' }}</p>
           <div class="grid2">
             <div><label class="form-label" for="train-gpus">GPU 数</label><select id="train-gpus" class="form-select" v-model.number="form.gpus"><option :value="1">1 卡</option><option :value="2">2 卡</option><option :value="4">4 卡</option></select></div>
-            <div v-if="isRpoWbc || isRpoFlat"><label class="form-label" for="train-rpo-image">镜像</label><input id="train-rpo-image" class="form-input" :value="selectedTemplate?.default_image" disabled /></div>
+            <div v-if="isRpoWbc || isRpoFlat || isUfoNative"><label class="form-label" for="train-rpo-image">镜像</label><input id="train-rpo-image" class="form-input" :value="selectedTemplate?.default_image" disabled /></div>
             <div v-else><label class="form-label" for="train-image">镜像</label><select id="train-image" class="form-select" v-model="form.image"><option value="">模板默认</option><option v-for="im in images" :key="im.id" :value="im.name">{{ im.name }}</option></select></div>
             <div><label class="form-label" for="train-emb">机器人 / 本体</label><select id="train-emb" class="form-select" v-model="form.embodiment_id" required><option value="">请选择兼容本体</option><option v-for="e in compatibleEmbodiments" :key="e.id" :value="e.id">{{ e.display_name || e.id }}</option></select></div>
             <div v-if="!isRpoWbc && !isRpoFlat"><label class="form-label" for="train-data">数据集（{{ selectedTemplate?.requires_dataset ? '必填' : '可选' }}）</label><select id="train-data" class="form-select" v-model="form.dataset_ids[0]" :required="selectedTemplate?.requires_dataset"><option value="">请选择</option><option v-for="d in compatibleDatasets" :key="d.id" :value="d.id">{{ d.name }} · {{ d.embodiment_env_id }}</option></select></div>
-            <div v-if="!isRpoWbc && !isRpoAmp && !isRpoFlat"><label class="form-label" for="train-base">基座模型（{{ selectedTemplate?.requires_base_model ? '必填' : '可选' }}）</label><select id="train-base" class="form-select" v-model="form.base_model_id" :required="selectedTemplate?.requires_base_model"><option value="">请选择</option><option v-for="w in compatibleWeights" :key="w.id" :value="w.id">{{ w.name }}</option></select><p v-if="selectedTemplate?.requires_base_model && !compatibleWeights.length" class="error xs">没有兼容基座模型，请先到“模型”页面下载或登记。</p></div>
+            <div v-if="!isRpoWbc && !isRpoAmp && !isRpoFlat && !isUfoNative"><label class="form-label" for="train-base">基座模型（{{ selectedTemplate?.requires_base_model ? '必填' : '可选' }}）</label><select id="train-base" class="form-select" v-model="form.base_model_id" :required="selectedTemplate?.requires_base_model"><option value="">请选择</option><option v-for="w in compatibleWeights" :key="w.id" :value="w.id">{{ w.name }}</option></select><p v-if="selectedTemplate?.requires_base_model && !compatibleWeights.length" class="error xs">没有兼容基座模型，请先到“模型”页面下载或登记。</p></div>
           </div>
           <p v-if="isRpoFlat" class="muted xs">官方 RPO-Flat：按完整速度、横移和转向指令训练，保留 20% 站立指令、地形混合及随机化，由 RLinf 执行 PPO。标准评估运行 100 个独立 20 秒案例，以至少 80 个通过为目标。</p>
           <p v-if="form.template_id === 'rpo_v2_wbc_stand_walk_ppo'" class="muted xs">第一阶段：平地直立或以 0.3 m/s 直行；上肢固定中立位，倒地立即终止。完成后用直立＋直行套件分别验证，不以训练回报代替通过率。</p>
@@ -194,6 +205,16 @@ async function submit() {
           <p v-if="isRpoAmp" class="muted xs">RPO AMP 使用已验证的训练动作集，经 RLinf 联合更新 PPO 策略与运动判别器。首期单 GPU；训练完成后仍须独立评估直立、行走和自然度。</p>
           <p v-if="form.template_id === 'libero_pi05_sft'" class="muted xs">默认冻结视觉语言模型，仅微调动作专家（train_expert_only）。基座已完成上游 LIBERO SFT，本作业继续微调。</p>
           <h3>训练超参数</h3>
+          <template v-if="isUfoNative">
+            <p class="muted xs">UFO 原生 FB-CPR-Aux，每卡 1024 个环境。按累计 agent 更新数分段保存；独立快评后再恢复下一段。</p>
+            <div class="grid2">
+              <div><label class="form-label" for="native-target">累计 agent 更新目标（16 的倍数）</label><input id="native-target" class="form-input" type="number" min="112" max="1000000" step="16" v-model.number="form.native_target" /></div>
+              <div><label class="form-label" for="native-buffer">每卡 Replay transition 容量</label><input id="native-buffer" class="form-input" type="number" min="32768" max="1048576" step="1024" v-model.number="form.native_buffer" /></div>
+              <div><label class="form-label" for="native-seed">随机种子</label><input id="native-seed" class="form-input" type="number" min="0" max="1000000" v-model.number="form.native_seed" /></div>
+            </div>
+            <p class="muted xs">原生状态与全 rank Replay 可恢复；环境、RNG 和 latent 缓存重新初始化。训练完成后仍须独立验证任务能力。</p>
+          </template>
+          <template v-else>
           <p class="muted xs">已填入模板覆盖值；空白表示使用训练配置中的默认值。实际生效值见右侧预览。</p>
           <div class="grid2">
             <div><label class="form-label" for="train-epochs">max_epochs{{ selectedTemplate?.kind === 'ppo' ? '（训练迭代次数）' : '' }}</label><input id="train-epochs" class="form-input" type="number" min="1" step="1" v-model="form.max_epochs" :placeholder="defaultLabel('runner.max_epochs')" /></div>
@@ -216,6 +237,7 @@ async function submit() {
           </div>
           <label class="form-label" for="train-extra">高级 Hydra Overrides（一行一个）</label><textarea id="train-extra" class="form-textarea" v-model="form.extra_text" placeholder="runner.save_interval=20" />
           <p class="muted xs">高级覆盖与上方字段同名时，以高级覆盖为准。</p>
+          </template>
           <template v-if="form.template_id === 'libero_pi05_sft'">
             <label class="form-label" for="pipeline-ppo-epochs">管线后续 PPO max_epochs</label>
             <input id="pipeline-ppo-epochs" class="form-input" type="number" min="1" max="10000" step="1" v-model="form.ppo_max_epochs" />

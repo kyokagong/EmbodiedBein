@@ -29,7 +29,11 @@ async def validate_submission(session, spec):
     from eb.api.routes_ufo_native import ActionIn, EvalIn, ImportIn, action_plan, import_plan, spec_for
 
     plan = validate_job(spec)
-    if plan["operation"] == "ufo_native_import":
+    if plan["operation"] == "ufo_native_prompt":
+        from eb.ufo_training_prompt import prompt_plan
+        expected = await prompt_plan(session, plan["model_id"], seed=plan["seed"],
+                                     num_samples=plan["num_samples"])
+    elif plan["operation"] == "ufo_native_import":
         expected = await import_plan(ImportIn(name=plan["name"], path=plan["source"]["path"]))
     elif plan["operation"] == "ufo_native_live":
         from eb.api.routes_ufo_live import LiveIn, build_plan
@@ -96,6 +100,10 @@ async def collect_native(session, job, run, outputs):
     ):
         raise ValueError("Native output receipt identity differs")
     operation = plan["operation"]
+    if operation == "ufo_native_prompt":
+        from eb.ufo_training_prompt import collect_prompt
+        await collect_prompt(session, job, run, outputs, plan, value)
+        return
     if operation in ("ufo_native_import", "ufo_native_export"):
         package = "model" if operation == "ufo_native_import" else "payload"
         root = outputs / package
@@ -161,8 +169,9 @@ async def collect_native(session, job, run, outputs):
                     "simulation_only": True,
                     "readiness": "export_verified" if package == "payload" else "imported",
                     "source_model_id": plan.get("model_id"),
-                    "training_provenance": "external_declared",
-                    "prompt_derivation": "external_unverified",
+                    "training_provenance": manifest.get("training_provenance", "external_declared"),
+                    "prompt_derivation": manifest.get("prompt_derivation", "external_unverified"),
+                    "prompt_binding": manifest.get("prompt_binding"),
                     "codec": manifest["codec"],
                     "source_fingerprint": plan_hash(
                         {"source": plan["source"], "image_digest": plan["image_digest"]}

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from eb.api.deps import PrincipalDep, SessionDep
@@ -37,6 +37,14 @@ def _memory_gb(template_id: str, gpus: int) -> int:
     return 64
 
 
+class NativeTrainingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_updates: int = Field(default=112, ge=112, le=1000000, strict=True)
+    buffer_size: int = Field(default=262144, ge=32768, le=1048576, strict=True)
+    seed: int = Field(default=42, ge=0, le=1000000, strict=True)
+    timeout_seconds: int = Field(default=21600, ge=60, le=21600, strict=True)
+
+
 class TrainIn(BaseModel):
     name: str = Field(min_length=1, max_length=120, pattern=r"^[\w .-]+$")
     model_name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -65,10 +73,19 @@ class TrainIn(BaseModel):
     global_batch_size: int | None = Field(default=None, ge=1)
     checkpoint_run_id: str | None = None
     checkpoint_step: int | None = Field(default=None, ge=0)
+    native_training: NativeTrainingIn | None = None
+    preview_hash: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
 
 
 class LiberoPipelineIn(TrainIn):
     ppo_max_epochs: int = Field(default=1, ge=1, le=10000, strict=True)
+
+
+class NativeReconfigureIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    num_envs_per_rank: Literal[2048]
+    buffer_size: int = Field(ge=65536, le=1048576, strict=True)
+    replay_policy: Literal["fresh"]
 
 
 class ResumeTrainIn(BaseModel):
@@ -77,6 +94,13 @@ class ResumeTrainIn(BaseModel):
     max_steps: int | None = Field(default=None, ge=1)
     max_epochs: int | None = Field(default=None, ge=1)
     checkpoint_step: int | None = Field(default=None, ge=1)
+    target_updates: int | None = Field(default=None, ge=112, le=1000000, strict=True)
+    timeout_seconds: int | None = Field(default=None, ge=60, le=21600, strict=True)
+    preview_hash: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$", strict=True)
+    native_reconfigure: NativeReconfigureIn | None = None
+    native_cuda_allocator: Literal["expandable_segments"] | None = None
+    native_experiment_target_updates: int | None = Field(default=None, ge=112, le=1000000, strict=True)
+    native_new_budget: bool = Field(default=False, strict=True)
 
 
 _RESUME_TERMINAL = {"succeeded", "failed", "timeout", "cancelled", "infra_failed"}
@@ -96,6 +120,18 @@ def _replace_override(overrides: list[str], key: str, value: int) -> list[str]:
     return [item for item in overrides if item.split("=", 1)[0] != key] + [f"{key}={value}"]
 
 
+async def _lock_native_train_submission(session, key: str) -> None:
+    import hashlib
+    from sqlalchemy import func
+    lock_id = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big", signed=True)
+    await session.execute(select(func.pg_advisory_xact_lock(lock_id)))
+
+
+def native_resume_preview_hash(spec: JobSpec) -> str:
+    from eb.ufo_native import plan_hash
+    return plan_hash(spec.model_dump(mode="json"))
+
+
 def build_resume_spec(source: JobSpec, source_train_job_id: str, checkpoint: dict,
                       body: ResumeTrainIn) -> JobSpec:
     from eb.checkpoints import resume_fingerprint
@@ -104,6 +140,83 @@ def build_resume_spec(source: JobSpec, source_train_job_id: str, checkpoint: dic
         raise ValueError("checkpoint 与源训练配置指纹不一致")
     template = get_template(str(source.params.get("template_id")))
     image = checkpoint.get("image_digest") or source.image
+    if template.kind == "native_rl":
+        from copy import deepcopy
+        from eb.ufo_training import native_arguments, training_fingerprint
+        if body.target_updates is None or body.max_epochs is not None or body.max_steps is not None:
+            raise ValueError("UFO 恢复需要累计 target_updates，不支持 max_epochs/max_steps")
+        if checkpoint.get("mode") != "ufo_native_state":
+            raise ValueError("UFO checkpoint 缺少全 rank 原生状态")
+        binding = checkpoint.get("native_resume_source")
+        if (not isinstance(binding, dict) or binding.get("schema_version") != "eb/ufo-native-resume-source/v1"
+                or binding.get("run_id") != checkpoint["run_id"]):
+            raise ValueError("Native resume source binding is missing or incompatible")
+        params = deepcopy(source.params)
+        plan = params["native_train_plan"]
+        source_plan = deepcopy(plan)
+        if body.native_experiment_target_updates is not None:
+            plan["experiment_target_updates"] = body.native_experiment_target_updates
+        goal = plan.get("experiment_target_updates")
+        if goal is not None and (goal < body.target_updates or goal % 16):
+            raise ValueError("Native experiment target must cover the interval and align to 16 updates")
+        if body.native_cuda_allocator is not None:
+            plan["cuda_allocator"] = body.native_cuda_allocator
+        policy = source.policy.model_copy(deep=True)
+        if body.native_new_budget and body.timeout_seconds is None:
+            raise ValueError("native_new_budget requires explicit timeout_seconds")
+        if body.timeout_seconds is not None:
+            source_timeout = plan.get("segment_timeout_seconds", 21600)
+            if (type(source_timeout) is not int or not body.native_new_budget and (
+                    body.timeout_seconds > source_timeout
+                    or body.timeout_seconds / 3600 > source.policy.timeout_h)):
+                raise ValueError("timeout_seconds 不能扩大源训练的本段墙钟预算")
+            if body.native_new_budget:
+                plan["budget_renewal"] = {"source_train_job_id": source_train_job_id,
+                    "source_timeout_seconds": source_timeout,
+                    "source_policy_timeout_h": source.policy.timeout_h,
+                    "timeout_seconds": body.timeout_seconds}
+            plan["segment_timeout_seconds"] = body.timeout_seconds
+            policy.timeout_h = body.timeout_seconds / 3600
+        counts = checkpoint["manifest"]["counts"]
+        plan.update(target_updates=body.target_updates, start_updates=counts["optimizer_steps"],
+                    start_local_time=counts["local_time"],
+                    resume={"host_path": checkpoint["native_path"], "checkpoint_path": "/resume-native/checkpoint",
+                            "step": checkpoint["step"]})
+        mode = "ufo_native_state"
+        if body.native_reconfigure is not None:
+            from eb.ufo_training_checkpoint import validate_reconfigured_resume
+            image = checkpoint.get("reconfigure_image_digest")
+            if not isinstance(image, str) or not image.startswith("sha256:"):
+                raise ValueError("Native reconfiguration requires a verified runtime image")
+            options = body.native_reconfigure
+            plan["identity"].update(image_digest=image, num_envs_per_rank=options.num_envs_per_rank,
+                                    buffer_size=options.buffer_size)
+            plan.update(image_digest=image, fingerprint=training_fingerprint(plan["identity"]))
+            plan["resume"].update(replay_policy=options.replay_policy, source_plan=source_plan)
+            validate_reconfigured_resume(plan, source_plan)
+            mode = "ufo_native_state_fresh_replay"
+        plan["native_args"] = native_arguments(plan)
+        if body.native_reconfigure is None and training_fingerprint(plan["identity"]) != checkpoint["compatibility_fingerprint"]:
+            raise ValueError("UFO 恢复配置改变了兼容性指纹")
+        params.update(native_train_plan=plan, resume_mode=mode, resume_step=checkpoint["step"],
+                      native_resume_source=deepcopy(binding),
+                      source_train_job_id=source_train_job_id,
+                      model_name=(body.model_name or body.name).strip())
+        return source.model_copy(deep=True, update={"name": body.name, "image": image, "params": params,
+            "policy": policy,
+            "inputs": source.inputs.model_copy(update={"resume_from": checkpoint["run_id"]})})
+    if body.native_reconfigure is not None:
+        raise ValueError("native_reconfigure 只支持 UFO 原生恢复")
+    if body.native_cuda_allocator is not None:
+        raise ValueError("native_cuda_allocator 只支持 UFO 原生恢复")
+    if body.native_experiment_target_updates is not None:
+        raise ValueError("native_experiment_target_updates 只支持 UFO 原生恢复")
+    if body.native_new_budget:
+        raise ValueError("native_new_budget 只支持 UFO 原生恢复")
+    if body.timeout_seconds is not None:
+        raise ValueError("timeout_seconds 只支持 UFO 原生恢复")
+    if body.target_updates is not None:
+        raise ValueError("target_updates 只支持 UFO 原生恢复")
     if template.kind == "sft":
         if body.max_steps is None or body.max_epochs is not None:
             raise ValueError("SFT 恢复只允许设置 max_steps")
@@ -194,7 +307,7 @@ async def train_templates(principal: PrincipalDep) -> dict:
                 "blocked_reason": t.blocked_reason,
                 "native_embodiments": t.native_embodiments,
             }
-            for t in TEMPLATES if t.kind in {"sft", "ppo"}
+            for t in TEMPLATES if t.kind in {"sft", "ppo", "native_rl"}
         ]
     }
 
@@ -210,7 +323,7 @@ async def list_train(session: SessionDep, principal: PrincipalDep, status: str |
             continue
         if not job:
             try:
-                if get_template(row.template_id).kind not in {"sft", "ppo"}:
+                if get_template(row.template_id).kind not in {"sft", "ppo", "native_rl"}:
                     continue
             except KeyError:
                 continue
@@ -230,6 +343,11 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
     except KeyError as e:
         raise ValueError(f"未知模板 {body.template_id}") from e
     require_template_ready(tpl)
+    if tpl.kind == "native_rl":
+        from eb.ufo_training_service import build_spec
+        return await build_spec(body, session)
+    if body.native_training is not None:
+        raise ValueError("native_training 只支持 UFO 原生模板")
     if tpl.kind in {"sft", "ppo"} and not (body.model_name or "").strip():
         raise ValueError("产出模型名称不能为空")
     emb = await session.get(EmbodimentRow, body.embodiment_id)
@@ -400,24 +518,30 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
 async def preview_train(body: TrainIn, session: SessionDep, principal: PrincipalDep) -> dict:
     from eb.adapters import get_adapter
     try:
-        if get_template(body.template_id).kind not in {"sft", "ppo"}:
+        if get_template(body.template_id).kind not in {"sft", "ppo", "native_rl"}:
             raise ValueError("请在评估或数据菜单创建此类任务")
         spec = await _build_spec(body, session)
         rendered = get_adapter(spec).render(spec, "run_preview")
     except (ValueError, KeyError) as e:
         raise HTTPException(400, str(e)) from e
     return {"template":body.template_id, "model_name": spec.params.get("model_name"),
+            "preview_hash": "sha256:" + spec.canonical_hash(),
+            "native_training": spec.params.get("native_train_plan"),
             "overrides":build_overrides(body.template_id, body.gpus, body.name, spec.overrides), "argv":rendered.command,
             "mounts":[f"{src} → {dst} {mode}" for src,dst,mode in rendered.mounts],
             "inputs":spec.inputs.model_dump(), "image":rendered.image, "resources":spec.resources.model_dump()}
 
 
 @router.post("/train")
-async def submit_train(body: TrainIn, session: SessionDep, principal: PrincipalDep) -> dict:
+async def submit_train(body: TrainIn, session: SessionDep, principal: PrincipalDep,
+                       idempotency_key: str | None = Header(default=None, min_length=1, max_length=120,
+                                                           alias="Idempotency-Key")) -> dict:
     try:
-        if get_template(body.template_id).kind not in {"sft", "ppo"}:
+        if get_template(body.template_id).kind not in {"sft", "ppo", "native_rl"}:
             raise ValueError("请在评估或数据菜单创建此类任务")
         spec = await _build_spec(body, session)
+        if body.template_id == "rpo_ufo_fb_native" and body.preview_hash != "sha256:" + spec.canonical_hash():
+            raise ValueError("UFO 训练预览已过期，请重新预览冻结输入")
         from eb.adapters import get_adapter
         rendered = get_adapter(spec).render(spec, "run_preview")
     except (ValueError, KeyError) as e:
@@ -428,8 +552,23 @@ async def submit_train(body: TrainIn, session: SessionDep, principal: PrincipalD
     run_dir = ""  # Set from the actual Run, never a second trn_* directory.
     image = rendered.image
     ov = build_overrides(body.template_id, body.gpus, body.name, spec.overrides)
+    idem = None
+    if tpl.kind == "native_rl":
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise HTTPException(400, "UFO 训练需要 Idempotency-Key")
+        idem = f"ufo-train:{principal.id}:{idempotency_key}"
+        await _lock_native_train_submission(session, idem)
+        existing = await session.scalar(select(Job).where(Job.idem_key == idem))
+        if existing:
+            if JobSpec.model_validate(existing.spec).canonical_hash() != spec.canonical_hash():
+                raise HTTPException(409, "Idempotency-Key 已用于不同的训练配置")
+            existing_train = await session.scalar(select(TrainJob).where(TrainJob.job_id == existing.id))
+            if not existing_train:
+                raise HTTPException(409, "训练请求正在创建，请稍后查询")
+            await _sync_run(session, existing_train)
+            return _job_out(existing_train)
     try:
-        job = await orch.submit(session, spec, principal.id, None, commit=False)
+        job = await orch.submit(session, spec, principal.id, idem, commit=False)
     except (ValueError, PermissionError) as e:
         raise HTTPException(400, str(e)) from e
     row = TrainJob(
@@ -502,7 +641,17 @@ async def get_train(tid: str, session: SessionDep, principal: PrincipalDep) -> d
     if not row:
         raise HTTPException(404)
     await _sync_run(session, row)
-    return _job_out(row)
+    result = _job_out(row)
+    if row.template_id == "rpo_ufo_fb_native":
+        children = (await session.scalars(select(TrainJob).where(
+            TrainJob.params["source_train_job_id"].astext == tid,
+            TrainJob.template_id == row.template_id,
+        ).order_by(TrainJob.created_at.desc()).limit(20))).all()
+        result["continuations"] = []
+        for child in children:
+            await _sync_run(session, child)
+            result["continuations"].append(_job_out(child))
+    return result
 
 
 async def _resume_context(tid: str, session, *, checkpoint_step: int | None = None):
@@ -522,7 +671,7 @@ async def _resume_context(tid: str, session, *, checkpoint_step: int | None = No
                                     "embodiment_env_id": job.embodiment_env_id,
                                     "api_version": "eb/v1"})
     template = get_template(str(source.params.get("template_id")))
-    if not template.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")) or template.kind not in {"sft", "ppo"}:
+    if template.id != "rpo_ufo_fb_native" and (not template.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")) or template.kind not in {"sft", "ppo"}):
         raise ValueError("该训练模板尚未验证 checkpoint 恢复")
     runs = (await session.scalars(select(Run).where(Run.job_id == job.id))).all()
     settings = get_settings()
@@ -542,6 +691,9 @@ async def _resume_context(tid: str, session, *, checkpoint_step: int | None = No
     checkpoint["image_digest"] = image_digest
     if checkpoint["compatibility_fingerprint"] != resume_fingerprint(source):
         raise ValueError("checkpoint 与源训练冻结配置不一致")
+    if template.id == "rpo_ufo_fb_native":
+        from eb.ufo_training_service import build_resume_source_binding
+        checkpoint["native_resume_source"] = await build_resume_source_binding(session, source_run, checkpoint)
     return row, job, source, checkpoint
 
 
@@ -560,7 +712,14 @@ async def get_resume_candidate(tid: str, session: SessionDep, principal: Princip
     except (ValueError, OSError) as exc:
         return {"available": False, "reason": str(exc)}
     template = get_template(str(source.params.get("template_id")))
-    if template.kind == "sft":
+    if template.kind == "native_rl":
+        if ((source.params.get("native_train_plan") or {}).get("full_state_finite_required") is not True
+                or checkpoint.get("full_state_finite_verified") is not True):
+            return {"available": False, "reason": "历史运行未记录完整模型及优化器有限性验证；请用当前任务镜像新建训练。"}
+        termination = "target_updates"
+        suggested = next((step for step in (512, 1008, 5008, 10000) if step > checkpoint["step"]),
+                         checkpoint["step"] + 16)
+    elif template.kind == "sft":
         termination = "max_steps"
         suggested = max(_source_limit(source, "runner.max_steps"), checkpoint["step"] + 100)
     else:
@@ -581,6 +740,7 @@ async def preview_resume(tid: str, body: ResumeTrainIn, session: SessionDep,
     from eb.adapters import get_adapter
     try:
         _, _, source, checkpoint = await _resume_context(tid, session, checkpoint_step=body.checkpoint_step)
+        await _resolve_native_reconfigure_image(body, checkpoint)
         spec = build_resume_spec(source, tid, checkpoint, body)
         rendered = get_adapter(spec).render(spec, "run_preview")
     except LookupError as exc:
@@ -589,11 +749,30 @@ async def preview_resume(tid: str, body: ResumeTrainIn, session: SessionDep,
         raise HTTPException(422, str(exc)) from exc
     return {
         "source_run_id": checkpoint["run_id"], "step": checkpoint["step"],
-        "mode": checkpoint["mode"], "state_coverage": checkpoint["state_coverage"],
+        "mode": spec.params.get("resume_mode", checkpoint["mode"]),
+        "state_coverage": {**checkpoint["state_coverage"], **(
+            {"replay_per_rank": "reinitialized"} if body.native_reconfigure else {})},
+        **({"preview_hash": native_resume_preview_hash(spec),
+            "native_resume_source": spec.params["native_resume_source"],
+            "timeout_seconds": spec.params["native_train_plan"].get("segment_timeout_seconds", 21600),
+            "native_training_plan": spec.params["native_train_plan"]}
+           if source.params.get("template_id") == "rpo_ufo_fb_native" else {}),
         "argv": rendered.command, "mounts": [f"{src} → {dst} {mode}" for src, dst, mode in rendered.mounts],
         "inputs": spec.inputs.model_dump(), "image": rendered.image,
         "resources": spec.resources.model_dump(),
+        "policy": spec.policy.model_dump(mode="json"),
     }
+
+
+async def _resolve_native_reconfigure_image(body: ResumeTrainIn, checkpoint: dict) -> None:
+    if body.native_reconfigure is None:
+        return
+    from eb.store.ebd import EbdClient
+    from eb.ufo_training import RECONFIGURE_IMAGE
+    image = await EbdClient().image_info(RECONFIGURE_IMAGE)
+    if image.get("ok") is not True or not image.get("digest", "").startswith("sha256:"):
+        raise ValueError("2048-environment native runtime image is unavailable")
+    checkpoint["reconfigure_image_digest"] = image["digest"]
 
 
 @router.post("/train/{tid}/resume")
@@ -604,12 +783,18 @@ async def submit_resume(tid: str, body: ResumeTrainIn, session: SessionDep,
     from eb.adapters import get_adapter
     try:
         source_row, _, source, checkpoint = await _resume_context(tid, session, checkpoint_step=body.checkpoint_step)
+        await _resolve_native_reconfigure_image(body, checkpoint)
         spec = build_resume_spec(source, tid, checkpoint, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except (ValueError, OSError, KeyError) as exc:
         raise HTTPException(422, str(exc)) from exc
+    if (source.params.get("template_id") == "rpo_ufo_fb_native"
+            and body.preview_hash != native_resume_preview_hash(spec)):
+        raise HTTPException(409, "UFO 恢复预览已过期，请重新预览冻结输入")
     idem = f"train-resume:{principal.id}:{idempotency_key}"
+    if source.params.get("template_id") == "rpo_ufo_fb_native":
+        await _lock_native_train_submission(session, idem)
     existing = await session.scalar(select(Job).where(Job.idem_key == idem))
     if existing:
         if JobSpec.model_validate(existing.spec).model_dump(mode="json") != spec.model_dump(mode="json"):
@@ -634,7 +819,7 @@ async def submit_resume(tid: str, body: ResumeTrainIn, session: SessionDep,
         dataset_ids=list(source_row.dataset_ids or []), base_model_id=source_row.base_model_id,
         gpus_allocated=[], ray_port=ray_port_for(job.id), params=spec.params,
         hydra_overrides=build_overrides(template.id, spec.resources.gpus, spec.name, spec.overrides)
-            + [f"runner.resume_dir=/workspace/resume/global_step_{checkpoint['step']}"],
+            + ([] if template.kind == "native_rl" else [f"runner.resume_dir=/workspace/resume/global_step_{checkpoint['step']}"]),
         run_dir="", auto_register_latest=False, job_id=job.id,
     )
     train._inputs = spec.inputs.model_dump()
@@ -657,6 +842,15 @@ async def list_checkpoints(tid: str, session: SessionDep, principal: PrincipalDe
     runs = (await session.scalars(select(Run).where(Run.job_id == row.job_id))) if row.job_id else []
     for run in runs:
         root = get_settings().data_root / "runs" / run.id
+        if getattr(row, "template_id", None) == "rpo_ufo_fb_native":
+            from eb.ufo_training_checkpoint import read_native_checkpoint
+            try:
+                published = read_native_checkpoint(root, run.id)
+                items.append({**published, "name": f"原生 agent 更新 {published['step']}",
+                              "complete": True, "weights_only": False})
+            except (ValueError, OSError):
+                pass
+            continue
         for directory in (root / "output").glob("*/checkpoints/global_step_*"):
             suffix = directory.name.removeprefix("global_step_")
             if not suffix.isdigit():
@@ -677,6 +871,24 @@ async def list_checkpoints(tid: str, session: SessionDep, principal: PrincipalDe
             except (ValueError, OSError):
                 pass
     return {"items": sorted(items, key=lambda item: (item["step"], item["complete"]), reverse=True)}
+
+
+@router.get("/train/{tid}/evidence")
+async def native_training_evidence(tid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    """Read existing native analysis without mutating historical Run metadata."""
+    row = await session.get(TrainJob, tid)
+    if not row or row.template_id != "rpo_ufo_fb_native":
+        raise HTTPException(404, "没有原生训练分析")
+    job = await session.get(Job, row.job_id) if row.job_id else None
+    run = await session.scalar(select(Run).where(Run.job_id == row.job_id).order_by(Run.attempt.desc()))
+    if not job or not run or job.status != "succeeded" or run.status != "finished":
+        return {"available": False, "reason": "原生训练段尚未成功完成"}
+    from eb.orchestrator.collect import read_native_training_evidence
+    try:
+        return await read_native_training_evidence(get_settings().data_root / "runs" / run.id, run.id,
+            target_updates=job.spec["params"]["native_train_plan"]["target_updates"])
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise HTTPException(409, f"原生训练证据不完整：{exc}") from exc
 
 
 

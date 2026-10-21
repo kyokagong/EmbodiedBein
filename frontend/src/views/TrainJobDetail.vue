@@ -10,6 +10,8 @@ const router = useRouter();
 const job = ref<any>(null);
 const ckpts = ref<any[]>([]);
 const metrics = ref<any>({ series: {} });
+const trainingEvidence = ref<any>(null);
+const evidenceMediaErrors = ref<Record<string, boolean>>({});
 const logs = ref<string[]>([]);
 const err = ref("");
 const notice = ref("");
@@ -24,6 +26,9 @@ const resumeTarget = ref<number | null>(null);
 const resumePreview = ref<any>(null);
 const resumeBusy = ref(false);
 const resumeKey = ref("");
+watch([resumeName, resumeModelName, resumeTarget], () => {
+  resumePreview.value = null;
+}, { flush: "sync" });
 function metricPriority(name: string) {
   if (name.startsWith("train/") || name.startsWith("ufo/")) return name.includes("loss") ? 0 : 1;
   return name.startsWith("time/") ? 3 : 2;
@@ -36,6 +41,10 @@ const singleSample = computed(() => metricNames.value.length > 0 &&
 const isSft = computed(() => job.value?.kind === "sft" || job.value?.template_id?.endsWith("_sft"));
 const isRpo = computed(() => ["rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo"].includes(job.value?.template_id));
 const isRpoFlat = computed(() => job.value?.template_id === "rpo_v2_flat_ppo");
+const isUfoNative = computed(() => job.value?.kind === "native_rl");
+const experimentTarget = computed(() => job.value?.params?.native_train_plan?.experiment_target_updates
+  ?? job.value?.continuations?.find((child: any) => child.params?.native_train_plan?.experiment_target_updates)
+    ?.params?.native_train_plan?.experiment_target_updates);
 const latestMetric = (name: string) => {
   const points = metrics.value?.series?.[name] || [];
   return points.length ? points[points.length - 1].value : null;
@@ -49,6 +58,8 @@ watch(() => route.params.id, () => {
   job.value = null;
   ckpts.value = [];
   metrics.value = { series: {} };
+  trainingEvidence.value = null;
+  evidenceMediaErrors.value = {};
   logs.value = [];
   runId.value = "";
   notice.value = "";
@@ -70,6 +81,7 @@ async function load() {
     const row = await api(`/train/${id}`, { signal });
     if (current !== generation) return;
     job.value = row;
+    trainingEvidence.value = row.metrics_summary?.training_evidence || null;
     if (!modelName.value) modelName.value = row.params?.model_name || row.name;
     if (row.kind === "eval" && row.job_id) { await router.replace(`/eval/jobs/${row.job_id}`); return; }
     err.value = "";
@@ -84,20 +96,23 @@ async function load() {
       api(`/train/${id}/resume-candidate`, { signal }),
       runId.value ? api(`/runs/${runId.value}/metrics`, { signal }) : Promise.resolve({ series: {} }),
       runId.value ? api(`/runs/${runId.value}/logs?tail=200`, { signal }) : Promise.resolve({ lines: [] }),
+      row.kind === "native_rl" && row.status === "succeeded" && !trainingEvidence.value
+        ? api(`/train/${id}/evidence`, { signal }) : Promise.resolve(trainingEvidence.value),
     ];
     const results = await Promise.allSettled(requests);
     if (current !== generation) return;
     const failures: string[] = [];
     results.forEach((result, index) => {
       if (result.status === "rejected") {
-        failures.push(`${["Checkpoint", "恢复候选", "指标", "日志"][index]}: ${result.reason.message}`);
+        failures.push(`${["Checkpoint", "恢复候选", "指标", "日志", "训练证据"][index]}: ${result.reason.message}`);
         return;
       }
-      if (result.value.error) failures.push(`${["Checkpoint", "恢复候选", "指标", "日志"][index]}: ${result.value.error}`);
+      if (result.value?.error) failures.push(`${["Checkpoint", "恢复候选", "指标", "日志", "训练证据"][index]}: ${result.value.error}`);
       if (index === 0) ckpts.value = result.value.items || [];
       if (index === 1) resumeCandidate.value = result.value;
       if (index === 2) metrics.value = result.value;
       if (index === 3) logs.value = result.value.lines || [];
+      if (index === 4) trainingEvidence.value = result.value;
     });
     err.value = failures.join("；");
   } catch (e: any) {
@@ -146,21 +161,33 @@ function resumeBody() {
 }
 async function previewResume() {
   resumeBusy.value = true;
+  resumePreview.value = null;
   err.value = "";
+  const id = job.value.id;
+  const body = resumeBody();
   try {
-    resumePreview.value = await api(`/train/${job.value.id}/resume/preview`, {
-      method: "POST", body: JSON.stringify(resumeBody()),
+    const preview = await api(`/train/${id}/resume/preview`, {
+      method: "POST", body: JSON.stringify(body),
     });
+    if (job.value?.id === id && JSON.stringify(resumeBody()) === JSON.stringify(body)) {
+      resumePreview.value = preview;
+    }
   } catch (e: any) { err.value = e.message; }
   finally { resumeBusy.value = false; }
 }
 async function submitResume() {
+  if (!resumePreview.value || (isUfoNative.value && !resumePreview.value.preview_hash)) {
+    err.value = "请重新预览恢复配置";
+    return;
+  }
   resumeBusy.value = true;
   err.value = "";
   try {
     const row = await api(`/train/${job.value.id}/resume`, {
       method: "POST", headers: { "Idempotency-Key": resumeKey.value },
-      body: JSON.stringify(resumeBody()),
+      body: JSON.stringify({ ...resumeBody(),
+        ...(resumePreview.value.preview_hash ? { preview_hash: resumePreview.value.preview_hash } : {}),
+      }),
     });
     await router.push(`/train/${row.id}`);
   } catch (e: any) { err.value = e.message; }
@@ -194,6 +221,10 @@ function gb(n: number) { return n ? n > 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n 
     </div>
     <p role="status">{{ notice }}</p>
     <p class="muted xs">产出模型名称：{{ job.params?.model_name || job.name }}</p>
+    <p v-if="isUfoNative && experimentTarget" class="muted">整体目标：累计 {{ experimentTarget }} 次 agent 更新。<span v-if="job.params?.native_train_plan?.target_updates < experimentTarget">本页为历史训练区间，整体进度请查看后续续训任务。</span><span v-else>本任务直接训练至整体目标，中途不分段停止。</span></p>
+    <p v-if="isUfoNative" class="muted xs">本段累计 agent 更新：{{ job.metrics_summary?.optimizer_steps ?? latestMetric('distributed/optimizer_steps') ?? '等待原生日志' }} / 本段终点 {{ job.params?.native_train_plan?.target_updates }}；本地环境步：{{ job.metrics_summary?.local_time ?? latestMetric('local_timestep') ?? '—' }}；全局环境步：{{ job.metrics_summary?.global_time ?? latestMetric('timestep') ?? '—' }}。</p>
+    <p v-for="child in job.continuations || []" :key="child.id" class="muted xs">后续训练：<router-link :to="`/train/${child.id}`">{{ child.name }}</router-link> · {{ child.status }} · 本段终点 {{ child.params?.native_train_plan?.target_updates }}</p>
+    <p v-if="isUfoNative && job.metrics_summary?.model_version_id">训练模型：<router-link :to="`/models/${job.metrics_summary.model_version_id}`">{{ job.metrics_summary.model_version_id }}</router-link> · {{ job.metrics_summary?.qualification || '待任务评估' }}</p>
     <p class="error" v-if="job.error_message">{{ job.error_message }}</p>
     <p class="muted xs mono">
       镜像 {{ job.image_digest }} · 独立容器网络 · Run {{ runId || "尚未分配" }} · 输出 {{ job.run_dir || "尚未分配" }}
@@ -202,17 +233,29 @@ function gb(n: number) { return n ? n > 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n 
       恢复自 <router-link :to="`/train/${job.resumed_from}`">{{ job.resumed_from }}</router-link>
       · step {{ job.resume_step }} · {{ job.resume_mode }}
     </p>
+    <p v-if="isUfoNative" class="muted xs">每卡环境 {{ job.params?.native_train_plan?.identity?.num_envs_per_rank ?? 1024 }} · 每卡 Replay {{ job.params?.native_train_plan?.identity?.buffer_size }}。</p>
+    <p v-if="job.resume_mode === 'ufo_native_state_fresh_replay'" class="muted xs">已保留源模型和全部优化器状态；Replay 重新采集。配置已变更，本段不属于完整 Replay 恢复；累计环境步包含源实验，新数据量以本段计数差值为准。</p>
     <p v-if="job.params?.warm_start" class="muted xs">
       初始化来源（warm start）<router-link :to="`/models/${job.params.warm_start.model_id}`">{{ job.params.warm_start.model_id }}</router-link>
       · 源 step {{ job.params.warm_start.source_step }} · 保留权重与归一化，优化器和随机状态重新初始化；本页 step 为新增训练轮数。
     </p>
     <p v-if="job.metrics_summary?.eval_report_id">评估报告：<router-link :to="`/eval/reports/${job.metrics_summary.eval_report_id}`">{{ job.metrics_summary.eval_report_id }}</router-link></p>
+    <div v-if="isUfoNative && trainingEvidence?.available" class="panel">
+      <h3>本段训练证据 · {{ trainingEvidence.run_id }}</h3>
+      <p class="muted xs">原生窗口指标与资源快照；当前决策：等待独立 validation。模型质量以独立评估为准。</p>
+      <div v-for="file in trainingEvidence.files" :key="file.path">
+        <a :href="file.url" target="_blank" rel="noopener">{{ file.path }}</a>
+        <img v-if="file.path.endsWith('.png')" :src="file.url" :alt="`${trainingEvidence.run_id} ${file.path}`" loading="lazy" style="display:block;max-width:100%;margin:.5rem 0" @error="evidenceMediaErrors[file.url] = true" />
+        <p v-if="evidenceMediaErrors[file.url]" class="error" role="alert">图表加载失败：{{ file.path }}</p>
+      </div>
+    </div>
     <form v-if="resumeOpen" class="panel" @submit.prevent="submitResume">
       <div class="page-head">
         <div><h3>从最新完整 checkpoint 恢复</h3><p class="muted xs">源 Run {{ resumeCandidate.source_run_id }} · step {{ resumeCandidate.step }} · {{ resumeCandidate.mode }}</p></div>
         <button type="button" @click="resumeOpen = false">关闭</button>
       </div>
       <p v-if="resumeCandidate.mode === 'trainer_state'" class="muted">训练状态将恢复，仿真环境和未提交 rollout 会在 episode 边界重新初始化。</p>
+      <p v-if="resumeCandidate.mode === 'ufo_native_state'" class="muted">恢复原生模型、优化器和全部 rank Replay；环境、RNG、latent 缓存与专家优先级重新初始化。</p>
       <div class="grid2">
         <label>新任务名称<input v-model="resumeName" maxlength="120" required></label>
         <label>产出模型名称<input v-model="resumeModelName" maxlength="120" required></label>
@@ -228,7 +271,7 @@ function gb(n: number) { return n ? n > 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n 
     </form>
     <div class="grid2">
       <div class="panel">
-        <h3>{{ isSft ? '监督微调指标（loss）' : isRpoFlat ? '训练采样指标（reward / episode / throughput）' : '运行指标（reward / success / throughput）' }}</h3>
+        <h3>{{ isUfoNative ? 'UFO 原生训练分项与运行资源' : isSft ? '监督微调指标（loss）' : isRpoFlat ? '训练采样指标（reward / episode / throughput）' : '运行指标（reward / success / throughput）' }}</h3>
         <p v-if="singleSample" class="muted">当前 Run 每项指标仅有 1 个采样点，图上只能显示一个点，无法形成趋势曲线。</p>
         <p v-if="isRpoFlat" class="muted">env/success_once 表示轨迹中曾出现正奖励，不能当作速度／转向任务通过率。模型是否达标以独立的 100 例评估为准。</p>
         <p v-if="isRpo" class="muted">
@@ -237,6 +280,7 @@ function gb(n: number) { return n ? n > 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n 
         </p>
         <div v-for="name in metricNames" :key="`${runId}:${name}`">
           <Chart :points="metrics.series[name]" :title="name" />
+          <p v-if="isUfoNative" class="muted xs">横轴：{{ name.startsWith('resource/') ? 'UTC Unix 秒（资源监控）' : name.startsWith('ufo_tracking/') ? '原生全局环境步（训练集 tracking 反馈）' : 'agent 更新次数' }}；原生分项分别展示，独立 validation 见评估报告。</p>
           <p class="muted xs">{{ name }} · {{ metrics.series[name].length }} 个采样点<span v-if="metrics.series[name].length"> · 最新 {{ metrics.series[name][metrics.series[name].length - 1].value }}</span></p>
         </div>
         <p class="muted xs" v-if="!metricNames.length">尚无实测指标。仅展示运行返回的原始指标名称，不推算 loss 或 reward。</p>

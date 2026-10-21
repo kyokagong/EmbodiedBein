@@ -38,14 +38,26 @@ onMounted(load);
 async function load() {
   const [weights, models] = await Promise.all([api("/weights"), api("/models")]);
   const modelNames = new Map((models.items || []).map((w: any) => [w.id, w.train_job_name]));
+  const versions = new Map<string, any>((models.versions || []).map((v: any) => [v.id, v]));
   items.value = [
     ...(models.versions || []).map((v: any) => {
-      const native = ["eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(v.card?.schema_version);
-      return {...v, kind: native ? (v.card.schema_version === "eb/rpo-ufo-native-export/v1" ? "UFO/RPO · 原生推理导出" : "UFO/RPO · 原生模型") : v.tags?.includes("rpo-v2") ? "RPO WBC · RL" : "训练模型",
-        path: native ? v.card?.package_path : v.card?.checkpoint_path || v.card?.package_path,
-        train_job_id: native ? null : v.train_page_id || v.card?.train_job_id,
-        train_page_id: native ? null : v.train_page_id, train_job_name: native ? null : v.train_job_name,
-        step: native ? undefined : v.card?.step};
+      const native = ["eb/rpo-ufo-native-trained-model/v1", "eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(v.card?.schema_version);
+      let training = v;
+      const seen = new Set([v.id]);
+      while (native && !training.train_page_id && !training.card?.train_job_id && training.card?.source_model_id
+          && seen.size < 4 && !seen.has(training.card.source_model_id)) {
+        const source = versions.get(training.card.source_model_id);
+        if (!source) break;
+        seen.add(source.id); training = source;
+      }
+      const nativeKind = v.card?.schema_version === "eb/rpo-ufo-native-trained-model/v1" ? "UFO/RPO · FB-CPR-Aux 训练（需任务 prompt）"
+        : v.card?.schema_version === "eb/rpo-ufo-native-export/v1" ? "UFO/RPO · 原生推理导出"
+        : v.card?.training_provenance === "platform" ? "UFO/RPO · 原生任务模型" : "UFO/RPO · 原生模型";
+      return {...v, native, kind: native ? nativeKind : v.tags?.includes("rpo-v2") ? "RPO WBC · RL" : "训练模型",
+        path: native ? v.card?.package_path || v.card?.checkpoint_path : v.card?.checkpoint_path || v.card?.package_path,
+        train_job_id: training.train_page_id || training.card?.train_job_id,
+        train_page_id: training.train_page_id, train_job_name: training.train_job_name,
+        step: native ? training.card?.counts?.optimizer_steps : v.card?.step};
     }),
     ...(weights.items || []).map((w: any) => ({ ...w, train_job_name: modelNames.get(w.id) })),
   ];
@@ -157,7 +169,7 @@ async function register() {
           <td><span class="st-badge" :class="w.kind === 'base' ? 'st-ok' : 'st-run'">{{ w.kind }}</span></td>
           <td class="mono xs">{{ w.path || w.metrics_at_checkpoint?.download?.status }}<p class="error">{{ w.metrics_at_checkpoint?.download?.error }}</p><button v-if="w.kind === 'download_failed'" type="button" :disabled="acquiring" @click="retryDownload(w)">续传</button></td>
           <td class="xs">{{ gb(w.size_bytes) }}</td>
-          <td class="xs"><router-link v-if="w.train_job_name" :to="`/train/${w.train_page_id || w.train_job_id}`">{{ w.train_job_name }}</router-link><span v-else>{{ w.train_job_id || "—" }}</span><br v-if="w.train_job_id"><span class="mono muted xs">{{ w.train_job_id }}</span><br v-if="w.step != null">{{ w.step == null ? "" : `step ${w.step}` }}</td>
+          <td class="xs"><router-link v-if="w.train_page_id || w.train_job_name" :to="`/train/${w.train_page_id || w.train_job_id}`">{{ w.train_job_name || w.train_page_id }}</router-link><span v-else>{{ w.train_job_id || "—" }}</span><br v-if="w.train_job_id"><span class="mono muted xs">{{ w.train_job_id }}</span><br v-if="w.step != null">{{ w.step == null ? "" : `${w.native ? 'agent 更新' : 'step'} ${w.step}` }}</td>
           <td><router-link v-if="w.card?.schema_version === 'eb/rpo-wbc-model/v1'" :to="{ path: '/eval/new', query: { model_id: w.id } }">创建评估</router-link>
             <DeleteButton :path="`/models/${w.id}`" :name="w.name" :disabled="w.kind === 'downloading'" @deleted="items = items.filter(item => item.id !== w.id)" /></td>
         </tr>

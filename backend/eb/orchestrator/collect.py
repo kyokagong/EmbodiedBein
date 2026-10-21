@@ -162,6 +162,140 @@ async def promote_rpo_model(session: AsyncSession, job: Job, run: Run, checkpoin
     return model
 
 
+async def read_native_training_evidence(root: Path, run_id: str, *, target_updates: int) -> dict:
+    """Expose only indexed, verified evidence from a completed native segment."""
+    from urllib.parse import quote
+
+    from eb.orchestrator.ufo_native import verify_index
+    from eb.ufo_native import finite_tree, read_json, safe_file
+
+    outputs = root / "outputs"
+    index_path = safe_file(outputs, "metrics-index.json")
+    index = read_json(index_path)
+    files = index.get("files")
+    if (index.get("schema_version") != "eb/ufo-native-metrics-index/v1"
+            or index.get("run_id") != run_id
+            or index.get("decision") != "wait_for_independent_validation"
+            or not isinstance(files, list) or not 1 <= len(files) <= 200
+            or any(not isinstance(item, dict) or not isinstance(item.get("path"), str)
+                   or not re.fullmatch(r"analysis/[\w.-]+\.(?:png|csv|json)|native/(?:train_log\.txt|ufo_tracking_eval\.csv)",
+                                       item["path"]) for item in files)):
+        raise ValueError("Native training evidence index identity or file scope differs")
+    names = {item["path"] for item in files}
+    if (not {"analysis/summary.json", "analysis/train-log-snapshot.csv", "native/train_log.txt",
+             "analysis/resources.png", "analysis/resource-snapshot.csv"}.issubset(names)
+            or not any(re.fullmatch(r"analysis/training-\d+\.png", name) for name in names)):
+        raise ValueError("Native training evidence lacks training or resource plots/raw snapshots")
+    await verify_index(outputs, files)
+    summary = read_json(safe_file(outputs, "analysis/summary.json"))
+    if (summary.get("schema_version") != "eb/ufo-native-training-analysis/v1"
+            or summary.get("run_id") != run_id or summary.get("target_updates") != target_updates
+            or summary.get("decision") != index["decision"] or not finite_tree(summary)
+            or (summary.get("resources") or {}).get("status") != "snapshot"):
+        raise ValueError("Native training analysis summary identity or resource evidence differs")
+    entries = [{"path": "metrics-index.json", "bytes": index_path.stat().st_size,
+                "sha256": sha256_file(index_path)}, *files]
+    return {"available": True, "run_id": run_id, "decision": index["decision"],
+            "files": [{**item, "url": f"/api/v1/ufo-native/runs/{run_id}/files/{quote(item['path'], safe='/')}"}
+                      for item in entries]}
+
+
+async def collect_ufo_native_training(session: AsyncSession, job: Job, run: Run, root: Path) -> None:
+    """Register native training state separately from the inference network files."""
+    from eb.ufo_native import validate_config
+    from eb.ufo_training_checkpoint import canonical_hash, read_native_checkpoint
+
+    params = job.spec.get("params") or {}
+    plan = params.get("native_train_plan") or {}
+    checkpoint = read_native_checkpoint(root, run.id, plan=plan)
+    manifest = checkpoint["manifest"]
+    counts = checkpoint["counts"]
+    if (manifest["plan_hash"] != canonical_hash({**plan, "run_id": run.id})
+            or type(plan.get("target_updates")) is not int or counts["optimizer_steps"] < plan["target_updates"]):
+        raise ValueError("Native training receipt differs from its frozen Run plan or target updates")
+    evidence = await read_native_training_evidence(root, run.id, target_updates=plan["target_updates"])
+    native = Path(checkpoint["native_path"])
+    codec = validate_config(
+        json.loads((native / "config.json").read_text()),
+        json.loads((native / "effective_config.json").read_text()),
+        json.loads((native / "checkpoint/model/config.json").read_text()),
+        json.loads((native / "checkpoint/model/init_kwargs.json").read_text()),
+    )
+    model_files = [{**item, "path": item["path"].removeprefix("checkpoint/model/")}
+                   for item in manifest["files"] if item["path"].startswith("checkpoint/model/")]
+    inference_manifest = {
+        "schema_version": "eb/ufo-native-trained-network/v1", "run_id": run.id,
+        "training_provenance": "platform", "source_refs": manifest["source_refs"],
+        "image_digest": manifest["image_digest"], "counts": counts, "codec": codec,
+        "loader_verified": True, "files": model_files,
+    }
+    artifacts = []
+    for kind, value, storage in (
+        ("ufo_native_resume", manifest, native),
+        ("ufo_native_trained_model", inference_manifest, native / "checkpoint/model"),
+    ):
+        digest = canonical_hash(value)
+        artifact = await session.scalar(select(Artifact).where(Artifact.sha256 == digest, Artifact.kind == kind))
+        if artifact is None:
+            artifact = Artifact(
+                id=new_id("art"), sha256=digest, kind=kind, run_id=run.id, pinned=True,
+                storage=str(storage), size_bytes=sum(item["bytes"] for item in value["files"]),
+                meta={"manifest": value, "step": checkpoint["step"], "counts": counts,
+                      "simulation_only": True, "qualification": "incomplete"},
+            )
+            session.add(artifact)
+            await session.flush()
+            session.add(LineageEdge(src_type="run", src_id=run.id, dst_type="artifact",
+                                    dst_id=artifact.id, relation="produced", run_id=run.id))
+        artifacts.append(artifact)
+    resume_artifact, inference_artifact = artifacts
+    model = await session.scalar(select(ModelVersion).where(ModelVersion.artifact_id == inference_artifact.id))
+    if model is None:
+        family_id = "mf_rpo_ufo_native"
+        if await session.get(ModelFamily, family_id) is None:
+            session.add(ModelFamily(id=family_id, name="RPO native UFO FB-CPR", family="mlp"))
+            await session.flush()
+        model = ModelVersion(
+            id=new_id("mv"), family_id=family_id, artifact_id=inference_artifact.id,
+            name=params.get("model_name") or job.spec.get("name") or f"ufo-native-{run.id}",
+            embodiment_env_id=job.spec["embodiment_env_id"], provenance="full",
+            io_signature={"obs": 375, "latent": 256, "actor_obs": 631, "act": 23},
+            tags=["rpo-v2", "ufo-native", "rlinf", "safetensors", "simulation-only"],
+            card={"schema_version": "eb/rpo-ufo-native-trained-model/v1", "training_provenance": "platform",
+                  "train_job_id": job.id, "run_id": run.id, "template_id": params["template_id"],
+                  "package_path": str(native / "checkpoint/model"), "checkpoint_path": checkpoint["path"],
+                  "resume_artifact_id": resume_artifact.id, "resume_mode": checkpoint["mode"],
+                  "full_state_finite_verified": checkpoint.get("full_state_finite_verified", False),
+                  "resume_limitations": checkpoint["limitations"], "counts": counts,
+                  "state_coverage": checkpoint["state_coverage"], "source_refs": manifest["source_refs"],
+                  "image_digest": manifest["image_digest"], "codec": codec,
+                  "compatibility_fingerprint": manifest["compatibility_fingerprint"],
+                  "model_sha256": next(item["sha256"] for item in model_files if item["path"] == "model.safetensors"),
+                  "reward_inference_replay": checkpoint["replay"][0], "prompt_derivation": "required",
+                  "datasets": (job.spec.get("inputs") or {}).get("datasets") or [],
+                  "readiness": "prompt_required", "qualification": "incomplete", "simulation_only": True,
+                  "hardware_verified": False},
+        )
+        session.add(model)
+        session.add(LineageEdge(src_type="run", src_id=run.id, dst_type="model_version",
+                                dst_id=model.id, relation="produced", run_id=run.id))
+        for dataset in (job.spec.get("inputs") or {}).get("datasets") or []:
+            if dataset.get("id"):
+                session.add(LineageEdge(src_type="dataset", src_id=dataset["id"], dst_type="model_version",
+                                        dst_id=model.id, relation="trained_on", run_id=run.id))
+    run.metrics_summary = {
+        **(run.metrics_summary or {}), "model_version_id": model.id,
+        "resume_artifact_id": resume_artifact.id, "artifact_id": inference_artifact.id,
+        "native_operation": "ufo_native_train", "resume_mode": checkpoint["mode"],
+        "full_state_finite_verified": checkpoint.get("full_state_finite_verified", False),
+        "qualification": "incomplete", **counts,
+        "segment_optimizer_steps": counts["optimizer_steps"] - plan.get("start_updates", 0),
+        "segment_local_env_steps": counts["local_time"] - plan.get("start_local_time", 0),
+        "checkpoint": {key: checkpoint[key] for key in ("path", "bytes", "step", "mode")},
+        "training_evidence": evidence,
+    }
+
+
 def validate_amp_case_evidence(rows: list, seeds: list, receipt: dict, output: Path,
                                record_video: bool) -> None:
     from eb.runners.rpo_wbc_artifact import case_success
@@ -243,7 +377,27 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
     cas_root = get_settings().data_root / "cas"
     cas_root.mkdir(parents=True, exist_ok=True)
 
+    if (job.kind == "train.rl"
+            and (job.spec.get("params") or {}).get("template_id") == "rpo_ufo_fb_native"):
+        await collect_ufo_native_training(session, job, run, root)
+        return
+
     operation = (job.spec.get("params") or {}).get("operation")
+    from eb.ufo_failure_probe import OPERATION as FAILURE_PROBE_OPERATION
+    if operation == FAILURE_PROBE_OPERATION:
+        from eb.ufo_failure_probe import collect as collect_failure_probe
+        await collect_failure_probe(session, job, run, outputs)
+        return
+    from eb.ufo_native_baseline import OPERATION as BASELINE_OPERATION
+    if operation == BASELINE_OPERATION:
+        from eb.ufo_native_baseline_service import collect as collect_baseline
+        await collect_baseline(session, job, run, outputs)
+        return
+    from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
+    if operation == GROUNDED_OPERATION:
+        from eb.ufo_grounded_reference import collect_candidate
+        await collect_candidate(session, job, run, outputs)
+        return
     from eb.ufo_native import OPERATIONS as UFO_NATIVE_OPERATIONS
     if operation in UFO_NATIVE_OPERATIONS:
         from eb.orchestrator.ufo_native import collect_native

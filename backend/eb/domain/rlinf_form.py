@@ -48,6 +48,13 @@ def template_entrypoint(template: RlinfTemplate) -> str:
 
 TEMPLATES: tuple[RlinfTemplate, ...] = (
     RlinfTemplate(
+        id="rpo_ufo_fb_native", config_path="configs/robots", config_name="rpo_23dof",
+        script="eb.runners.rlinf_ufo_entry", kind="native_rl",
+        embodiment_env_id="ee_rpo_v2_ufo_native_23dof_v2", task_id="tsk_rpo_ufo_native_stand_walk_v2",
+        label="RPO · UFO 原生 BFM-Zero（FB-CPR-Aux）", embodiment_id="emb_roboparty_rpo",
+        requires_dataset=True, model_framework="ufo_native_fb_cpr_aux",
+    ),
+    RlinfTemplate(
         id="rpo_v2_flat_ppo", config_path="../eb_runner/config", config_name="rpo_flat_ppo",
         script="examples/embodiment/train_embodied_agent.py", kind="ppo",
         embodiment_env_id="ee_rpo_v2_flat_23dof_v1", task_id="tsk_rpo_flat",
@@ -328,6 +335,9 @@ def require_template_ready(template: RlinfTemplate) -> None:
 
 
 def template_image(template: RlinfTemplate) -> str:
+    if template.id == "rpo_ufo_fb_native":
+        from eb.ufo_training import IMAGE
+        return IMAGE
     if template.id.startswith(("rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")):
         return "eb/rlinf:rpo-v2-wbc"
     if template.id == "robotwin_pi05_eval":
@@ -389,6 +399,10 @@ def validate_hydra_overrides(lines: list[str]) -> list[str]:
 
 
 def build_overrides(template_id: str, gpus: int, job_name: str, extra: list[str]) -> list[str]:
+    if template_id == "rpo_ufo_fb_native":
+        if extra:
+            raise ValueError("UFO 原生训练使用冻结 native_training，不接受 Hydra overrides")
+        return []
     errors = validate_hydra_overrides(extra)
     if errors:
         raise ValueError("; ".join(errors))

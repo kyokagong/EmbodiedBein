@@ -39,6 +39,26 @@ KIND_ADAPTER: dict[JobKind, Adapter] = {
 
 
 def get_adapter(spec: JobSpec) -> Adapter:
+    from eb.ufo_failure_probe import OPERATION as FAILURE_PROBE_OPERATION
+    if spec.params.get("operation") == FAILURE_PROBE_OPERATION:
+        from eb.ufo_failure_probe import render
+        class FailureProbeAdapter(Adapter):
+            name = "ufo_failure_probe"
+            def render(self, spec, run_id):
+                return render(spec, run_id)
+        return FailureProbeAdapter()
+    from eb.ufo_native_baseline import OPERATION as BASELINE_OPERATION
+    if spec.params.get("operation") == BASELINE_OPERATION:
+        from eb.adapters.ufo_native_baseline import UfoNativeBaselineAdapter
+        return UfoNativeBaselineAdapter()
+    from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
+    if spec.params.get("operation") == GROUNDED_OPERATION:
+        return _CONVERT
+    from eb.ufo_training import TEMPLATE, DATA_OPERATION
+    if spec.params.get("template_id") == TEMPLATE:
+        return _RLINF
+    if spec.params.get("operation") == DATA_OPERATION:
+        return _CONVERT
     from eb.ufo_native import ENV_ID, OPERATIONS
     if spec.embodiment_env_id == ENV_ID or spec.params.get('operation') in OPERATIONS:
         from eb.adapters.ufo_native import UfoNativeAdapter

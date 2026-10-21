@@ -95,7 +95,8 @@ def validate_live_plan(plan: dict) -> dict:
             "seed",
             "hash",
         }
-        if not isinstance(plan, dict) or set(plan) != expected_fields:
+        allowed_fields = expected_fields | ({"source_refs", "code_sources"} if plan.get("code_sources") else set())
+        if not isinstance(plan, dict) or set(plan) != allowed_fields:
             raise ValueError("实时计划字段不完整或包含未知字段")
         version = 1 if plan["environment_id"].endswith("_v1") else 2
         environment = environment_spec(plan["backend"], version=version)

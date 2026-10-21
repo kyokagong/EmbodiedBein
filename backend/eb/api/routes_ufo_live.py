@@ -21,7 +21,7 @@ from websockets.asyncio.client import unix_connect
 from websockets.exceptions import WebSocketException
 
 from eb.api.deps import PrincipalDep, SessionDep, current_principal
-from eb.api.routes_ufo_native import approved_image, native_model, stream_output, submit
+from eb.api.routes_ufo_native import approved_image, execution_runtime, native_model, stream_output, submit
 from eb.domain.environment_profile import compatible_profile
 from eb.domain.fsm import JOB_TERMINAL
 from eb.settings import get_settings
@@ -124,7 +124,8 @@ async def build_plan(session, body: LiveIn):
         "source_artifact_sha256": artifact.sha256,
         "native_source_path": native_artifact.storage,
         "native_source_sha256": native_artifact.sha256,
-        "image_digest": await approved_image(),
+        **(await execution_runtime(payload) if payload.get("training_provenance") == "platform"
+           else {"image_digest": await approved_image()}),
         "backend": backend,
         "environment_id": environment.id,
         "environment_hash": environment.content_hash,

@@ -252,7 +252,7 @@ def export_model(output, plan):
 
     torch.set_num_threads(4)
     root, payload = Path("/input"), output / "payload"
-    verified_manifest(root, plan["source_artifact_sha256"])
+    source_manifest = verified_manifest(root, plan["source_artifact_sha256"])
     payload.mkdir()
     shutil.copytree(root / "assets", payload / "assets")
     for name in ("codec.json", "prompts.json"):
@@ -314,8 +314,11 @@ def export_model(output, plan):
         "input_dim": metadata["actor_obs_dim"],
         "output_dim": 23,
         "simulation_only": True,
-        "training_provenance": "external_declared",
-        "prompt_derivation": "external_unverified",
+        "training_provenance": source_manifest.get("training_provenance", "external_declared"),
+        "prompt_derivation": source_manifest.get("prompt_derivation", "external_unverified"),
+        "prompt_binding": source_manifest.get("prompt_binding"),
+        **({"source_refs": source_manifest["source_refs"], "code_sources": source_manifest["code_sources"]}
+           if source_manifest.get("training_provenance") == "platform" else {}),
     }
     write_json(payload / "manifest.json", export)
     return receipt(output, plan, manifest=export, package="payload")
@@ -394,6 +397,9 @@ def main():
     plan = read_json(args.plan)
     if plan_hash(plan) != plan["hash"] or not finite_tree(plan):
         raise ValueError("Native task plan changed")
+    if plan.get("code_sources"):
+        from eb.runners.rlinf_ufo_runtime import verify_source_refs
+        verify_source_refs(plan)
     args.output.mkdir(parents=True, exist_ok=True)
     if (args.output / "receipt.json").exists():
         raise ValueError("Output receipt already exists")

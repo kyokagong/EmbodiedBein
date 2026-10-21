@@ -98,6 +98,48 @@ test('base-model choices match the selected embodiment and stale selection is cl
   assert.equal(s.form.value.base_model_id, '');
 });
 
+test('native training hides rejected A1 and unqualified sources while the frozen 58 clips still preview', async () => {
+  const requests = [];
+  const hash = `sha256:${'a'.repeat(64)}`;
+  const s = setup('TrainNew', ['form', 'templates', 'environments', 'embodiments', 'datasets',
+    'compatibleDatasets', 'missingInput', 'refreshPreview', 'preview'], async (path, options) => {
+    requests.push({ path, body: JSON.parse(options.body) });
+    return { preview_hash: hash, errors: [] };
+  });
+  const env = 'ee_rpo_v2_ufo_native_23dof_v2';
+  s.templates.value = [{ id: 'rpo_ufo_fb_native', kind: 'native_rl', embodiment_env_id: env,
+    requires_dataset: true, requires_base_model: false }];
+  s.environments.value = [{ id: 'native_profile', template_id: 'rpo_ufo_fb_native',
+    embodiment_env_id: env, status: 'active', usage: 'train' }];
+  s.embodiments.value = [{ id: 'emb_roboparty_rpo', envs: [{ id: env }] }];
+  // These identity/readiness fields match the actual Dataset list API.
+  const frozen = { id: 'ds_6541f726d7804007a93a', name: '58 native training clips',
+    embodiment_env_id: env, usage: 'train', source_kind: 'ufo_native_motion', status: 'validated',
+    validation: { scope: 'ufo_native_motion_v1', training_ready: true } };
+  s.datasets.value = [frozen,
+    { ...frozen, id: 'ds_fd49187d32234e299a44', status: 'invalid',
+      validation: { scope: 'ufo_native_motion_v1', training_ready: false } },
+    { ...frozen, id: 'unvalidated', status: 'registered' },
+    { ...frozen, id: 'generic_source', source_kind: 'path' },
+    { ...frozen, id: 'wrong_scope', validation: { scope: 'other', training_ready: true } },
+    { ...frozen, id: 'missing_validation', validation: undefined },
+    { ...frozen, id: 'not_ready', validation: { scope: 'ufo_native_motion_v1', training_ready: false } },
+    { ...frozen, id: 'holdout', usage: 'eval' },
+  ];
+  Object.assign(s.form.value, { name: 'native training', model_name: 'native model',
+    template_id: 'rpo_ufo_fb_native', embodiment_id: 'emb_roboparty_rpo', environment_id: 'native_profile' });
+  assert.deepEqual(Array.from(s.compatibleDatasets.value, d => d.id), [frozen.id]);
+  s.form.value.dataset_ids = [s.compatibleDatasets.value[0].id];
+  assert.equal(s.missingInput.value, false);
+  await s.refreshPreview();
+  assert.equal(requests[0].path, '/train/preview');
+  assert.deepEqual(requests[0].body.dataset_ids, [frozen.id]);
+  assert.equal(requests[0].body.native_training.target_updates, 112);
+  assert.equal(s.preview.value.preview_hash, hash);
+  s.templates.value[0].kind = 'sft';
+  assert.ok(s.compatibleDatasets.value.some(d => d.id === 'generic_source'), 'other templates keep their existing rules');
+});
+
 test('a stale preview response cannot replace newer form state', async () => {
   let resolve;
   const s = setup('TrainNew', ['preview', 'refreshPreview'], () => new Promise(r => { resolve = r; }));

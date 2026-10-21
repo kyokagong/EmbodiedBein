@@ -83,7 +83,61 @@ def _ds_out(row: Dataset) -> dict[str, Any]:
         "content_hash": None,
         "validation": (row.summary_stats or {}).get("validation", {"status": "not_validated", "training_ready": False}),
         "source_refs": (row.summary_stats or {}).get("source_refs", []),
+        **({"candidate_evidence": {
+            "receipt_url": f"/api/v1/datasets/{row.id}/grounded-a1/files/candidate-receipt.json",
+            "video_url": f"/api/v1/datasets/{row.id}/grounded-a1/files/reference/replay.mp4",
+            "quality_url": f"/api/v1/datasets/{row.id}/grounded-a1/files/reference/quality.json",
+            "reference_pd_only": True,
+        }} if (row.meta or {}).get("operation") == "prepare_ufo_rpo_grounded_a1_v1"
+              and (row.meta or {}).get("candidate_evidence_verified") is True else {}),
     }
+
+
+def _ufo_motion_source(value: str) -> Path:
+    root = get_settings().ufo_native_root / "runs"
+    source = Path(value)
+    if (not source.is_absolute() or source != source.resolve() or not source.is_relative_to(root.resolve())
+            or source == root or not source.is_dir()
+            or any(p.is_symlink() for p in (source, *source.parents))):
+        raise ValueError("UFO motion source must be an existing unlinked directory under UFO/runs")
+    required = ("train_clipped.pkl", "validation.pkl", "qualification.json", "physics_audit/mask_feasibility.json")
+    for relative in required:
+        path = source / relative
+        if not path.is_file() or any(p.is_symlink() for p in (path, *path.parents)):
+            raise ValueError(f"UFO motion source is missing an unlinked {relative}")
+    return source
+
+
+async def ufo_data_spec(row: Dataset):
+    import asyncio
+
+    from eb.domain.job import JobSpec
+    from eb.store.ebd import EbdClient
+    from eb.ufo_native import ENV_ID
+    from eb.ufo_training import DATA_OPERATION, IMAGE
+
+    if (row.source_kind != "ufo_native_motion" or row.embodiment_env_id != ENV_ID
+            or (row.meta or {}).get("usage", "train") != "train"
+            or not re.fullmatch(r"ds_[A-Za-z0-9]+", row.id)):
+        raise ValueError("UFO native motion registration is inconsistent")
+    source = _ufo_motion_source(row.source_uri)
+    settings = get_settings()
+    provenance = settings.ufo_native_root / "runs/rpo_reference_v2/import_report.json"
+    if not provenance.is_file() or any(p.is_symlink() for p in (provenance, *provenance.parents)):
+        raise ValueError("UFO original import provenance is missing")
+    client = EbdClient()
+    image = await client.image_info(IMAGE)
+    if image.get("ok") is not True or not re.fullmatch(r"sha256:[a-f0-9]{64}", image.get("digest", "")):
+        raise ValueError("UFO native training image is unavailable")
+    snapshots = await asyncio.gather(client.snapshot(str(settings.ufo_native_root)),
+        client.snapshot(str(settings.assets_root / "roboparty/rpo-v2")))
+    ufo, assets = ({"kind": "content_snapshot", "path": value["path"], "commit": value["content_hash"]}
+                   for value in snapshots)
+    return JobSpec(kind="data.convert", embodiment_env_id=ENV_ID, image=image["digest"],
+        params={"operation": DATA_OPERATION, "src": str(source), "dataset_id": row.id,
+                "provenance_source": str(provenance), "ufo_source_ref": ufo, "asset_source_ref": assets},
+        resources={"gpus": 0, "cpus": 4, "memory_gb": 16, "shm_gb": 2},
+        runtime={"network": "none"}, policy={"timeout_h": 0.5, "max_retries": 0, "retry_on": []})
 
 
 @router.post("/datasets/rpo-amp-official")
@@ -202,7 +256,7 @@ async def create_robotwin_dataset(body: RoboTwinDatasetIn, session: SessionDep,
 async def create_dataset(body: DatasetIn, session: SessionDep, principal: PrincipalDep) -> dict:
     did = new_id("ds")
     kind = body.source_kind
-    if kind not in {"path", "huggingface", "http", "libero_benchmark"}:
+    if kind not in {"path", "huggingface", "http", "libero_benchmark", "ufo_native_motion"}:
         raise HTTPException(400, "未知数据来源类型")
     if kind == "http":
         raise HTTPException(400, "HTTP acquisition is unavailable until bounded source validation is implemented")
@@ -212,6 +266,10 @@ async def create_dataset(body: DatasetIn, session: SessionDep, principal: Princi
         raise HTTPException(400, "AMP motion_prior requires a local train path and matching RPO interface")
     if body.hf_token:
         raise HTTPException(400, "Inline HF tokens are not accepted; public datasets only")
+    if kind == "ufo_native_motion":
+        from eb.ufo_native import ENV_ID
+        if body.usage != "train" or body.embodiment_env_id != ENV_ID or body.dest_path or body.purpose:
+            raise HTTPException(400, "UFO 原生 motion 需要 RPO 接口、train 用途和独立的冻结输出目录")
     if kind == "libero_benchmark":
         if (body.source_uri != LIBERO_REPO or body.revision != LIBERO_REVISION
                 or body.dest_path or body.usage != "eval"
@@ -227,6 +285,11 @@ async def create_dataset(body: DatasetIn, session: SessionDep, principal: Princi
     dest = body.dest_path
     if kind == "libero_benchmark":
         dest = str(get_settings().datasets_root / did / "bundle")
+    elif kind == "ufo_native_motion":
+        try:
+            dest = str(_ufo_motion_source(body.source_uri))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     elif kind == "path":
         try:
             dest_p = validate_allowed_path(body.source_uri)
@@ -289,17 +352,31 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
     row = await session.get(Dataset, did)
     if not row:
         raise HTTPException(404)
+    from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
+    if (row.meta or {}).get("operation") == GROUNDED_OPERATION:
+        if reindex:
+            raise HTTPException(400, "A1 候选不可原地重跑；请从冻结父版本创建新候选")
+        await reconcile_dataset(row, session)
+        return _ds_out(row)
     if not row.embodiment_env_id:
         raise HTTPException(400, "embodiment_env_id is required to submit a data task")
     retry = False
     if (row.meta or {}).get("validation_job_id"):
         await reconcile_dataset(row, session)
-        if row.source_kind == "libero_benchmark" and row.status == "validated":
+        if row.source_kind in {"libero_benchmark", "ufo_native_motion"} and row.status == "validated":
+            if row.source_kind == "ufo_native_motion" and reindex:
+                raise HTTPException(400, "冻结的 UFO 数据不可原地重索引；请登记新数据版本")
             return _ds_out(row)
-        retry = row.source_kind == "robotwin" and row.status in {"invalid", "failed"}
+        retry = row.source_kind in {"robotwin", "ufo_native_motion"} and row.status in {"invalid", "failed"}
         if not retry and (not reindex or row.status not in {"validated", "invalid", "failed"}):
             return _ds_out(row)
-    if row.source_kind == "robotwin":
+    if row.source_kind == "ufo_native_motion":
+        try:
+            spec = await ufo_data_spec(row)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        params = spec.params
+    elif row.source_kind == "robotwin":
         if reindex:
             raise HTTPException(400, "RoboTwin 本地重新索引尚未开放；请重试失败的固定下载")
         meta = row.meta or {}
@@ -326,9 +403,10 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
     if row.source_kind == "huggingface":
         params.update(repo_id=row.source_uri, revision=(row.meta or {}).get("source_revision"), local_only=reindex)
         Path(row.dest_path).mkdir(parents=True, exist_ok=True)
-    spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id=row.embodiment_env_id,
-                   params=params,
-                   runtime={"network":"none"} if params["operation"] == "validate_rpo_amp_motion" else {})
+    if row.source_kind != "ufo_native_motion":
+        spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id=row.embodiment_env_id,
+                       params=params,
+                       runtime={"network":"none"} if params["operation"] == "validate_rpo_amp_motion" else {})
     try:
         attempt = f":{new_id('attempt')}" if reindex or retry else ""
         job = await Orchestrator().submit(session, spec, principal.id, f"dataset-validation:{did}{attempt}")
@@ -356,6 +434,10 @@ async def reconcile_dataset(row: Dataset, session) -> None:
         return
     if ((row.meta or {}).get("validation_run_id") == run.id and row.status in {"validated", "invalid"}
             and (row.source_kind != "robotwin" or (row.summary_stats or {}).get("fps"))):
+        if row.source_kind == "ufo_native_motion":
+            from eb.ufo_training_dataset import publish_native_dataset_version
+            if await publish_native_dataset_version(session, row, job, run):
+                await session.commit()
         return
     report_path = get_settings().data_root / "runs" / run.id / "outputs" / "dataset-index.json"
     if job.status in {"succeeded", "failed", "infra_failed"} and report_path.is_file():
@@ -363,6 +445,18 @@ async def reconcile_dataset(row: Dataset, session) -> None:
             row.status, row.error_message = "failed", "metadata report exceeds 64 MiB"
         else:
             stats = json.loads(report_path.read_text())
+            from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
+            if (row.meta or {}).get("operation") == GROUNDED_OPERATION:
+                from eb.ufo_grounded_reference import verified_report
+                try:
+                    _, stats = await verified_report(report_path.parent,
+                        job.spec["params"]["grounded_plan"], run.id, row.id)
+                    row.meta = {**row.meta, "candidate_evidence_verified": True}
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    row.meta = {**row.meta, "candidate_evidence_verified": False}
+                    stats = {"format": "ufo_native_motion", "validation": {
+                        "scope": "ufo_native_motion_v1", "status": "invalid", "training_ready": False,
+                        "errors": [f"A1 candidate evidence is incomplete or invalid: {exc}"], "unchecked": []}}
             if row.source_kind == "robotwin" and not stats.get("source_refs"):
                 stats["source_refs"] = [{"kind":"huggingface_dataset", "repo_id":row.source_uri,
                     "revision":(row.meta or {}).get("source_revision"),
@@ -377,10 +471,27 @@ async def reconcile_dataset(row: Dataset, session) -> None:
             row.error_message = "; ".join(validation.get("errors", [])) or None
             row.format = (stats.get("format") or ("libero_benchmark" if row.source_kind == "libero_benchmark" else "lerobot")) if row.status == "validated" else "unknown"
             row.total_bytes = int(stats.get("total_bytes") or 0)
+            if row.source_kind == "ufo_native_motion" and row.status == "validated":
+                expected = get_settings().data_root / "runs" / run.id / "outputs/data"
+                if (validation.get("scope") != "ufo_native_motion_v1"
+                        or validation.get("training_ready") is not True
+                        or stats.get("format") != "ufo_native_motion"
+                        or stats.get("storage_ref") != str(expected)
+                        or validation.get("storage_ref") != str(expected)):
+                    row.status, row.format = "invalid", "unknown"
+                    row.error_message = "UFO frozen data report has an inconsistent scope or storage path"
+                    row.summary_stats = {**stats, "validation": {**validation, "status": "invalid",
+                        "training_ready": False,
+                        "errors": [row.error_message]}}
+                else:
+                    row.dest_path = str(expected)
     elif job.status in {"failed", "infra_failed", "cancelled"}:
         row.status, row.error_message = "failed", job.error or job.status
     elif row.status not in {"validated", "invalid"}:
         row.status = job.status
+    if row.source_kind == "ufo_native_motion":
+        from eb.ufo_training_dataset import publish_native_dataset_version
+        await publish_native_dataset_version(session, row, job, run)
     await session.commit()
 
 
@@ -441,3 +552,8 @@ async def dataset_media(did: str, session: SessionDep, principal: PrincipalDep, 
     if not is_under(root, dest) or not dest.is_file():
         raise HTTPException(404)
     return FileResponse(dest)
+
+
+from eb.api.routes_ufo_grounded_reference import router as grounded_reference_router
+
+router.include_router(grounded_reference_router)

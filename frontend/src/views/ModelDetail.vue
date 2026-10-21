@@ -9,6 +9,7 @@ import UfoNativePanel from "../components/UfoNativePanel.vue";
 const route = useRoute();
 const router = useRouter();
 const data = ref<any>(null);
+const trainingSource = ref<any>(null);
 const edges = ref<any[]>([]);
 const lineageNodes = ref<any[]>([]);
 const evalProfile = ref<"smoke" | "standard">("smoke");
@@ -20,7 +21,9 @@ const evalPreview = ref<any>(null);
 const evalBusy = ref(false);
 const evalError = ref("");
 const isRpo = computed(() => data.value?.card?.schema_version === "eb/rpo-wbc-model/v1");
-const isNative = computed(() => ["eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(data.value?.card?.schema_version));
+const isNative = computed(() => ["eb/rpo-ufo-native-trained-model/v1", "eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(data.value?.card?.schema_version));
+const trainingPage = computed(() => trainingSource.value?.train_page_id || trainingSource.value?.train_job_id);
+const trainingName = computed(() => trainingSource.value?.train_job_name || trainingSource.value?.card?.train_job_id || trainingPage.value);
 watch([evalBackend, evalGoal, evalProfile, evalSeed, recordVideo], () => { evalPreview.value = null; evalError.value = ""; });
 
 function evalBody() {
@@ -51,12 +54,23 @@ async function startRpo() {
 
 watch(() => route.params.id, async id => {
   data.value = null;
+  trainingSource.value = null;
   edges.value = [];
   lineageNodes.value = [];
   const model = await api(`/models/${id}`);
   const lineage = await api(`/models/${id}/lineage`);
+  let source = model;
+  const seen = new Set([model.id]);
+  while (source.card?.training_provenance === "platform" && !source.train_page_id && !source.card?.train_job_id
+      && source.card?.source_model_id && seen.size < 4 && !seen.has(source.card.source_model_id)) {
+    seen.add(source.card.source_model_id);
+    try { source = await api(`/models/${source.card.source_model_id}`); }
+    catch { break; }
+    if (route.params.id !== id) return;
+  }
   if (route.params.id !== id) return;
   data.value = model;
+  trainingSource.value = source;
   edges.value = lineage.edges || [];
   lineageNodes.value = lineage.nodes || [];
 }, { immediate: true });
@@ -77,8 +91,8 @@ watch(() => route.params.id, async id => {
     <div class="kpis" v-if="data">
       <div class="card"><div class="l">类型</div><div class="v">{{ data.kind || "version" }}</div></div>
       <div class="card"><div class="l">本体</div><div class="v">{{ data.embodiment_id || data.embodiment_env_id || "—" }}</div></div>
-      <div class="card"><div class="l">训练 Job</div><div class="v xs"><router-link v-if="data.train_page_id || data.train_job_id" :to="`/train/${data.train_page_id || data.train_job_id}`">{{ data.train_job_name || data.train_job_id || data.card?.train_job_id }}</router-link><span v-else>—</span><br v-if="data.train_page_id || data.train_job_id"><span class="mono muted xs">{{ data.train_page_id || data.train_job_id }}</span></div></div>
-      <div class="card"><div class="l">父模型</div><div class="v"><router-link v-if="data.parent_model_id" :to="`/models/${data.parent_model_id}`">{{ data.parent_model_id }}</router-link><span v-else>—</span></div></div>
+      <div class="card"><div class="l">训练 Job</div><div class="v xs"><router-link v-if="trainingPage" :to="`/train/${trainingPage}`">{{ trainingName }}</router-link><span v-else>{{ trainingName || '—' }}</span><br v-if="trainingPage"><span class="mono muted xs">{{ trainingPage }}</span></div></div>
+      <div class="card"><div class="l">父模型</div><div class="v"><router-link v-if="data.parent_model_id || data.card?.source_model_id" :to="`/models/${data.parent_model_id || data.card.source_model_id}`">{{ data.parent_model_id || data.card.source_model_id }}</router-link><span v-else>—</span></div></div>
     </div>
     <UfoNativePanel v-if="isNative" :key="data.id" :model="data" />
     <div class="panel" v-if="data?.card">

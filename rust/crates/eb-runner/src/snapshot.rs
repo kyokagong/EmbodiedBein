@@ -21,7 +21,16 @@ const EXCLUDED: &[&str] = &[
     ".cache",
 ];
 // Bare "venv" can also be an importable source package, e.g. rlinf.envs.venv.
-const ROOT_OUTPUTS: &[&str] = &["target", "logs", "outputs", "checkpoints", "datasets", "venv"];
+const ROOT_OUTPUTS: &[&str] = &[
+    "target",
+    "logs",
+    "outputs",
+    "checkpoints",
+    "datasets",
+    "venv",
+    "runs",
+    "cache",
+];
 // Model payloads are separate versioned inputs, never part of a code snapshot.
 const WEIGHT_EXTENSIONS: &[&str] = &[
     "safetensors",
@@ -48,6 +57,31 @@ struct Entry {
     executable: bool,
 }
 
+#[derive(Deserialize)]
+struct Exclusions {
+    directories: Vec<String>,
+    root_outputs: Vec<String>,
+    weight_extensions: Vec<String>,
+    weight_bin_prefixes: Vec<String>,
+    weight_extension_case: String,
+}
+
+fn current_exclusions() -> Exclusions {
+    Exclusions {
+        directories: EXCLUDED.iter().map(|value| (*value).into()).collect(),
+        root_outputs: ROOT_OUTPUTS.iter().map(|value| (*value).into()).collect(),
+        weight_extensions: WEIGHT_EXTENSIONS
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        weight_bin_prefixes: WEIGHT_BIN_PREFIXES
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        weight_extension_case: "ascii_case_insensitive".into(),
+    }
+}
+
 fn manifest_bytes(entries: &[Entry]) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&serde_json::json!({
         "version": 2,
@@ -69,16 +103,35 @@ fn entries(
     dest: Option<&Path>,
     result: &mut Vec<Entry>,
 ) -> Result<(), String> {
+    entries_with_policy(root, dir, dest, result, &current_exclusions())
+}
+
+fn entries_with_policy(
+    root: &Path,
+    dir: &Path,
+    dest: Option<&Path>,
+    result: &mut Vec<Entry>,
+    exclusions: &Exclusions,
+) -> Result<(), String> {
     let mut children = fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     children.sort_by_key(|e| e.file_name());
     for entry in children {
-        if EXCLUDED.iter().any(|name| entry.file_name() == *name) {
+        if exclusions
+            .directories
+            .iter()
+            .any(|name| entry.file_name() == name.as_str())
+        {
             continue;
         }
-        if dir == root && ROOT_OUTPUTS.iter().any(|name| entry.file_name() == *name) {
+        if dir == root
+            && exclusions
+                .root_outputs
+                .iter()
+                .any(|name| entry.file_name() == name.as_str())
+        {
             continue;
         }
         let path = entry.path();
@@ -94,14 +147,16 @@ fn entries(
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .is_some_and(|ext| {
-                    WEIGHT_EXTENSIONS
+                    exclusions
+                        .weight_extensions
                         .iter()
                         .any(|excluded| ext.eq_ignore_ascii_case(excluded))
                         || (ext.eq_ignore_ascii_case("bin")
                             && path.file_name().and_then(|name| name.to_str()).is_some_and(
                                 |name| {
                                     let name = name.to_ascii_lowercase();
-                                    WEIGHT_BIN_PREFIXES
+                                    exclusions
+                                        .weight_bin_prefixes
                                         .iter()
                                         .any(|prefix| name.starts_with(prefix))
                                 },
@@ -125,7 +180,7 @@ fn entries(
                 sha256: None,
                 executable: false,
             });
-            entries(root, &path, dest, result)?;
+            entries_with_policy(root, &path, dest, result, exclusions)?;
         } else if meta.is_file() {
             let mut input = OpenOptions::new()
                 .read(true)
@@ -179,6 +234,44 @@ fn entries(
     Ok(())
 }
 
+fn verify_owned_snapshot(source: &Path, expected: &str) -> Result<(), String> {
+    let path = source
+        .parent()
+        .ok_or("snapshot has no parent")?
+        .join("manifest.json");
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(0x20000)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("snapshot manifest is not a regular file".into());
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    if format!("sha256:{:x}", Sha256::digest(&bytes)) != expected {
+        return Err("owned snapshot manifest corrupted".into());
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    if manifest["version"] != 2 {
+        return Err("unsupported snapshot manifest version".into());
+    }
+    let policy: Exclusions =
+        serde_json::from_value(manifest["exclusions"].clone()).map_err(|e| e.to_string())?;
+    if policy.weight_extension_case != "ascii_case_insensitive" {
+        return Err("unsupported snapshot exclusion policy".into());
+    }
+    let expected_entries: Vec<Entry> =
+        serde_json::from_value(manifest["entries"].clone()).map_err(|e| e.to_string())?;
+    let mut actual = Vec::new();
+    // Older immutable snapshots retain their original exclusion policy.
+    entries_with_policy(source, source, None, &mut actual, &policy)?;
+    if actual != expected_entries {
+        return Err("owned snapshot content corrupted".into());
+    }
+    Ok(())
+}
+
 pub fn prepare_snapshot(
     source: &Path,
     data_root: &Path,
@@ -201,12 +294,7 @@ pub fn prepare_snapshot(
     }
     if let Some(hash) = expected {
         if source == snapshots.join(&hash[7..]).join("code") {
-            let mut manifest = Vec::new();
-            entries(&source, &source, None, &mut manifest)?;
-            let bytes = manifest_bytes(&manifest)?;
-            if format!("sha256:{:x}", Sha256::digest(&bytes)) != hash {
-                return Err("owned snapshot content corrupted".into());
-            }
+            verify_owned_snapshot(&source, hash)?;
             return Ok(Snapshot {
                 path: source.to_string_lossy().into_owned(),
                 content_hash: hash.into(),
@@ -293,6 +381,53 @@ mod tests {
     use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 
     #[test]
+    fn owned_snapshot_uses_its_frozen_exclusions_and_detects_tampering() {
+        let base = std::env::temp_dir().join(format!("eb-snapshot-policy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let src = base.join("source");
+        fs::create_dir_all(src.join("runs")).unwrap();
+        fs::write(src.join("runs/source.py"), b"old source").unwrap();
+        let policy = Exclusions {
+            root_outputs: ROOT_OUTPUTS
+                .iter()
+                .filter(|name| !["runs", "cache"].contains(name))
+                .map(|name| (*name).into())
+                .collect(),
+            ..current_exclusions()
+        };
+        let mut manifest = Vec::new();
+        entries_with_policy(&src, &src, None, &mut manifest, &policy).unwrap();
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&manifest_bytes(&manifest).unwrap()).unwrap();
+        stored["exclusions"]["root_outputs"] = serde_json::json!(policy.root_outputs);
+        let bytes = serde_json::to_vec(&stored).unwrap();
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let owned = base.join("owned/snapshots").join(&hash);
+        fs::create_dir_all(owned.join("code/runs")).unwrap();
+        fs::write(owned.join("code/runs/source.py"), b"old source").unwrap();
+        fs::write(owned.join("manifest.json"), &bytes).unwrap();
+        let expected = format!("sha256:{hash}");
+        assert!(
+            prepare_snapshot(&owned.join("code"), &base.join("owned"), Some(&expected)).is_ok()
+        );
+        fs::write(owned.join("code/runs/source.py"), b"changed").unwrap();
+        assert!(
+            prepare_snapshot(&owned.join("code"), &base.join("owned"), Some(&expected)).is_err()
+        );
+        fs::write(owned.join("code/runs/source.py"), b"old source").unwrap();
+        symlink("/etc/passwd", owned.join("code/runs/escape")).unwrap();
+        assert!(
+            prepare_snapshot(&owned.join("code"), &base.join("owned"), Some(&expected)).is_err()
+        );
+        fs::remove_file(owned.join("code/runs/escape")).unwrap();
+        fs::write(owned.join("manifest.json"), b"{}").unwrap();
+        assert!(
+            prepare_snapshot(&owned.join("code"), &base.join("owned"), Some(&expected)).is_err()
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn excludes_weight_payloads_and_records_policy() {
         let base = std::env::temp_dir().join(format!("eb-snapshot-weights-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -352,7 +487,11 @@ mod tests {
         std::fs::create_dir_all(src.join(".claude/skills")).unwrap();
         std::fs::write(src.join("AGENTS.md"), b"instructions").unwrap();
         symlink("AGENTS.md", src.join("CLAUDE.md")).unwrap();
-        symlink("../../.agents/skills/example", src.join(".claude/skills/example")).unwrap();
+        symlink(
+            "../../.agents/skills/example",
+            src.join(".claude/skills/example"),
+        )
+        .unwrap();
         std::fs::write(src.join("code.py"), b"old").unwrap();
         std::fs::create_dir_all(src.join("pkg/datasets")).unwrap();
         std::fs::write(src.join("pkg/datasets/__init__.py"), b"source").unwrap();
@@ -360,6 +499,12 @@ mod tests {
         std::fs::write(src.join("rlinf/envs/venv/__init__.py"), b"source").unwrap();
         std::fs::create_dir_all(src.join("venv")).unwrap();
         std::fs::write(src.join("venv/pyvenv.cfg"), b"home = /python").unwrap();
+        for name in ["runs", "cache"] {
+            std::fs::create_dir_all(src.join(name)).unwrap();
+            std::fs::write(src.join(name).join("runtime.bin"), b"runtime output").unwrap();
+            std::fs::create_dir_all(src.join("pkg").join(name)).unwrap();
+            std::fs::write(src.join("pkg").join(name).join("__init__.py"), b"source").unwrap();
+        }
         let first = prepare_snapshot(&src, &base.join("owned"), None).unwrap();
         let path = std::path::Path::new(&first.path);
         assert_eq!(std::fs::read(path.join("code.py")).unwrap(), b"old");
@@ -370,6 +515,10 @@ mod tests {
         assert!(path.join("pkg/datasets/__init__.py").is_file());
         assert!(path.join("rlinf/envs/venv/__init__.py").is_file());
         assert!(!path.join("venv").exists());
+        for name in ["runs", "cache"] {
+            assert!(!path.join(name).exists());
+            assert!(path.join("pkg").join(name).join("__init__.py").is_file());
+        }
         assert_ne!(
             std::fs::metadata(src.join("code.py")).unwrap().ino(),
             std::fs::metadata(path.join("code.py")).unwrap().ino()

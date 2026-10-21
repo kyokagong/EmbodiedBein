@@ -10,6 +10,14 @@ from eb.store.models import EmbodimentEnvRow, EnvironmentProfile, EvalSuite
 
 
 def _training_definition(tpl) -> dict:
+    if tpl.id == "rpo_ufo_fb_native":
+        return {
+            "task": "RPO 原生 FB-CPR-Aux 无监督预训练；任务 latent 用于站立和 0.3 m/s 前行。",
+            "reward": "UFO 原生网络、loss、专家与 Replay 采样、辅助 reward 和训练内 tracking 优先级反馈。",
+            "failure": "非有限值、OOM、任意 rank 失败或不完整 checkpoint 则整段失败。",
+            "success": "真实 agent 更新、原生状态及全 rank Replay 恢复、独立 validation 与媒体；正式 acceptance 另行冻结。",
+            "settings": {},
+        }
     if tpl.id == "rpo_v2_flat_ppo":
         return {
             "task": "官方 RPO-Flat：按前后、横向速度及 heading/转向指令运动；20% 站立指令，每 10 秒重采样。",
@@ -197,7 +205,7 @@ def suite_executable(suite) -> bool:
 async def seed_environment_profiles(session) -> None:
     env_ids = set((await session.scalars(select(EmbodimentEnvRow.id))).all())
     for tpl in TEMPLATES:
-        if tpl.kind not in {"sft", "ppo"} or tpl.embodiment_env_id not in env_ids:
+        if tpl.kind not in {"sft", "ppo", "native_rl"} or tpl.embodiment_env_id not in env_ids:
             continue
         id_ = f"env_train_{tpl.id}"
         if await session.get(EnvironmentProfile, id_):

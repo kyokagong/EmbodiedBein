@@ -1,4 +1,6 @@
-//! Watch run logs for tfevents files and append scalars into eb-tsdb.
+//! Watch run logs for tfevents and native UFO CSV scalars.
+
+mod ufo_csv;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -224,23 +226,38 @@ pub fn ingest_run_logs(root: &Path, run_id: &str) -> std::io::Result<usize> {
             continue;
         }
         for (tag, step, value) in parse_tfevents(ent.path(), 16 * 1024 * 1024) {
-            if !seen.contains_key(&tag) {
-                seen.insert(
-                    tag.clone(),
-                    eb_tsdb::query_exact(root, run_id, &tag)?
-                        .into_iter()
-                        .map(|point| point.0)
-                        .collect(),
-                );
-            }
-            if !seen.get_mut(&tag).unwrap().insert(step) {
-                continue;
-            }
-            eb_tsdb::append(root, run_id, &tag, step, value)?;
-            n += 1;
+            n += append_unseen(root, run_id, &mut seen, &tag, step, value)?;
         }
     }
+    ufo_csv::collect(&run, |tag, step, value| {
+        n += append_unseen(root, run_id, &mut seen, tag, step, value)?;
+        Ok(())
+    })?;
     Ok(n)
+}
+
+fn append_unseen(
+    root: &Path,
+    run_id: &str,
+    seen: &mut HashMap<String, HashSet<i64>>,
+    tag: &str,
+    step: i64,
+    value: f32,
+) -> std::io::Result<usize> {
+    if !seen.contains_key(tag) {
+        seen.insert(
+            tag.into(),
+            eb_tsdb::query_exact(root, run_id, tag)?
+                .into_iter()
+                .map(|point| point.0)
+                .collect(),
+        );
+    }
+    if !seen.get_mut(tag).unwrap().insert(step) {
+        return Ok(0);
+    }
+    eb_tsdb::append(root, run_id, tag, step, value)?;
+    Ok(1)
 }
 
 pub async fn spawn(root: PathBuf) {

@@ -4,13 +4,15 @@ import { api } from "../api/client";
 
 const props = defineProps<{ model?: any }>();
 const emit = defineEmits<{ changed: [] }>();
-type Action = "imports" | "export" | "evals" | "bundles";
+type Action = "imports" | "prompt" | "export" | "evals" | "bundles";
 const capabilities = ref<any>(null);
 const status = ref<any>(null);
 const sourceName = ref("UFO/RPO 原生模型");
 const sourcePath = ref("");
 const backend = ref("mjlab");
 const profile = ref("smoke");
+const promptSeed = ref(71000);
+const promptSamples = ref(16384);
 const preview = ref<any>(null);
 const lastJob = ref<any>(null);
 const busy = ref(false);
@@ -21,17 +23,23 @@ const controller = new AbortController();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let pollsLeft = 120;
 let previewVersion = 0;
-const currentModel = computed(() => status.value?.model || props.model);
+const currentModel = computed(() => status.value?.model ? { ...props.model, ...status.value.model } : props.model);
+const trained = computed(() => currentModel.value?.card?.schema_version === "eb/rpo-ufo-native-trained-model/v1");
 const exported = computed(() => currentModel.value?.card?.schema_version === "eb/rpo-ufo-native-export/v1");
+const exportChildren = computed<any[]>(() => (status.value?.exports || [])
+  .filter((child: any) => child.card?.schema_version === "eb/rpo-ufo-native-export/v1"));
+const promptInputValid = computed(() => Number.isInteger(promptSeed.value) && promptSeed.value >= 0
+  && promptSeed.value <= 1000000 && Number.isInteger(promptSamples.value) && promptSamples.value >= 256
+  && promptSamples.value <= 262144 && promptSamples.value % 256 === 0);
 const reports = computed<any[]>(() => status.value?.reports || []);
 const jobs = computed<any[]>(() => {
   const rows = status.value?.jobs || [];
   return lastJob.value && !rows.some((job: any) => job.id === lastJob.value.id) ? [lastJob.value, ...rows] : rows;
 });
 const active = (job: any) => ["draft", "blocked", "queued", "admitted", "preparing", "running", "preempted"].includes(job?.status);
-const actionLabels: Record<Action, string> = { imports: "导入", export: "导出", evals: "仿真评估", bundles: "构建仿真交付包" };
+const actionLabels: Record<Action, string> = { imports: "导入", prompt: "任务 prompt 派生", export: "导出", evals: "仿真评估", bundles: "构建仿真交付包" };
 
-watch([sourceName, sourcePath, backend, profile], () => { previewVersion++; preview.value = null; });
+watch([sourceName, sourcePath, backend, profile, promptSeed, promptSamples], () => { previewVersion++; preview.value = null; });
 onMounted(reload);
 onUnmounted(() => { controller.abort(); clearTimeout(timer); });
 
@@ -78,9 +86,15 @@ async function loadState() {
 }
 async function check(action: Action) {
   if (busy.value) return;
+  if (action === "prompt" && !promptInputValid.value) {
+    previewVersion++; preview.value = null;
+    error.value = "seed 必须是 0–1000000 的整数；采样数须为 256–262144 且是 256 的倍数。";
+    return;
+  }
   busy.value = true; error.value = ""; preview.value = null;
   const version = previewVersion;
   const body = action === "imports" ? { name: sourceName.value, path: sourcePath.value }
+    : action === "prompt" ? { seed: promptSeed.value, num_samples: promptSamples.value }
     : action === "evals" ? { backend: backend.value, profile: profile.value } : {};
   try {
     const result = await api(`${endpoint(action)}/preview`, { method: "POST", signal: controller.signal, body: JSON.stringify(body) });
@@ -109,12 +123,12 @@ async function submit() {
 <template>
   <section class="panel ufo-native-panel" aria-labelledby="ufo-native-title">
     <div class="page-head">
-      <h3 id="ufo-native-title">{{ model ? 'UFO/RPO 原生推理与部署前仿真' : '导入 UFO/RPO 原生模型' }}</h3>
+      <h3 id="ufo-native-title">{{ trained ? 'UFO/RPO 原生训练产物与任务 prompt' : model ? 'UFO/RPO 原生推理与部署前仿真' : '导入 UFO/RPO 原生模型' }}</h3>
       <button type="button" :disabled="loading || busy" @click="reload">{{ loading ? '刷新中…' : '刷新状态' }}</button>
     </div>
     <p class="muted">本机容器推理与仿真交付；目标硬件未验证，交付包仅用于仿真。</p>
     <p v-if="!capabilities && !error" role="status">正在读取原生推理能力…</p>
-    <p v-if="capabilities?.image_ready === false" class="error" role="alert">原生任务镜像尚未就绪，暂不能创建任务。</p>
+    <p v-if="!trained && capabilities?.image_ready === false" class="error" role="alert">原生推理任务镜像尚未就绪，暂不能创建推理任务。</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="capabilities?.tasks?.length" class="muted xs">冻结任务：{{ capabilities.tasks.map((task: any) => task.label).join(' · ') }}</p>
 
@@ -129,14 +143,28 @@ async function submit() {
 
     <template v-else>
       <div class="kpis">
-        <div class="card"><div class="l">导入检查</div><div class="v xs">{{ currentModel?.card?.readiness || '已登记' }}</div></div>
-        <div class="card"><div class="l">导出等价性</div><div class="v xs">{{ exported || status?.exports?.length ? '已导出' : '未导出' }}</div></div>
+        <div class="card"><div class="l">{{ trained ? '原生训练产物' : '导入检查' }}</div><div class="v xs">{{ trained ? '需任务 prompt' : currentModel?.card?.readiness || '已登记' }}</div></div>
+        <div class="card"><div class="l">导出等价性</div><div class="v xs">{{ exported || exportChildren.length ? '已导出' : '未导出' }}</div></div>
         <div class="card"><div class="l">MJLab 仿真</div><div class="v xs">{{ reportState('mjlab') }}</div></div>
         <div class="card"><div class="l">MuJoCo 迁移诊断</div><div class="v xs">{{ reportState('mujoco') }}</div></div>
         <div class="card"><div class="l">目标设备验证</div><div class="v xs">未验证</div></div>
         <div class="card"><div class="l">仿真交付包</div><div class="v xs">{{ status?.bundles?.length || 0 }}</div></div>
       </div>
-      <template v-if="!exported">
+      <template v-if="trained">
+        <p>FB-CPR-Aux 网络已冻结。先用该 checkpoint 的 Replay 生成任务 prompt，再打开派生模型导出和仿真。</p>
+        <p v-if="currentModel.card.counts">实际 agent 更新 {{ currentModel.card.counts.optimizer_steps }} 次 · 全局环境步 {{ currentModel.card.counts.global_time }} · 每 rank 环境步 {{ currentModel.card.counts.local_time }}</p>
+        <p v-if="currentModel.card.run_id">来源训练 Run：<router-link :to="`/train/runs/${currentModel.card.run_id}`">{{ currentModel.card.run_id }}</router-link></p>
+        <div class="form-grid">
+          <label for="ufo-prompt-seed">任务 prompt seed</label>
+          <input id="ufo-prompt-seed" v-model.number="promptSeed" type="number" min="0" max="1000000" step="1" :disabled="busy" />
+          <label for="ufo-prompt-samples">每次推导采样数</label>
+          <input id="ufo-prompt-samples" v-model.number="promptSamples" type="number" min="256" max="262144" step="256" :disabled="busy" />
+        </div>
+        <p class="muted xs">采样数以 256 为单位。任务会冻结 seed、Replay 与采样预算，并生成新的任务模型版本。</p>
+        <button type="button" :disabled="busy || !promptInputValid" @click="check('prompt')">检查任务 prompt 配置</button>
+        <p v-for="child in status?.exports || []" :key="child.id"><router-link :to="`/models/${child.id}`">打开任务 prompt 派生模型：{{ child.name || child.id }}</router-link></p>
+      </template>
+      <template v-else-if="!exported">
         <p>先导出冻结的 ONNX、任务提示与推理配置，再验证该导出模型。</p>
         <button type="button" :disabled="busy || !capabilities || capabilities.image_ready === false" @click="check('export')">检查导出配置</button>
         <p v-for="child in status?.exports || []" :key="child.id"><router-link :to="`/models/${child.id}`">打开导出模型：{{ child.name || child.id }}</router-link></p>

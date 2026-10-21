@@ -34,7 +34,14 @@ def estimate_job(spec: JobSpec, host_vram_gb: float = 24.0, free_now: list[float
     kind = spec.kind
     gpus = max(spec.resources.gpus, 1) if spec.resources.gpus else 1
     params = spec.params
-    if params.get('operation') in {'ufo_native_import', 'ufo_native_export', 'ufo_native_bundle'}:
+    if params.get('operation') == 'ufo_failure_probe_v1':
+        return _finish(2., host_vram_gb, gpus, 'fixed two-rank CUDA/NCCL fault diagnostic; no training',
+            {'optimizer_bytes': 0, 'resident_context_reserve_gib': 2.,
+             'overphysical_request_fails_without_resident_allocation': True, 'gpu_peak_measured': False})
+    if params.get('operation') == 'prepare_ufo_rpo_grounded_a1_v1':
+        return _finish(0., host_vram_gb, gpus, 'CPU native A1 MotionData build and reference PD diagnostic',
+            {'num_envs': 1, 'optimizer_bytes': 0, 'gpu_peak_measured': False})
+    if params.get('operation') in {'ufo_native_import', 'ufo_native_export', 'ufo_native_bundle', 'prepare_ufo_native_motion', 'ufo_native_prompt'}:
         return _finish(0., host_vram_gb, gpus, 'offline CPU native UFO inference package; no optimizer',
             {'num_envs': 0, 'optimizer_bytes': 0, 'gpu_peak_measured': False})
     if params.get('operation') in {'ufo_native_eval', 'ufo_native_live'}:
@@ -42,6 +49,20 @@ def estimate_job(spec: JobSpec, host_vram_gb: float = 24.0, free_now: list[float
             'single native UFO inference/simulation case; no optimizer; unmeasured reserve',
             {'num_envs': 1, 'optimizer_bytes': 0, 'gpu_peak_measured': False})
     template_id = params.get("template_id", "")
+    if template_id == "rpo_ufo_fb_native" or params.get("operation") == "ufo_native_baseline_v1":
+        training_plan = (params.get("baseline_plan") or {}).get("native_train_plan") if params.get("operation") == "ufo_native_baseline_v1" else params.get("native_train_plan")
+        identity = (training_plan or {}).get("identity") or {}
+        capacity = float(identity.get("buffer_size", 5120000))
+        # Replicated per rank: two 733-dim observations plus action/z/physics/reward fields.
+        replay_gb = capacity * (2 * 733 + 23 + 256 + 59 + 32) * 4 / 1024**3
+        envs = int(identity.get("num_envs_per_rank", 1024))
+        # 2048-env probe run_59969e7f999a46eb8b4b peaked at 23692 MiB/rank.
+        runtime_reserve = 12.0 + max(0, envs - 1024) / 1024 * 7.5
+        return _finish((replay_gb + runtime_reserve) * 1.08, host_vram_gb, gpus,
+            "UFO native per-rank Replay + unmeasured model/optimizer/expert/mjlab/compile reserve",
+            {"buffer_size_per_rank": capacity, "replay_gib_per_rank": replay_gb,
+             "replicated_per_rank": True, "num_envs_per_rank": envs,
+             "runtime_reserve_gib": runtime_reserve, "gpu_peak_measured": False})
     if kind == JobKind.EVAL_SIM and template_id in {"rpo_v2_wbc_eval", "rpo_v2_amp_eval", "rpo_v2_flat_eval"}:
         # One Isaac environment uses GPU rendering; ONNX inference runs on CPU.
         # A video probe used 4.1 GiB. Reserve extra for longer episodes and driver variation.

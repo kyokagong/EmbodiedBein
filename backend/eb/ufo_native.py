@@ -15,6 +15,7 @@ MODEL_SCHEMA = "eb/rpo-ufo-native-model/v1"
 EXPORT_SCHEMA = "eb/rpo-ufo-native-export/v1"
 IMAGE = "eb/ufo-native:rpo-deploy-v1"
 OPERATIONS = {
+    "ufo_native_prompt": "data.convert",
     "ufo_native_import": "data.convert",
     "ufo_native_export": "export.policy",
     "ufo_native_eval": "eval.sim",
@@ -321,6 +322,9 @@ def validate_cases(plan: dict, rows: list) -> dict:
 
 def validate_job(spec) -> dict:
     params = spec.params
+    if params.get("operation") == "ufo_native_prompt":
+        from eb.ufo_training_prompt import validate_prompt_job
+        return validate_prompt_job(spec)
     plan = params.get("native_plan") or {}
     operation = params.get("operation")
     expected_kind = (

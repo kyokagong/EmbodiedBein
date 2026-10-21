@@ -34,6 +34,8 @@ pub struct RunRequest {
     pub workdir: String,
     #[serde(default)]
     pub network: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
     #[serde(default = "default_cpus")]
     pub cpus: u32,
     #[serde(default = "default_memory")]
@@ -296,12 +298,18 @@ pub fn build_docker_args(req: &RunRequest) -> Vec<String> {
     }
     args.push("--network".into());
     args.push(req.network.clone().unwrap_or_else(|| "bridge".into()));
+    if let Some(hostname) = &req.hostname {
+        args.extend(["--hostname".into(), hostname.clone()]);
+    }
     args.push(req.image.clone());
     args.extend(req.command.clone());
     args
 }
 
 fn validate_resources(req: &RunRequest) -> Result<(), StartError> {
+    if req.hostname.as_deref().is_some_and(|hostname| hostname != "localhost") {
+        return Err(StartError::Docker("only the localhost task hostname is supported".into()));
+    }
     if req.cpus == 0 || req.memory_gb == 0 || req.shm_gb == 0 || req.shm_gb > req.memory_gb {
         return Err(StartError::Docker("cpus, memory_gb and shm_gb must be positive; shm_gb must not exceed memory_gb".into()));
     }
@@ -444,6 +452,7 @@ mod tests {
             }],
             workdir: "/workspace/isaaclab_extension_template".into(),
             network: None,
+            hostname: None,
             cpus: 6,
             memory_gb: 24,
         });
@@ -456,6 +465,19 @@ mod tests {
         assert!(s.contains("eb.run_id=run_x"));
         assert!(s.contains("--cpus 6 --memory 24g"));
         assert!(s.contains("--network bridge"));
+    }
+
+    #[test]
+    fn isolated_task_can_resolve_localhost_without_opening_a_network() {
+        let mut req: RunRequest = serde_json::from_value(serde_json::json!({
+            "run_id":"run_native", "image":"native", "network":"none", "hostname":"localhost"
+        })).unwrap();
+        assert!(validate_resources(&req).is_ok());
+        let args = build_docker_args(&req);
+        assert!(args.windows(2).any(|items| items == ["--hostname", "localhost"]));
+        assert!(args.windows(2).any(|items| items == ["--network", "none"]));
+        req.hostname = Some("external.example".into());
+        assert!(validate_resources(&req).is_err());
     }
 
     #[test]

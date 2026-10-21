@@ -61,6 +61,11 @@ class EvalIn(ActionIn):
     profile: Literal["smoke", "acceptance"] = "smoke"
 
 
+class PromptIn(ActionIn):
+    seed: int = Field(default=71000, ge=0, le=1000000)
+    num_samples: int = Field(default=16384, ge=256, le=262144, multiple_of=256)
+
+
 async def approved_image():
     image = await EbdClient().image_info(IMAGE)
     if not image.get("ok") or not re.fullmatch(r"sha256:[a-f0-9]{64}", image.get("digest", "")):
@@ -185,6 +190,24 @@ async def native_model(session, mid, *, exported=None):
     return model, artifact, manifest
 
 
+async def execution_runtime(manifest):
+    if manifest.get("training_provenance") != "platform":
+        return {"image_digest": await approved_image()}
+    refs, sources = manifest.get("source_refs"), manifest.get("code_sources")
+    if not isinstance(refs, dict) or not isinstance(sources, dict) or set(sources) != {"ufo", "rlinf"}:
+        raise ValueError("受管训练模型缺少冻结源码身份")
+    for name, source in sources.items():
+        path = validate_allowed_path(source["path"])
+        saved = safe_file(path.parent, "manifest.json")
+        if (source.get("kind") != "content_snapshot" or source.get("commit") != refs[name]["snapshot_hash"]
+                or "sha256:" + sha256_file(saved) != source["commit"]):
+            raise ValueError("受管训练模型的冻结源码 manifest 已变化")
+    image = await EbdClient().image_info(manifest["image_digest"])
+    if image.get("ok") is not True or image.get("digest") != manifest["image_digest"]:
+        raise ValueError("受管训练模型的冻结任务镜像不可用")
+    return {"image_digest": manifest["image_digest"], "source_refs": refs, "code_sources": sources}
+
+
 async def action_plan(session, mid, operation, body=None):
     exported = operation != "ufo_native_export"
     model, artifact, payload_manifest = await native_model(session, mid, exported=exported)
@@ -194,7 +217,7 @@ async def action_plan(session, mid, operation, body=None):
         "model_id": model.id,
         "input_path": artifact.storage,
         "source_artifact_sha256": artifact.sha256,
-        "image_digest": await approved_image(),
+        **await execution_runtime(payload_manifest),
     }
     if operation == "ufo_native_eval":
         _, native_artifact, _ = await native_model(session, model.card["source_model_id"], exported=False)
@@ -255,6 +278,13 @@ async def action_plan(session, mid, operation, body=None):
 
 def spec_for(plan):
     operation = plan["operation"]
+    if operation == "ufo_native_prompt":
+        return JobSpec(kind="data.convert", name=plan["name"] + " · reward prompts",
+            embodiment_env_id=ENV_ID, params={"operation": operation, "native_plan": plan},
+            image=plan["image_digest"], inputs={"base_model": plan["input_path"]},
+            runtime={"network": "none"},
+            resources={"gpus": 0, "cpus": 4, "memory_gb": 64, "shm_gb": 2},
+            policy={"timeout_h": 1, "max_retries": 0})
     gpu = int(operation in ("ufo_native_eval", "ufo_native_live") and (
         plan["backend"] == "mjlab" or bool((plan.get("suite_spec") or {}).get("stream"))))
     kind = (
@@ -346,6 +376,30 @@ async def model_action(mid, action, body, session, principal, key=None):
         raise HTTPException(400, str(exc)) from exc
 
 
+async def prompt_action(mid, body, session, principal, key=None):
+    from eb.ufo_training_prompt import prompt_plan
+    if principal.actor_type == "agent":
+        raise HTTPException(403, "原生 prompt 派生入口仅供操作者使用")
+    try:
+        plan = await prompt_plan(session, mid, seed=body.seed, num_samples=body.num_samples)
+        if key is None:
+            return {"plan": plan, "resources": spec_for(plan).resources.model_dump()}
+        return await submit(plan, body.preview_hash, session, principal, key)
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/models/{mid}/prompt/preview")
+async def preview_prompt(mid: str, body: PromptIn, session: SessionDep, principal: PrincipalDep):
+    return await prompt_action(mid, body, session, principal)
+
+
+@router.post("/models/{mid}/prompt")
+async def start_prompt(mid: str, body: PromptIn, session: SessionDep, principal: PrincipalDep,
+                       idem: str = Header(..., alias="Idempotency-Key")):
+    return await prompt_action(mid, body, session, principal, idem)
+
+
 @router.post("/models/{mid}/export/preview")
 async def preview_export(mid: str, body: ActionIn, session: SessionDep, principal: PrincipalDep):
     return await model_action(mid, "export", body, session, principal)
@@ -401,7 +455,12 @@ def file_url(run_id, path):
 @router.get("/models/{mid}/status")
 async def model_status(mid: str, session: SessionDep, principal: PrincipalDep):
     try:
-        model, _, _ = await native_model(session, mid)
+        candidate = await session.get(ModelVersion, mid)
+        if candidate and candidate.card.get("schema_version") == "eb/rpo-ufo-native-trained-model/v1":
+            from eb.ufo_training_prompt import trained_source
+            model, *_ = await trained_source(session, mid)
+        else:
+            model, _, _ = await native_model(session, mid)
     except (ValueError, OSError) as exc:
         raise HTTPException(404, str(exc)) from exc
     exports = (
@@ -516,25 +575,35 @@ async def stream_output(request, run_id, path, *, live_kind=None):
 
 @router.api_route("/runs/{rid}/files/{path:path}", methods=["GET", "HEAD"])
 async def output_file(rid: str, path: str, request: Request, session: SessionDep, principal: PrincipalDep):
+    from eb.ufo_output_access import completed_output_file, indexed_output_file
+
     run = await session.get(Run, rid)
     if not run:
         raise HTTPException(404, "没有完整的原生产物")
     job = await session.get(Job, run.job_id)
-    if not job or (job.spec.get("params") or {}).get("operation") not in OPERATIONS:
+    params = (job.spec.get("params") or {}) if job else {}
+    native_train = bool(job and job.kind == "train.rl"
+                        and params.get("template_id") == "rpo_ufo_fb_native")
+    operation = "ufo_native_train" if native_train else params.get("operation")
+    if not job or not native_train and operation not in OPERATIONS:
         raise HTTPException(404)
     root = get_settings().data_root / "runs" / rid / "outputs"
-    if run.status == "finished":
-        value = read_json(root / "receipt.json")
-        allowed = {"receipt.json"} | {item["path"] for item in value.get("files", [])}
-    elif (job.spec.get("params") or {}).get("operation") == "ufo_native_live":
-        artifact = await session.scalar(select(Artifact).where(
-            Artifact.run_id == rid, Artifact.kind == "ufo_native_live_diagnostic"))
-        allowed = {item["path"] for item in (artifact.meta if artifact else {}).get("partial_files", [])}
-    else:
-        report = await session.scalar(select(EvalReport).where(EvalReport.run_id == rid))
-        allowed = {item["path"] for item in (report.gate_results if report else {}).get("partial_files", [])}
-    if path not in allowed:
-        raise HTTPException(404)
+    try:
+        if run.status == "finished":
+            frozen_hash = (plan_hash({**params.get("native_train_plan", {}), "run_id": rid})
+                           if native_train else (params.get("native_plan") or {}).get("hash"))
+            completed_output_file(root, path, run_id=rid, operation=operation, expected_plan_hash=frozen_hash)
+        elif native_train:
+            raise ValueError("Native training evidence has not been frozen")
+        elif operation == "ufo_native_live":
+            artifact = await session.scalar(select(Artifact).where(
+                Artifact.run_id == rid, Artifact.kind == "ufo_native_live_diagnostic"))
+            indexed_output_file(root, path, (artifact.meta if artifact else {}).get("partial_files", []))
+        else:
+            report = await session.scalar(select(EvalReport).where(EvalReport.run_id == rid))
+            indexed_output_file(root, path, (report.gate_results if report else {}).get("partial_files", []))
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise HTTPException(404, "没有已登记的原生证据文件") from exc
     return await stream_output(request, rid, path)
 
 

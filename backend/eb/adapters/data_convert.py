@@ -17,6 +17,52 @@ class DataConvertAdapter(Adapter):
     name = "data_convert"
 
     def render(self, spec: JobSpec, run_id: str) -> RenderedJob:
+        from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
+        if spec.params.get("operation") == GROUNDED_OPERATION:
+            from eb.ufo_grounded_reference import render
+            return render(spec, run_id)
+        if spec.params.get("operation") == "prepare_ufo_native_motion":
+            import re
+
+            from eb.settings import get_settings
+            from eb.ufo_native import ENV_ID
+
+            settings = get_settings()
+            source = Path(str(spec.params.get("src", "")))
+            provenance = settings.ufo_native_root / "runs/rpo_reference_v2/import_report.json"
+            if (spec.embodiment_env_id != ENV_ID or spec.runtime != {"network": "none"}
+                    or not re.fullmatch(r"sha256:[a-f0-9]{64}", spec.image or "")
+                    or not re.fullmatch(r"ds_[A-Za-z0-9]+", str(spec.params.get("dataset_id", "")))
+                    or not source.is_relative_to(settings.ufo_native_root / "runs")
+                    or source != source.resolve() or not source.is_dir()
+                    or spec.params.get("provenance_source") != str(provenance)
+                    or not provenance.is_file()):
+                raise ValueError("UFO native motion preparation requires canonical isolated inputs")
+            output = settings.data_root / "runs" / run_id / "outputs"
+            refs = []
+            for key in ("ufo_source_ref", "asset_source_ref"):
+                ref = spec.params.get(key) or {}
+                commit = ref.get("commit", "")
+                expected = settings.data_root / "snapshots" / commit.removeprefix("sha256:") / "code"
+                if (ref.get("kind") != "content_snapshot" or not re.fullmatch(r"sha256:[a-f0-9]{64}", commit)
+                        or ref.get("path") != str(expected) or not expected.is_dir()):
+                    raise ValueError("UFO data requires frozen native source and robot assets")
+                refs.append(expected)
+            checked = (source, provenance, *refs, *source.parents, *provenance.parents)
+            if any(path.is_symlink() for path in checked):
+                raise ValueError("UFO motion source must not contain links")
+            return RenderedJob(image=spec.image,
+                command=["python", "-m", "eb.runners.ufo_training_data", "--source", "/motion-source",
+                    "--provenance", "/motion-provenance/import_report.json", "--ufo-root", "/sources/ufo",
+                    "--output", "/outputs", "--storage-ref", str(output / "data"),
+                    "--dataset-id", spec.params["dataset_id"], "--source-uri", str(source)],
+                env={"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": "1"},
+                writable_paths=[], workdir="/sources/ufo", gpus=0,
+                mounts=[(str(source), "/motion-source", "ro"),
+                        (str(provenance), "/motion-provenance/import_report.json", "ro"),
+                        (str(refs[0]), "/sources/ufo", "ro"),
+                        (str(refs[1]), str(settings.assets_root / "roboparty/rpo-v2"), "ro"),
+                        (str(output), "/outputs", "rw")])
         if spec.params.get("operation") == "audit_rpo_amp_official":
             from eb.settings import get_settings
 

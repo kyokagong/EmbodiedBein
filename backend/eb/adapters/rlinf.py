@@ -38,6 +38,9 @@ class RlinfAdapter(Adapter):
     name = "rlinf"
 
     def render(self, spec: JobSpec, run_id: str) -> RenderedJob:
+        if spec.params.get("template_id") == "rpo_ufo_fb_native":
+            from eb.ufo_training import render_training
+            return render_training(spec, run_id)
         settings = get_settings()
         tpl = get_template(str(spec.params.get("template_id") or "berkeley_wbc_ppo_mlp"))
         require_template_ready(tpl)

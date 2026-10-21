@@ -22,6 +22,7 @@
 | [15 · AMP / RPO / RLinf](15-amp-rpo-rlinf-integration.md) | 可行性、Actor–Critic/判别器结构、环境/step/rollout 预算、完整接入与独立评估、多轮反思 |
 | [23 · 原生 UFO/RPO 部署](23-ufo-native-rpo-deployment.md) | 原生模型导入、推理契约、部署前双后端仿真与交付设计 |
 | [24 · 实时仿真验证](24-ufo-live-simulation-validation.md) | 冻结模型/环境的部署会话、连续切换任务 z、真实姿态展示与诊断证据 |
+| [26 · P-BFM / RPO / RLinf](26-pbfm-rpo-rlinf-integration.md) | RLinf 承载 P-BFM 原生训练、RPO 深度/地形契约、数据与恢复、仿真评估及多轮复核 |
 
 RoboTwin 所需的 RLinf 逐文件补丁设计单独维护在 [`../rlinf/`](../rlinf/README.md)。该目录展开组件实现边界，不改变本目录定义的平台不变量。
 
