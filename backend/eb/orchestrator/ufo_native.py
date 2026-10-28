@@ -60,7 +60,7 @@ async def validate_submission(session, spec):
         raise ValueError("Native submission differs from registered inputs or frozen suite")
 
 
-async def verify_index(root, files, *, max_files=200):
+async def verify_index(root, files, *, max_files=200, max_file_bytes=2 * 1024**3):
     if not files or len(files) > max_files or len({f["path"] for f in files}) != len(files):
         raise ValueError("Native output index is incomplete or duplicate")
 
@@ -68,7 +68,7 @@ async def verify_index(root, files, *, max_files=200):
         path = safe_file(root, item["path"])
         if (
             type(item["bytes"]) is not int
-            or not 0 < item["bytes"] <= 2 * 1024**3
+            or not 0 < item["bytes"] <= max_file_bytes
             or path.stat().st_size != item["bytes"]
             or not re.fullmatch("[a-f0-9]{64}", item["sha256"])
         ):

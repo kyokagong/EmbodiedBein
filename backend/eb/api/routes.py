@@ -247,11 +247,14 @@ async def list_models(session: SessionDep, principal: PrincipalDep) -> dict:
     from eb.store.models import WeightModel
 
     weights = (await session.scalars(select(WeightModel))).all()
+    from eb.pbfm_workbench import model_links
+    diagnostic_links = await model_links(session)
     return {
         "families": [_row(f, ["id", "name", "family"]) for f in fams],
         "versions": [{**_row(v, ["id", "family_id", "name", "embodiment_env_id", "provenance", "tags", "io_signature", "card", "created_at"]),
                       "train_job_name": job_train_names.get((v.card or {}).get("train_job_id")),
-                      "train_page_id": job_train_ids.get((v.card or {}).get("train_job_id"))} for v in vers],
+                      "train_page_id": job_train_ids.get((v.card or {}).get("train_job_id")),
+                      **diagnostic_links.get(v.id, {})} for v in vers],
         "items": [
             {
                 "id": w.id,
@@ -278,6 +281,9 @@ async def get_model(mid: str, session: SessionDep, principal: PrincipalDep) -> d
         if producer:
             out["train_job_name"] = producer.name
             out["train_page_id"] = producer.id
+        elif (v.card or {}).get("schema_version") == "eb/rpo-pbfm-trained-model/v1":
+            from eb.pbfm_workbench import model_links
+            out.update((await model_links(session)).get(v.id, {}))
         if v.artifact_id:
             artifact = await session.get(Artifact, v.artifact_id)
             if artifact:

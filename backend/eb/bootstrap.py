@@ -190,7 +190,13 @@ async def seed_if_empty(session: AsyncSession) -> None:
             embodiment_id=profile.embodiment_id, spec=spec,
             spec_hash=sha256_bytes(str(sorted(spec.items())).encode()), status="draft",
             obs_dim=None, action_dim=None, policy_hz=None))
-    for tsk in BHL_SEED_TASKS:
+    pbfm_task = TaskSpec(
+        id="tsk_rpo_pbfm_terrain_locomotion_v1", status="draft",
+        compatible_env_ids=["ee_rpo_v2_pbfm_depth_23dof_v1"],
+        stack_bindings={"rlinf": {"template_id": "rpo_pbfm_fb_depth_native",
+                                  "config_name": "rpo_23dof"}},
+    )
+    for tsk in [*BHL_SEED_TASKS, pbfm_task]:
         if await session.get(TaskRow, tsk.id):
             continue
         session.add(

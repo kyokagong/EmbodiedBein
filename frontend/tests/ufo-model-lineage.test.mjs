@@ -71,3 +71,19 @@ test('external native imports keep no invented platform training lineage', async
   assert.equal(s.items.value[0].step, undefined);
   assert.equal(s.items.value[0].kind, 'UFO/RPO · 原生模型');
 });
+
+test('P-BFM trained and exported policies keep their own family and update count', async () => {
+  const pbfm = { ...trained, id: 'mv_pbfm', card: { ...trained.card, schema_version: 'eb/rpo-pbfm-trained-model/v1' } };
+  const policy = { id: 'mv_pbfm_policy', tags: ['rpo-v2'],
+    card: { schema_version: 'eb/rpo-pbfm-policy/v1', source_model_id: pbfm.id, package_path: '/frozen/pbfm-policy' } };
+  const s = component('ModelList', ['load', 'items'], async path => path === '/models'
+    ? { versions: [pbfm, policy], items: [] } : { items: [], models: [] });
+  await s.load();
+  for (const row of s.items.value) {
+    assert.equal(row.native, true);
+    assert.match(row.kind, /P-BFM/);
+    assert.doesNotMatch(row.kind, /UFO|WBC|PPO/);
+    assert.equal(row.step, 112);
+    assert.equal(row.train_page_id, 'trn_source');
+  }
+});

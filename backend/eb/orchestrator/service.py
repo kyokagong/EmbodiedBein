@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -198,8 +199,14 @@ class Orchestrator:
             if existing:
                 return existing
         await validate_flat_warm_start_submission(session, spec)
-        from eb.ufo_training import TEMPLATE as UFO_TRAIN_TEMPLATE, DATA_OPERATION as UFO_DATA_OPERATION
-        native_training = spec.params.get("template_id") == UFO_TRAIN_TEMPLATE
+        if spec.params.get("operation") == "probe_pbfm_runtime":
+            if principal.startswith('agent:'):
+                raise PermissionError('P-BFM runtime diagnostics require an operator')
+            from eb.pbfm_runtime_probe import validate_submission as validate_pbfm_probe
+            await validate_pbfm_probe(session, spec)
+        from eb.native_training import is_native_template, service_for
+        from eb.ufo_training import DATA_OPERATION as UFO_DATA_OPERATION
+        native_training = is_native_template(spec.params.get("template_id"))
         native_data = spec.params.get("operation") == UFO_DATA_OPERATION
         from eb.ufo_failure_probe import OPERATION as FAILURE_PROBE_OPERATION
         failure_probe = spec.params.get("operation") == FAILURE_PROBE_OPERATION
@@ -225,8 +232,16 @@ class Orchestrator:
         if native_training or native_data:
             if principal.startswith('agent:'):
                 raise PermissionError('Native training and data preparation require an operator')
-            from eb.ufo_training_service import validate_submission as validate_train_submission
-            await validate_train_submission(session, spec)
+            if native_training:
+                await service_for(spec.params["template_id"]).validate_submission(session, spec)
+            else:
+                from eb.ufo_training_service import validate_submission as validate_train_submission
+                await validate_train_submission(session, spec)
+        if spec.params.get("operation") in {"prepare_pbfm_rpo_motion", "export_pbfm_policy", "evaluate_pbfm_terrain"}:
+            if principal.startswith('agent:'):
+                raise PermissionError('P-BFM preparation, export and evaluation require an operator')
+            from eb.pbfm_evaluation import validate_submission as validate_pbfm_submission
+            await validate_pbfm_submission(session, spec)
         from eb.ufo_native import ENV_ID as UFO_NATIVE_ENV, OPERATIONS as UFO_NATIVE_OPERATIONS
         if (spec.embodiment_env_id == UFO_NATIVE_ENV or spec.params.get('operation') in UFO_NATIVE_OPERATIONS) and not (native_training or native_data or grounded_data or native_baseline or failure_probe):
             if principal.startswith('agent:'):
@@ -338,13 +353,26 @@ class Orchestrator:
         spec = JobSpec.model_validate(
             {**job.spec, "kind": job.kind, "embodiment_env_id": job.embodiment_env_id, "api_version": "eb/v1"}
         )
-        if spec.params.get("template_id") == "rpo_ufo_fb_native" and spec.inputs.resume_from:
-            from eb.ufo_training_service import validate_submission as validate_native_resume
+        from eb.native_training import is_native_template, service_for
+        from eb.pbfm_runtime_probe import TRAINING_MODES
+        diagnostic_training = (
+            spec.params.get("operation") == "probe_pbfm_runtime"
+            and spec.params.get("probe_mode") in TRAINING_MODES
+        )
+        if diagnostic_training or (
+            is_native_template(spec.params.get("template_id")) and spec.inputs.resume_from
+        ):
             try:
-                await validate_native_resume(session, spec)
-            except (ValueError, OSError, KeyError, TypeError) as exc:
+                if diagnostic_training:
+                    from eb.pbfm_runtime_probe import validate_submission as validate_diagnostic_training
+
+                    await validate_diagnostic_training(session, spec)
+                else:
+                    await service_for(spec.params["template_id"]).validate_submission(session, spec)
+            except (ValueError, OSError, KeyError, TypeError, httpx.HTTPError) as exc:
                 job.status = transition(JobStatus(job.status), JobStatus.BLOCKED).value
-                job.error = f"Native resume source verification failed: {exc}"
+                context = "P-BFM diagnostic training" if diagnostic_training else "Native resume source"
+                job.error = f"{context} verification failed: {exc}"
                 job.version += 1
                 await session.commit()
                 raise

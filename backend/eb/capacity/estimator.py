@@ -34,6 +34,56 @@ def estimate_job(spec: JobSpec, host_vram_gb: float = 24.0, free_now: list[float
     kind = spec.kind
     gpus = max(spec.resources.gpus, 1) if spec.resources.gpus else 1
     params = spec.params
+    if (kind == JobKind.DATA_CONVERT
+            and params.get("operation") == "prepare_pbfm_rpo_motion"
+            and spec.resources.gpus == 0):
+        return _finish(0., host_vram_gb, gpus,
+            "CPU P-BFM MotionLib loading and full-frame FK verification; no optimizer",
+            {"num_envs": 1, "optimizer_bytes": 0, "gpu_peak_measured": False})
+    if (
+        spec.embodiment_env_id == "ee_rpo_v2_pbfm_depth_23dof_v1"
+        and spec.resources.gpus == 1
+        and (kind, params.get("operation")) in {
+            (JobKind.DATA_CONVERT, "export_pbfm_policy"),
+            (JobKind.EVAL_SIM, "evaluate_pbfm_terrain"),
+        }
+    ):
+        result = _finish(8., host_vram_gb, gpus,
+            "single P-BFM inference environment + depth/render/export reserve; no optimizer",
+            {"num_envs": 1, "optimizer_bytes": 0, "gpu_peak_measured": False})
+        result.verdict = "no_fit" if result.verdict == "no_fit" else "unknown"
+        result.verify = "P-BFM target-image single-environment inference/render capacity measurement required"
+        result.alternatives = []
+        return result
+    segment112 = params.get("operation") == "probe_pbfm_runtime" and params.get("probe_mode") == "segment112"
+    from eb.pbfm_runtime_probe import TRAINING_MODES
+    training_diagnostic = (
+        params.get("operation") == "probe_pbfm_runtime" and params.get("probe_mode") in TRAINING_MODES
+    )
+    if segment112 or training_diagnostic:
+        from eb.pbfm_runtime_probe import _training_view
+        _training_view(spec)
+    if training_diagnostic:
+        result = _finish(23.5, host_vram_gb, gpus,
+            "P-BFM W4/E2048 whole-card admission reservation; update/save peak remains unmeasured",
+            {"reservation_gib_per_gpu": 23.5, "known_lower_bound_gib": 14.9,
+             "upper_bound_gib": None, "gpu_peak_measured": False,
+             "num_envs_per_rank": 2048, "buffer_size_per_rank": 131072,
+             "lower_bound_basis": (
+                 "E1024 construction + first gradients/Adam + DDP/foreach; "
+                 "excludes E2048 and activation growth"
+             )})
+        result.verdict = "no_fit" if host_vram_gb < 23.5 else "unknown"
+        result.verify = "Measure full E2048 update, optimizer expansion and checkpoint peaks on every rank"
+        result.alternatives = []
+        return result
+    if params.get('operation') == 'probe_pbfm_runtime' and not segment112:
+        result = _finish(8., host_vram_gb, gpus, 'P-BFM dependency/environment diagnostic; no training claim',
+            {'gpu_peak_measured': False, 'optimizer_completion_claim': False,
+             'probed_num_envs_per_rank': 2, 'full_training_capacity_verified': False})
+        result.verdict = 'unknown'
+        result.alternatives = []
+        return result
     if params.get('operation') == 'ufo_failure_probe_v1':
         return _finish(2., host_vram_gb, gpus, 'fixed two-rank CUDA/NCCL fault diagnostic; no training',
             {'optimizer_bytes': 0, 'resident_context_reserve_gib': 2.,
@@ -49,6 +99,21 @@ def estimate_job(spec: JobSpec, host_vram_gb: float = 24.0, free_now: list[float
             'single native UFO inference/simulation case; no optimizer; unmeasured reserve',
             {'num_envs': 1, 'optimizer_bytes': 0, 'gpu_peak_measured': False})
     template_id = params.get("template_id", "")
+    if template_id == "rpo_pbfm_fb_depth_native" or segment112:
+        identity = (params.get("native_train_plan") or {}).get("identity") or {}
+        capacity = int(identity.get("buffer_size", 262144))
+        # Each rank owns state/next-state, latent/physics and one stored uint8 depth frame.
+        replay_gb = capacity * ((2 * 380 + 23 + 256 + 59 + 32) * 4 + 18 * 32) / 1024**3
+        result = _finish((replay_gb + 16.0) * 1.08, host_vram_gb, gpus,
+            "P-BFM replicated native Replay + unmeasured depth/model/eight-optimizer/render reserve",
+            {"buffer_size_per_rank": capacity, "replay_gib_per_rank": replay_gb,
+             "stored_depth_frame_bytes": 18 * 32, "replicated_per_rank": True,
+             "num_envs_per_rank": identity.get("num_envs_per_rank", 1024),
+             "runtime_reserve_gib": 16.0, "gpu_peak_measured": False})
+        result.verdict = "no_fit" if result.verdict == "no_fit" else "unknown"
+        result.verify = "P-BFM target-image full Replay/update/checkpoint/render capacity probe required"
+        result.alternatives = []
+        return result
     if template_id == "rpo_ufo_fb_native" or params.get("operation") == "ufo_native_baseline_v1":
         training_plan = (params.get("baseline_plan") or {}).get("native_train_plan") if params.get("operation") == "ufo_native_baseline_v1" else params.get("native_train_plan")
         identity = (training_plan or {}).get("identity") or {}

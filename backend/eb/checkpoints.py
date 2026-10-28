@@ -10,7 +10,8 @@ from eb.settings import get_settings
 
 
 def resume_fingerprint(spec: JobSpec) -> str:
-    if spec.params.get("template_id") == "rpo_ufo_fb_native":
+    from eb.native_training import is_native_template
+    if is_native_template(spec.params.get("template_id")):
         fingerprint = (spec.params.get("native_train_plan") or {}).get("fingerprint")
         if not isinstance(fingerprint, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint):
             raise ValueError("native training plan has no frozen compatibility fingerprint")
@@ -93,14 +94,40 @@ def _resume_candidate(checkpoint: Path, run_id: str) -> dict:
     return {**receipt, "path": str(checkpoint.resolve()), "bytes": total}
 
 
-def resume_checkpoint(run_root: Path, run_id: str, *, step: int | None = None) -> dict:
+def _native_checkpoint(run_root: Path, run_id: str, *, spec: JobSpec | None = None,
+                       verify_hashes: bool = False) -> dict:
+    """Choose by the producer's bounded schema, never by its directory name alone."""
+    manifest = run_root / "outputs/native/checkpoint-manifest.json"
+    if (any(path.is_symlink() for path in (manifest, *manifest.parents))
+            or not manifest.is_file() or not 0 < manifest.stat().st_size <= 4 * 1024**2):
+        raise ValueError("native checkpoint has no bounded immutable manifest")
+    try:
+        value = json.loads(manifest.read_text())
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("native checkpoint manifest is invalid") from exc
+    schema = value.get("schema_version", "") if isinstance(value, dict) else ""
+    if schema.startswith("eb/pbfm-"):
+        from eb.pbfm_training_checkpoint import read_pbfm_checkpoint
+        if spec is None or spec.params.get("template_id") != "rpo_pbfm_fb_depth_native":
+            raise ValueError("P-BFM checkpoint requires its frozen producer JobSpec")
+        checkpoint = read_pbfm_checkpoint(run_root, spec, run_id, verify_hashes=verify_hashes)
+        if checkpoint is None:
+            raise ValueError("P-BFM checkpoint is incomplete")
+        return checkpoint
+    if spec is not None and spec.params.get("template_id") == "rpo_pbfm_fb_depth_native":
+        raise ValueError("P-BFM Run cannot consume another native checkpoint format")
+    from eb.ufo_training_checkpoint import read_native_checkpoint
+    return read_native_checkpoint(run_root, run_id, verify_hashes=verify_hashes)
+
+
+def resume_checkpoint(run_root: Path, run_id: str, *, step: int | None = None,
+                      spec: JobSpec | None = None) -> dict:
     run_root = Path(run_root)
     baseline = run_root / "outputs/baseline-receipt.json"
     if baseline.exists() or baseline.is_symlink():
         raise ValueError("Diagnostic baseline checkpoints are not training restore inputs")
     if (run_root / "outputs/native").exists() or (run_root / "outputs/native").is_symlink():
-        from eb.ufo_training_checkpoint import read_native_checkpoint
-        native = read_native_checkpoint(run_root, run_id)
+        native = _native_checkpoint(run_root, run_id, spec=spec)
         if step is not None and native["step"] != step:
             raise ValueError(f"source Run has no complete resumable native checkpoint at step {step}")
         return native
@@ -127,11 +154,12 @@ def resume_checkpoint(run_root: Path, run_id: str, *, step: int | None = None) -
     raise ValueError(f"source Run has no complete resumable checkpoint{f' at step {step}' if step is not None else ''}")
 
 
-def latest_resume_checkpoint(runs: Iterable[tuple[str, Path]], *, step: int | None = None) -> dict:
+def latest_resume_checkpoint(runs: Iterable[tuple[str, Path]], *, step: int | None = None,
+                             spec: JobSpec | None = None) -> dict:
     candidates = []
     for run_id, root in runs:
         try:
-            candidates.append(resume_checkpoint(root, run_id, step=step))
+            candidates.append(resume_checkpoint(root, run_id, step=step, **({"spec": spec} if spec else {})))
         except (ValueError, OSError):
             continue
     if not candidates:
@@ -188,14 +216,14 @@ def checkpoint_inference(run_root: Path, template_id: str, source_overrides: lis
     return {f"actor.model.{key}": value for key, value in values.items()}
 
 
-def checkpoint_model(run_root: Path, run_id: str, *, verify_hashes: bool = False) -> dict:
+def checkpoint_model(run_root: Path, run_id: str, *, verify_hashes: bool = False,
+                     spec: JobSpec | None = None) -> dict:
     run_root = Path(run_root)
     baseline = run_root / "outputs/baseline-receipt.json"
     if baseline.exists() or baseline.is_symlink():
         raise ValueError("Diagnostic baseline checkpoints are not training model publications")
     if (run_root / "outputs/native").exists() or (run_root / "outputs/native").is_symlink():
-        from eb.ufo_training_checkpoint import read_native_checkpoint
-        return read_native_checkpoint(run_root, run_id, verify_hashes=verify_hashes)
+        return _native_checkpoint(run_root, run_id, spec=spec, verify_hashes=verify_hashes)
     output = run_root / "output"
     manifest = output / "checkpoint-manifest.json"
     if (run_root.is_symlink() or output.is_symlink() or manifest.is_symlink()

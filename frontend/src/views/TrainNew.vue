@@ -27,7 +27,10 @@ const form = ref({
   native_target: 112, native_buffer: 262144, native_seed: 42,
 });
 const selectedTemplate = computed(() => templates.value.find(t => t.id === form.value.template_id));
-const compatibleEnvironments = computed(() => environments.value.filter(e => e.status === "active" && e.usage === "train"
+const controlledPbfm = computed(() => form.value.template_id === "rpo_pbfm_fb_depth_native"
+  ? selectedTemplate.value?.controlled_training : null);
+const compatibleEnvironments = computed(() => environments.value.filter(e => (e.status === "active" ||
+  (controlledPbfm.value && e.status === "draft")) && e.usage === "train"
   && e.template_id === form.value.template_id && e.embodiment_env_id === selectedTemplate.value?.embodiment_env_id));
 const selectedEnvironment = computed(() => compatibleEnvironments.value.find(e => e.id === form.value.environment_id));
 const templateDefaults = computed(() => Object.fromEntries((selectedTemplate.value?.default_overrides || [])
@@ -37,22 +40,23 @@ const isRpoWbc = computed(() => ["rpo_v2_wbc_ppo", "rpo_v2_wbc_stand_walk_ppo"].
 const isRpoAmp = computed(() => form.value.template_id === "rpo_v2_amp_stand_walk_ppo");
 const isRpoFlat = computed(() => form.value.template_id === "rpo_v2_flat_ppo");
 const isUfoNative = computed(() => selectedTemplate.value?.kind === "native_rl");
+const isPbfm = computed(() => form.value.template_id === "rpo_pbfm_fb_depth_native");
 const compatibleEmbodiments = computed(() => embodiments.value.filter(e => !selectedTemplate.value?.embodiment_id || e.id === selectedTemplate.value.embodiment_id));
 const compatibleDatasets = computed(() => {
   const environmentIds = new Set((embodiments.value.find(e => e.id === form.value.embodiment_id)?.envs || []).map((e: any) => e.id));
   return datasets.value.filter(d => d.usage !== "eval" && environmentIds.has(d.embodiment_env_id) &&
     (!selectedTemplate.value?.embodiment_env_id || d.embodiment_env_id === selectedTemplate.value.embodiment_env_id) &&
-    (!isUfoNative.value || (d.source_kind === "ufo_native_motion" && d.status === "validated" &&
-      d.validation?.scope === "ufo_native_motion_v1" && d.validation?.training_ready === true)) &&
+    (!isUfoNative.value || (d.source_kind === (isPbfm.value ? "pbfm_rpo_motion" : "ufo_native_motion") && d.status === "validated" &&
+      d.validation?.scope === (isPbfm.value ? "pbfm_rpo_motion_v1" : "ufo_native_motion_v1") && d.validation?.training_ready === true)) &&
     (!isRpoAmp.value || (d.purpose === "motion_prior" && d.validation?.training_ready === true && d.status === "validated")));
 });
 const compatibleWeights = computed(() => weights.value.filter(w =>
   (!w.embodiment_id || w.embodiment_id === form.value.embodiment_id) &&
   (!selectedTemplate.value?.model_framework || w.framework === selectedTemplate.value.model_framework)));
-const missingInput = computed(() => !form.value.name.trim() || !form.value.model_name.trim() || !form.value.embodiment_id || !selectedTemplate.value ||
-  selectedTemplate.value.ready === false || !selectedEnvironment.value ||
+const missingInput = computed(() => Boolean(!form.value.name.trim() || (!controlledPbfm.value && !form.value.model_name.trim()) || !form.value.embodiment_id || !selectedTemplate.value ||
+  (selectedTemplate.value.ready === false && !controlledPbfm.value) || !selectedEnvironment.value ||
   (selectedTemplate.value.requires_dataset && !form.value.dataset_ids.some(Boolean)) ||
-  (selectedTemplate.value.requires_base_model && !form.value.base_model_id));
+  (selectedTemplate.value.requires_base_model && !form.value.base_model_id)));
 let controller: AbortController | undefined;
 let timer: number | undefined;
 let generation = 0;
@@ -73,7 +77,7 @@ onMounted(async () => {
     images.value = ims.items || [];
     environments.value = envs.items || [];
     const requested = environments.value.find(e => e.id === route.query.environment_id && e.status === "active");
-    form.value.template_id = requested?.template_id || templates.value[0]?.id || "";
+    form.value.template_id = requested?.template_id || templates.value.find(t => t.id === route.query.template_id)?.id || templates.value[0]?.id || "";
     await nextTick();
     if (requested) form.value.environment_id = requested.id;
     ready.value = true;
@@ -89,6 +93,12 @@ watch(() => form.value.template_id, () => {
   form.value.image = "";
   form.value.gym_id = "";
   if (isRpoAmp.value || isRpoFlat.value || isUfoNative.value) form.value.gpus = 1;
+  if (controlledPbfm.value) {
+    form.value.gpus = controlledPbfm.value.gpus;
+    form.value.native_target = controlledPbfm.value.target_updates;
+    form.value.native_buffer = controlledPbfm.value.buffer_size;
+    form.value.native_seed = controlledPbfm.value.seed;
+  }
   for (const [field, key] of Object.entries({
     max_epochs: "runner.max_epochs", max_steps: "runner.max_steps",
     total_num_envs: "env.train.total_num_envs", eval_num_envs: "env.eval.total_num_envs",
@@ -116,6 +126,13 @@ watch(form, () => {
 }, { deep: true });
 
 function payload() {
+  if (controlledPbfm.value) return {
+    name: form.value.name.trim(), dataset_id: form.value.dataset_ids[0],
+    environment_id: form.value.environment_id, mode: controlledPbfm.value.mode,
+    gpus: controlledPbfm.value.gpus, num_envs_per_rank: controlledPbfm.value.num_envs_per_rank,
+    target_updates: controlledPbfm.value.target_updates, timeout_seconds: controlledPbfm.value.timeout_seconds,
+    ...(preview.value?.preview_hash ? { preview_hash: preview.value.preview_hash } : {}),
+  };
   return {
     name: form.value.name.trim(), model_name: form.value.model_name.trim(), template_id: form.value.template_id,
     environment_id: form.value.environment_id,
@@ -126,7 +143,7 @@ function payload() {
     lr: form.value.lr || null,
     value_lr: form.value.value_lr || null,
     extra_overrides: form.value.extra_text.split("\n").map(s => s.trim()).filter(Boolean),
-    ...(isUfoNative.value ? { native_training: { target_updates: Number(form.value.native_target),
+    ...(isUfoNative.value ? { [isPbfm.value ? "pbfm_training" : "native_training"]: { target_updates: Number(form.value.native_target),
       buffer_size: Number(form.value.native_buffer), seed: Number(form.value.native_seed) },
       preview_hash: preview.value?.preview_hash || null } : {}),
   };
@@ -136,7 +153,7 @@ async function refreshPreview() {
   controller = new AbortController();
   previewing.value = true;
   try {
-    const result = await api("/train/preview", { method: "POST", body: JSON.stringify(payload()), signal: controller.signal });
+    const result = await api(controlledPbfm.value ? "/pbfm/runtime-probe/preview" : "/train/preview", { method: "POST", body: JSON.stringify(payload()), signal: controller.signal });
     if (current === generation) preview.value = result;
   } catch (e: any) {
     if (current === generation && e.name !== "AbortError") previewError.value = e.message;
@@ -160,9 +177,9 @@ async function submit() {
   err.value = "";
   try {
     if (isUfoNative.value && !nativeSubmitKey) nativeSubmitKey = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-    const row = await api("/train", { method: "POST", body: JSON.stringify(payload()),
+    const row = await api(controlledPbfm.value ? "/pbfm/runtime-probe" : "/train", { method: "POST", body: JSON.stringify(payload()),
       ...(isUfoNative.value ? { headers: { "Idempotency-Key": nativeSubmitKey } } : {}) });
-    if (!disposed) await router.push(`/train/${row.id}`);
+    if (!disposed) await router.push(`/train/${row.job_id || row.id}`);
   } catch (e: any) { if (!disposed) err.value = e.message; }
   finally { submitting.value = false; }
 }
@@ -176,17 +193,19 @@ async function submit() {
         <fieldset :disabled="submitting || !ready" style="border:0;padding:0;margin:0;min-width:0">
           <h3>配置</h3>
           <label class="form-label" for="train-name">任务名称</label><input id="train-name" class="form-input" v-model="form.name" required />
-          <label class="form-label" for="train-model-name">产出模型名称</label><input id="train-model-name" class="form-input" v-model="form.model_name" maxlength="120" required placeholder="例如：RPO WBC 步态模型" />
+          <template v-if="!controlledPbfm"><label class="form-label" for="train-model-name">产出模型名称</label><input id="train-model-name" class="form-input" v-model="form.model_name" maxlength="120" required placeholder="例如：RPO WBC 步态模型" /></template>
+          <p v-else class="muted xs">完成后自动登记同名训练模型，可从结果页查看、导出并独立评估。</p>
           <label class="form-label" for="train-template">模板</label>
-          <select id="train-template" class="form-select" v-model="form.template_id" required><option v-for="t in templates" :key="t.id" :value="t.id">{{ t.label || t.id }} · {{ t.kind }}{{ t.ready === false ? ' · 未就绪' : '' }}</option></select>
+          <select id="train-template" class="form-select" v-model="form.template_id" required><option v-for="t in templates" :key="t.id" :value="t.id">{{ t.label || t.id }} · {{ t.kind }}{{ t.controlled_training ? ' · 四卡分段验证' : t.ready === false ? ' · 未就绪' : '' }}</option></select>
           <label class="form-label" for="train-environment">训练环境</label>
           <select id="train-environment" class="form-select" v-model="form.environment_id" required><option value="">请选择环境</option><option v-for="e in compatibleEnvironments" :key="e.id" :value="e.id">{{ e.name }} · {{ e.id }}</option></select>
           <p v-if="!compatibleEnvironments.length" class="error xs">此模板暂无已发布的兼容训练环境。</p>
           <p v-if="selectedEnvironment" class="muted xs">任务：{{ selectedEnvironment.definition.task }}<br>奖励：{{ selectedEnvironment.definition.reward }}<br>失败：{{ selectedEnvironment.definition.failure }}<br>成功：{{ selectedEnvironment.definition.success }}</p>
-          <p v-if="selectedTemplate?.ready === false" class="error" role="alert">{{ selectedTemplate.blocked_reason }}</p>
+          <p v-if="selectedTemplate?.ready === false && !controlledPbfm" class="error" role="alert">{{ selectedTemplate.blocked_reason }}</p>
+          <p v-if="controlledPbfm" class="muted">四卡分段验证：累计更新112 → 368 → 512。每段完成后先独立评估，再从结果页决定续训；512为本轮终点。普通长训模板尚未开放。</p>
           <p class="muted xs">{{ selectedTemplate?.kind === 'sft' ? 'SFT：使用数据集监督微调。' : selectedTemplate?.kind === 'ppo' ? '在线 PPO：通过仿真交互训练，可不挂数据集。' : selectedTemplate?.kind === 'eval' ? '评估：运行模板指定的仿真套件。' : '按模板执行作业。' }}</p>
           <div class="grid2">
-            <div><label class="form-label" for="train-gpus">GPU 数</label><select id="train-gpus" class="form-select" v-model.number="form.gpus"><option :value="1">1 卡</option><option :value="2">2 卡</option><option :value="4">4 卡</option></select></div>
+            <div><label class="form-label" for="train-gpus">GPU 数</label><select id="train-gpus" class="form-select" v-model.number="form.gpus" :disabled="!!controlledPbfm"><option :value="1">1 卡</option><option :value="2">2 卡</option><option :value="4">4 卡</option></select></div>
             <div v-if="isRpoWbc || isRpoFlat || isUfoNative"><label class="form-label" for="train-rpo-image">镜像</label><input id="train-rpo-image" class="form-input" :value="selectedTemplate?.default_image" disabled /></div>
             <div v-else><label class="form-label" for="train-image">镜像</label><select id="train-image" class="form-select" v-model="form.image"><option value="">模板默认</option><option v-for="im in images" :key="im.id" :value="im.name">{{ im.name }}</option></select></div>
             <div><label class="form-label" for="train-emb">机器人 / 本体</label><select id="train-emb" class="form-select" v-model="form.embodiment_id" required><option value="">请选择兼容本体</option><option v-for="e in compatibleEmbodiments" :key="e.id" :value="e.id">{{ e.display_name || e.id }}</option></select></div>
@@ -206,11 +225,12 @@ async function submit() {
           <p v-if="form.template_id === 'libero_pi05_sft'" class="muted xs">默认冻结视觉语言模型，仅微调动作专家（train_expert_only）。基座已完成上游 LIBERO SFT，本作业继续微调。</p>
           <h3>训练超参数</h3>
           <template v-if="isUfoNative">
-            <p class="muted xs">UFO 原生 FB-CPR-Aux，每卡 1024 个环境。按累计 agent 更新数分段保存；独立快评后再恢复下一段。</p>
+            <p class="muted xs">{{ isPbfm ? 'P-BFM 深度地形 FB-CPR-Aux' : 'UFO 原生 FB-CPR-Aux' }}，每卡 {{ controlledPbfm?.num_envs_per_rank || 1024 }} 个环境。按累计 agent 更新数分段保存；独立快评后再恢复下一段。</p>
+            <p v-if="isPbfm" class="muted xs">23 关节 · 策略 50 Hz · 深度 8×18×32 · 七类地形；课程从 0 开始，每 1920 万全局环境步扩大难度。模型是否会通过地形须由独立评估验证。</p>
             <div class="grid2">
-              <div><label class="form-label" for="native-target">累计 agent 更新目标（16 的倍数）</label><input id="native-target" class="form-input" type="number" min="112" max="1000000" step="16" v-model.number="form.native_target" /></div>
-              <div><label class="form-label" for="native-buffer">每卡 Replay transition 容量</label><input id="native-buffer" class="form-input" type="number" min="32768" max="1048576" step="1024" v-model.number="form.native_buffer" /></div>
-              <div><label class="form-label" for="native-seed">随机种子</label><input id="native-seed" class="form-input" type="number" min="0" max="1000000" v-model.number="form.native_seed" /></div>
+              <div><label class="form-label" for="native-target">累计 agent 更新目标（16 的倍数）</label><input id="native-target" class="form-input" type="number" min="112" :max="isPbfm ? 10000 : 1000000" step="16" v-model.number="form.native_target" :disabled="!!controlledPbfm" /></div>
+              <div><label class="form-label" for="native-buffer">每卡 Replay transition 容量</label><input id="native-buffer" class="form-input" type="number" min="32768" :max="isPbfm ? 5120000 : 1048576" step="1024" v-model.number="form.native_buffer" :disabled="!!controlledPbfm" /></div>
+              <div><label class="form-label" for="native-seed">随机种子</label><input id="native-seed" class="form-input" type="number" min="0" max="1000000" v-model.number="form.native_seed" :disabled="!!controlledPbfm" /></div>
             </div>
             <p class="muted xs">原生状态与全 rank Replay 可恢复；环境、RNG 和 latent 缓存重新初始化。训练完成后仍须独立验证任务能力。</p>
           </template>
@@ -250,7 +270,7 @@ async function submit() {
       <div class="panel">
         <h3>已解析配置与输入挂载</h3>
         <p class="muted xs">环境 {{ selectedEnvironment?.name || '—' }} · 本体接口 {{ selectedTemplate?.embodiment_env_id || '—' }} · 任务 {{ selectedTemplate?.task_id || '—' }}</p>
-        <p v-if="preview" class="muted xs">产出模型：{{ preview.model_name }}</p>
+        <p v-if="preview" class="muted xs">产出模型：{{ controlledPbfm ? form.name.trim() : preview.model_name }}</p>
         <p class="error" role="alert">{{ previewError }}</p>
         <p v-if="previewing" role="status">正在校验输入并生成预览…</p>
         <pre class="preview-box" v-else-if="preview">{{ JSON.stringify(preview, null, 2) }}</pre>

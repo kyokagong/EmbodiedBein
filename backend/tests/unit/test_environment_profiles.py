@@ -22,6 +22,32 @@ from eb.runners.rpo_wbc_extension import training_settings_from_env
 from eb.store.models import EmbodimentRow, EnvironmentProfile
 
 
+@pytest.mark.asyncio
+async def test_native_training_profile_can_publish_only_when_recipe_is_ready(monkeypatch):
+    from dataclasses import replace
+
+    from eb.api import routes_environments as routes
+    from eb.domain.rlinf_form import get_template
+    from eb.environment_catalog import training_definition
+
+    template = get_template("rpo_pbfm_fb_depth_native")
+    row = EnvironmentProfile(
+        id="env_pbfm", status="draft", usage="train", template_id=template.id,
+        embodiment_env_id=template.embodiment_env_id, task_id=template.task_id,
+        definition=training_definition(template), content_hash="",
+    )
+    session = SimpleNamespace(get=AsyncMock(return_value=row), commit=AsyncMock())
+    principal = SimpleNamespace(actor_type="user")
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException):
+        await routes.publish_environment(row.id, session, principal)
+    monkeypatch.setattr(
+        routes, "get_template", lambda _: replace(template, ready=True, dependency_ready=True)
+    )
+    result = await routes.publish_environment(row.id, session, principal)
+    assert result["status"] == "active"
+
+
 def test_environment_settings_are_executable_and_bounded():
     definition = {
         "task": "直立并直行",

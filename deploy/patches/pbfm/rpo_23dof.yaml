@@ -1,0 +1,357 @@
+name: rpo_23dof
+xml_path: EB_PRIVATE_RPO_XML
+base_body: base_link
+root_quat_order: xyzw
+coordinate_system: z_up
+dof_unit: rad
+control_joints:
+- left_thigh_yaw_joint
+- left_thigh_roll_joint
+- left_thigh_pitch_joint
+- left_knee_joint
+- left_ankle_pitch_joint
+- left_ankle_roll_joint
+- right_thigh_yaw_joint
+- right_thigh_roll_joint
+- right_thigh_pitch_joint
+- right_knee_joint
+- right_ankle_pitch_joint
+- right_ankle_roll_joint
+- torso_joint
+- left_arm_pitch_joint
+- left_arm_roll_joint
+- left_arm_yaw_joint
+- left_elbow_pitch_joint
+- left_elbow_yaw_joint
+- right_arm_pitch_joint
+- right_arm_roll_joint
+- right_arm_yaw_joint
+- right_elbow_pitch_joint
+- right_elbow_yaw_joint
+feet:
+- left_ankle_roll_link
+- right_ankle_roll_link
+hands:
+- left_elbow_yaw_link
+- right_elbow_yaw_link
+key_bodies:
+- base_link
+- torso_link
+- left_ankle_roll_link
+- right_ankle_roll_link
+- left_elbow_yaw_link
+- right_elbow_yaw_link
+default_dof_pos: {}
+training:
+  task_overrides:
+    simulator:
+      config:
+        sim:
+          fps: 400
+          control_decimation: 8
+    lie_down_init: true
+    lie_down_init_prob: 0.3
+  motion_extensions: []
+  semantics:
+    contact_bodies:
+    - left_ankle_roll_link
+    - right_ankle_roll_link
+    undesired_contact_bodies:
+    - base_link
+    - thigh
+    - knee
+    - torso
+    - arm
+    - elbow
+    torso_name: torso_link
+    left_ankle_dof_names:
+    - left_ankle_pitch_joint
+    - left_ankle_roll_joint
+    right_ankle_dof_names:
+    - right_ankle_pitch_joint
+    - right_ankle_roll_joint
+  init_state:
+    pos:
+    - 0.0
+    - 0.0
+    - 0.75
+    rot:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+    lin_vel:
+    - 0.0
+    - 0.0
+    - 0.0
+    ang_vel:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_joint_angles:
+      left_thigh_yaw_joint: 0.0
+      left_thigh_roll_joint: 0.0
+      left_thigh_pitch_joint: -0.1
+      left_knee_joint: 0.3
+      left_ankle_pitch_joint: -0.2
+      left_ankle_roll_joint: 0.0
+      right_thigh_yaw_joint: 0.0
+      right_thigh_roll_joint: 0.0
+      right_thigh_pitch_joint: -0.1
+      right_knee_joint: 0.3
+      right_ankle_pitch_joint: -0.2
+      right_ankle_roll_joint: 0.0
+      torso_joint: 0.0
+      left_arm_pitch_joint: 0.18
+      left_arm_roll_joint: 0.06
+      left_arm_yaw_joint: 0.0
+      left_elbow_pitch_joint: 0.78
+      left_elbow_yaw_joint: 0.0
+      right_arm_pitch_joint: 0.18
+      right_arm_roll_joint: -0.06
+      right_arm_yaw_joint: 0.0
+      right_elbow_pitch_joint: 0.78
+      right_elbow_yaw_joint: 0.0
+  control:
+    action_scale: 0.6
+    action_rescale: true
+    action_clip_value: 5.0
+    normalize_action_to: 5.0
+    effort_limit_scale: 1.0
+    effort_limit:
+    - 120.0
+    - 120.0
+    - 120.0
+    - 120.0
+    - 27.0
+    - 27.0
+    - 120.0
+    - 120.0
+    - 120.0
+    - 120.0
+    - 27.0
+    - 27.0
+    - 120.0
+    - 27.0
+    - 27.0
+    - 27.0
+    - 27.0
+    - 27.0
+    - 27.0
+    - 27.0
+    - 27.0
+    - 27.0
+    - 27.0
+    velocity_limit:
+    - 25.0
+    - 25.0
+    - 25.0
+    - 25.0
+    - 8.0
+    - 8.0
+    - 25.0
+    - 25.0
+    - 25.0
+    - 25.0
+    - 8.0
+    - 8.0
+    - 25.0
+    - 8.0
+    - 8.0
+    - 8.0
+    - 8.0
+    - 8.0
+    - 8.0
+    - 8.0
+    - 8.0
+    - 8.0
+    - 8.0
+    stiffness:
+      left_thigh_yaw_joint: 100.0
+      left_thigh_roll_joint: 100.0
+      left_thigh_pitch_joint: 100.0
+      left_knee_joint: 150.0
+      left_ankle_pitch_joint: 40.0
+      left_ankle_roll_joint: 40.0
+      right_thigh_yaw_joint: 100.0
+      right_thigh_roll_joint: 100.0
+      right_thigh_pitch_joint: 100.0
+      right_knee_joint: 150.0
+      right_ankle_pitch_joint: 40.0
+      right_ankle_roll_joint: 40.0
+      torso_joint: 150.0
+      left_arm_pitch_joint: 40.0
+      left_arm_roll_joint: 40.0
+      left_arm_yaw_joint: 40.0
+      left_elbow_pitch_joint: 30.0
+      left_elbow_yaw_joint: 20.0
+      right_arm_pitch_joint: 40.0
+      right_arm_roll_joint: 40.0
+      right_arm_yaw_joint: 40.0
+      right_elbow_pitch_joint: 30.0
+      right_elbow_yaw_joint: 20.0
+    damping:
+      left_thigh_yaw_joint: 3.3
+      left_thigh_roll_joint: 3.3
+      left_thigh_pitch_joint: 3.3
+      left_knee_joint: 5.0
+      left_ankle_pitch_joint: 2.0
+      left_ankle_roll_joint: 2.0
+      right_thigh_yaw_joint: 3.3
+      right_thigh_roll_joint: 3.3
+      right_thigh_pitch_joint: 3.3
+      right_knee_joint: 5.0
+      right_ankle_pitch_joint: 2.0
+      right_ankle_roll_joint: 2.0
+      torso_joint: 5.0
+      left_arm_pitch_joint: 2.0
+      left_arm_roll_joint: 2.0
+      left_arm_yaw_joint: 2.0
+      left_elbow_pitch_joint: 1.5
+      left_elbow_yaw_joint: 1.0
+      right_arm_pitch_joint: 2.0
+      right_arm_roll_joint: 2.0
+      right_arm_yaw_joint: 2.0
+      right_elbow_pitch_joint: 1.5
+      right_elbow_yaw_joint: 1.0
+  actuator:
+    source: yaml
+    model: dc_motor
+    min_delay: 0
+    max_delay: 2
+    joints:
+      left_thigh_yaw_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      left_thigh_roll_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      left_thigh_pitch_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      left_knee_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      left_ankle_pitch_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      left_ankle_roll_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      right_thigh_yaw_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      right_thigh_roll_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      right_thigh_pitch_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      right_knee_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      right_ankle_pitch_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      right_ankle_roll_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      torso_joint:
+        effort_limit: 120.0
+        velocity_limit: 25.0
+        armature: 0.01
+        friction: 0.01
+      left_arm_pitch_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      left_arm_roll_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      left_arm_yaw_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      left_elbow_pitch_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      left_elbow_yaw_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      right_arm_pitch_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      right_arm_roll_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      right_arm_yaw_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      right_elbow_pitch_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+      right_elbow_yaw_joint:
+        effort_limit: 27.0
+        velocity_limit: 8.0
+        armature: 0.01
+        friction: 0.01
+  fb_agent_overrides:
+    train:
+      use_bf16_amp: true
+  train_overrides:
+    seed: 4728
+    num_env_steps: 192000000
+    checkpoint_every_steps: 3200000
+    eval_every_steps: 3200000
+    log_every_steps: 81920
+    eval_at_start: true
+  hydra_robot: rpo/rpo_23dof
+  hydra_overrides:
+  - simulator.config.sim.fps=400
+  - simulator.config.sim.control_decimation=8
+  - env.config.lie_down_init=True
+  - env.config.lie_down_init_prob=0.3
+metadata:
+  source: UFO RPO 23DOF native config
+  review_status: simulation_only
+  asset_identity_required: true

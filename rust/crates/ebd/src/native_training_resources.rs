@@ -86,7 +86,16 @@ fn read_plan(root: &Path, run_id: &str) -> Option<Plan> {
     if !valid_id(run_id, "run_") {
         return None;
     }
-    let path = root.join("runs").join(run_id).join("ufo-train-plan.json");
+    [
+        ("ufo-train-plan.json", SCHEMA),
+        ("pbfm-train-plan.json", "eb/pbfm-native-train-plan/v1"),
+    ]
+    .into_iter()
+    .find_map(|(filename, schema)| read_plan_file(root, run_id, filename, schema))
+}
+
+fn read_plan_file(root: &Path, run_id: &str, filename: &str, schema: &str) -> Option<Plan> {
+    let path = root.join("runs").join(run_id).join(filename);
     if !unlinked(&path) {
         return None;
     }
@@ -105,7 +114,7 @@ fn read_plan(root: &Path, run_id: &str) -> Option<Plan> {
         return None;
     }
     let plan: Plan = serde_json::from_slice(&bytes).ok()?;
-    (plan.schema_version == SCHEMA
+    (plan.schema_version == schema
         && plan.run_id == run_id
         && (1..=4).contains(&plan.world_size)
         && plan
@@ -588,6 +597,23 @@ mod tests {
         assert_eq!(memory_mib("1024KiB"), Some(1.0));
         assert!(memory_mib("NaNMiB").is_none());
         assert!(parse_stats(&text.replace("run_test", "run_other"), &inspect).is_none());
+    }
+
+    #[test]
+    fn pbfm_plan_is_monitored_only_with_its_own_schema() {
+        let root = std::env::temp_dir().join(format!("eb-pbfm-resource-plan-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let run = root.join("runs/run_pbfm");
+        fs::create_dir_all(&run).unwrap();
+        let path = run.join("pbfm-train-plan.json");
+        let mut value = json!({"schema_version":"eb/pbfm-native-train-plan/v1", "run_id":"run_pbfm", "world_size":2,
+            "image_digest":plan().image_digest});
+        fs::write(&path, value.to_string()).unwrap();
+        assert!(read_plan(&root, "run_pbfm").is_some());
+        value["schema_version"] = json!(SCHEMA);
+        fs::write(&path, value.to_string()).unwrap();
+        assert!(read_plan(&root, "run_pbfm").is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

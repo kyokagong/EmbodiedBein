@@ -360,6 +360,7 @@ async fn snapshot_handler(State(st): State<Arc<App>>, Json(req): Json<SnapshotRe
         std::env::var("EB_BHL_REPO").unwrap_or_else(|_| "/data/kk/Berkeley-Humanoid-Lite".into()),
         std::env::var("EB_RLINF_REPO").unwrap_or_else(|_| "/data/kk/RLinf".into()),
         std::env::var("EB_UFO_NATIVE_ROOT").unwrap_or_else(|_| "/data/kk/UFO".into()),
+        std::env::var("EB_PBFM_ROOT").unwrap_or_else(|_| "/data/kk/P-BFM".into()),
         std::env::var("EB_ASSETS_ROOT").unwrap_or_else(|_| "/data/kk/assets".into()),
         st.data_root.to_string_lossy().into_owned(),
     ];

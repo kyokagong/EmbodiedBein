@@ -17,6 +17,9 @@ class DataConvertAdapter(Adapter):
     name = "data_convert"
 
     def render(self, spec: JobSpec, run_id: str) -> RenderedJob:
+        if spec.params.get("operation") in {"prepare_pbfm_rpo_motion", "export_pbfm_policy", "evaluate_pbfm_terrain"}:
+            from eb.pbfm_evaluation import render
+            return render(spec, run_id)
         from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
         if spec.params.get("operation") == GROUNDED_OPERATION:
             from eb.ufo_grounded_reference import render

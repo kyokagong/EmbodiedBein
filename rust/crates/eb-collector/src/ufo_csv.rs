@@ -16,14 +16,29 @@ pub(super) fn collect(
     run: &Path,
     mut append: impl FnMut(&str, i64, f32) -> io::Result<()>,
 ) -> io::Result<()> {
-    let native = run.join("outputs/native");
     // Only managed outputs in this Run, never input/source logs or linked Runs.
-    for directory in [run.to_path_buf(), run.join("outputs"), native.clone()] {
-        if !fs::symlink_metadata(directory).is_ok_and(|meta| meta.is_dir()) {
-            return Ok(());
+    // P-BFM publishes its checkpoint only after exit; its live CSV stays in staging.
+    'roots: for (parent, child) in [("outputs", "native"), ("runtime", "native-staging")] {
+        let native = run.join(parent).join(child);
+        for directory in [run.to_path_buf(), run.join(parent), native.clone()] {
+            if !fs::symlink_metadata(directory).is_ok_and(|meta| meta.is_dir()) {
+                continue 'roots;
+            }
         }
+        collect_directory(&native, &mut append)?;
     }
-    for (filename, training) in [("train_log.txt", true), ("ufo_tracking_eval.csv", false)] {
+    Ok(())
+}
+
+fn collect_directory(
+    native: &Path,
+    mut append: impl FnMut(&str, i64, f32) -> io::Result<()>,
+) -> io::Result<()> {
+    for (filename, training, tracking_prefix) in [
+        ("train_log.txt", true, ""),
+        ("ufo_tracking_eval.csv", false, "ufo_tracking"),
+        ("humanoidverse_tracking_eval.csv", false, "pbfm_tracking"),
+    ] {
         let path = native.join(filename);
         if !fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
             continue;
@@ -53,12 +68,12 @@ pub(super) fn collect(
             "timestep"
         };
         let Some(axis) = fields.iter().position(|field| field == axis) else {
-            tracing::warn!(path = %path.display(), "UFO CSV has no native step column");
+            tracing::warn!(path = %path.display(), "native CSV has no native step column");
             continue;
         };
         let motion = fields.iter().position(|field| field == "motion_name");
         if !training && motion.is_none() {
-            tracing::warn!(path = %path.display(), "UFO tracking CSV has no motion identity");
+            tracing::warn!(path = %path.display(), "native tracking CSV has no motion identity");
             continue;
         }
         let mut nonfinite = 0usize;
@@ -90,7 +105,7 @@ pub(super) fn collect(
                     invalid += 1;
                     continue;
                 }
-                format!("ufo_tracking/{name}/")
+                format!("{tracking_prefix}/{name}/")
             };
             for (field, value) in fields.iter().zip(&values) {
                 if field == "motion_name" {
@@ -108,7 +123,7 @@ pub(super) fn collect(
             }
         }
         if nonfinite > 0 || invalid > 0 {
-            tracing::warn!(path = %path.display(), nonfinite, invalid, "skipped invalid UFO CSV values/rows");
+            tracing::warn!(path = %path.display(), nonfinite, invalid, "skipped invalid native CSV values/rows");
         }
     }
     Ok(())
@@ -261,6 +276,29 @@ mod tests {
                 .unwrap()
                 .contains(&"execution/matmul_precision".into()));
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn collects_live_pbfm_staging_before_a_checkpoint_is_published() {
+        let root = fixture("pbfm-live");
+        let run = root.join("runs/run_a");
+        fs::remove_dir(run.join("outputs/native")).unwrap();
+        fs::create_dir_all(run.join("runtime/native-staging")).unwrap();
+        fs::write(run.join("runtime/native-staging/train_log.txt"), b"distributed/optimizer_steps,fb_loss\n16,2.5\n").unwrap();
+        assert_eq!(crate::ingest_run_logs(&root, "run_a").unwrap(), 2);
+        assert_eq!(eb_tsdb::query(&root, "run_a", "fb_loss").unwrap(), vec![(16, 2.5)]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pbfm_tracking_preserves_its_identity_and_native_step_axis() {
+        let root = fixture("pbfm");
+        let native = root.join("runs/run_a/outputs/native");
+        fs::write(native.join("humanoidverse_tracking_eval.csv"), b"motion_name,timestep,emd\nwalk,73728,2.5\n").unwrap();
+        assert_eq!(crate::ingest_run_logs(&root, "run_a").unwrap(), 2);
+        assert_eq!(eb_tsdb::query(&root, "run_a", "pbfm_tracking/walk/emd").unwrap(), vec![(73728, 2.5)]);
+        assert_eq!(crate::ingest_run_logs(&root, "run_a").unwrap(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -18,6 +18,7 @@ from eb.eval.parse_play import parse_play
 from eb.gates.engine import g3_model
 from eb.ids import new_id
 from eb.onnx_io import read_signature, sha256_file
+from eb.orchestrator.pbfm_training import collect_pbfm_training, read_pbfm_training_evidence
 from eb.settings import get_settings
 from eb.store.models import (
     Artifact,
@@ -381,8 +382,20 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
             and (job.spec.get("params") or {}).get("template_id") == "rpo_ufo_fb_native"):
         await collect_ufo_native_training(session, job, run, root)
         return
+    if (job.kind == "train.rl"
+            and (job.spec.get("params") or {}).get("template_id") == "rpo_pbfm_fb_depth_native"):
+        await collect_pbfm_training(session, job, run, root)
+        return
 
     operation = (job.spec.get("params") or {}).get("operation")
+    if operation == "probe_pbfm_runtime":
+        from eb.pbfm_runtime_probe import collect as collect_pbfm_probe
+        await collect_pbfm_probe(session, job, run, outputs)
+        return
+    if operation in {"prepare_pbfm_rpo_motion", "export_pbfm_policy", "evaluate_pbfm_terrain"}:
+        from eb.pbfm_evaluation import collect_pbfm
+        await collect_pbfm(session, job, run, outputs)
+        return
     from eb.ufo_failure_probe import OPERATION as FAILURE_PROBE_OPERATION
     if operation == FAILURE_PROBE_OPERATION:
         from eb.ufo_failure_probe import collect as collect_failure_probe
@@ -854,6 +867,10 @@ def validate_robotwin_episode(plan: dict, row: dict, case: dict, run_id: str | N
 
 async def archive_partial_eval(session: AsyncSession, job: Job, run: Run, *, invalid: bool = False) -> None:
     """Keep measured cases when an eval stops before its aggregate receipt is complete."""
+    if ((getattr(job, 'spec', None) or {}).get('params') or {}).get('operation') == 'evaluate_pbfm_terrain':
+        from eb.orchestrator.pbfm_partial import archive_partial_pbfm
+        await archive_partial_pbfm(session, job, run, invalid=invalid)
+        return
     if ((getattr(job, 'spec', None) or {}).get('params') or {}).get('operation') == 'ufo_native_live':
         from eb.orchestrator.ufo_live import archive_partial_live
         await archive_partial_live(session, job, run, invalid=invalid)
