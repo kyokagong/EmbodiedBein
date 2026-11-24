@@ -17,6 +17,84 @@ class DataConvertAdapter(Adapter):
     name = "data_convert"
 
     def render(self, spec: JobSpec, run_id: str) -> RenderedJob:
+        if spec.params.get("operation") in {"derive_motiondecode_view", "preview_motiondecode_v1"}:
+            import re
+
+            from eb.motiondecode import ENV_ID
+            from eb.paths import validate_allowed_path
+            from eb.settings import get_settings
+
+            settings = get_settings()
+            params = spec.params
+            if (spec.embodiment_env_id != ENV_ID or spec.runtime != {"network": "none"}
+                    or spec.resources.gpus != 0
+                    or not re.fullmatch(r"sha256:[a-f0-9]{64}", spec.image or "")):
+                raise ValueError("MotionDecode views/previews require a frozen CPU image and isolated network")
+            output = settings.data_root / "runs" / run_id / "outputs"
+            mounts = [(str(output), "/outputs", "rw")]
+            if params["operation"] == "derive_motiondecode_view":
+                source = validate_allowed_path(str(params.get("src", "")))
+                index = validate_allowed_path(str(params.get("source_index", "")))
+                if (not source.is_relative_to(settings.datasets_root.resolve())
+                        or not index.is_relative_to(settings.data_root / "runs")
+                        or index.name != "file-index.jsonl" or index.parent.name != "outputs"
+                        or any(not re.fullmatch(r"[a-f0-9]{64}", str(params.get(key, "")))
+                               for key in ("index_sha", "manifest_sha"))):
+                    raise ValueError("MotionDecode view inputs must be frozen managed source evidence")
+                mounts += [(str(source), "/source", "ro"), (str(index), "/evidence/file-index.jsonl", "ro")]
+                command = ["python", "-m", "eb.motiondecode_view", "--source", "/source",
+                           "--index", "/evidence/file-index.jsonl", "--index-sha", params["index_sha"],
+                           "--manifest-sha", params["manifest_sha"], "--output", "/outputs"]
+                # The indexed files remain at their source path; metadata must retain that storage identity.
+                command += ["--storage-ref", str(source)]
+            else:
+                source = validate_allowed_path(str(params.get("source_file", "")))
+                ref = params.get("asset_ref") or {}
+                commit = str(ref.get("commit", ""))
+                asset = settings.data_root / "snapshots" / commit.removeprefix("sha256:") / "code"
+                if (not source.is_relative_to(settings.datasets_root.resolve())
+                        or source.suffix != ".csv" or ref.get("kind") != "content_snapshot"
+                        or not re.fullmatch(r"sha256:[a-f0-9]{64}", commit)
+                        or ref.get("path") != str(asset) or not asset.is_dir()
+                        or not re.fullmatch(r"[a-f0-9]{64}", str(params.get("source_sha256", "")))
+                        or type(params.get("start_frame")) is not int or params["start_frame"] < 0):
+                    raise ValueError("MotionDecode preview inputs differ from frozen source/assets")
+                mounts += [(str(source), "/motion.csv", "ro"), (str(asset), "/robot", "ro")]
+                command = ["python", "-m", "eb.motiondecode_preview", "--source", "/motion.csv",
+                           "--source-path", params["path"], "--expected-sha", params["source_sha256"],
+                           "--robot-root", "/robot", "--asset-commit", commit,
+                           "--start-frame", str(params["start_frame"]), "--output", "/outputs"]
+            return RenderedJob(image=spec.image, command=command, mounts=mounts, writable_paths=[],
+                env={"MUJOCO_GL": "osmesa", "PYOPENGL_PLATFORM": "osmesa", "OMP_NUM_THREADS": "2",
+                     "OPENBLAS_NUM_THREADS": "1", "LP_NUM_THREADS": "2",
+                     "PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1"},
+                workdir="/", gpus=0)
+        if spec.params.get("operation") == "acquire_motiondecode":
+            from eb.motiondecode import ENV_ID, REPO, REVISION
+            from eb.paths import validate_allowed_path
+            from eb.settings import get_settings
+
+            settings = get_settings()
+            source = validate_allowed_path(str(spec.params.get("src", "")))
+            local_only = spec.params.get("local_only") is True
+            if (spec.embodiment_env_id != ENV_ID or spec.params.get("repo_id") != REPO
+                    or spec.params.get("revision") != REVISION
+                    or source == settings.datasets_root.resolve()
+                    or not source.is_relative_to(settings.datasets_root.resolve())
+                    or (local_only and spec.runtime.get("network") != "none")):
+                raise ValueError("MotionDecode requires its pinned source and managed destination")
+            output = settings.data_root / "runs" / run_id / "outputs"
+            command = ["python", "-m", "eb.motiondecode", "--dest", str(source), "--output", "/outputs"]
+            if local_only:
+                command.append("--local-only")
+            return RenderedJob(image=_image(spec, "eb/tools:latest"), command=command,
+                # The configured mirror redirects HEAD across origins without HF metadata.
+                env={**_download_env(settings, "https://huggingface.co"), "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1",
+                     "HF_HUB_DISABLE_PROGRESS_BARS": "1", "HF_HUB_ETAG_TIMEOUT": "30",
+                     "HF_HUB_DOWNLOAD_TIMEOUT": "60", "PYTHONUNBUFFERED": "1"},
+                writable_paths=[], workdir="/", gpus=0,
+                mounts=[(str(source), str(source), "ro" if local_only else "rw"),
+                        (str(output), "/outputs", "rw")])
         if spec.params.get("operation") in {"prepare_pbfm_rpo_motion", "export_pbfm_policy", "evaluate_pbfm_terrain"}:
             from eb.pbfm_evaluation import render
             return render(spec, run_id)

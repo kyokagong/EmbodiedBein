@@ -644,3 +644,9 @@ async def test_pbfm_preview_hash_and_probe_submit_are_bound_without_trainjob(tmp
     assert result["job_id"] == "job_probe" and result["diagnostic_only"] is True
     assert submit.await_args.args[1].kind == "asset.validate"
     session.add.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)

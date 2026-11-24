@@ -34,6 +34,9 @@ def estimate_job(spec: JobSpec, host_vram_gb: float = 24.0, free_now: list[float
     kind = spec.kind
     gpus = max(spec.resources.gpus, 1) if spec.resources.gpus else 1
     params = spec.params
+    if kind == JobKind.BUNDLE_BUILD and spec.resources.gpus == 0:
+        return _finish(0.,host_vram_gb,gpus,"CPU ONNX bundle validation and Rust packing; no optimizer",
+                       {"optimizer_bytes":0,"gpu_peak_measured":False})
     if (kind == JobKind.DATA_CONVERT
             and params.get("operation") == "prepare_pbfm_rpo_motion"
             and spec.resources.gpus == 0):
@@ -190,7 +193,7 @@ def estimate_job(spec: JobSpec, host_vram_gb: float = 24.0, free_now: list[float
         peak = ((trainable * 16 + frozen * 2) / gpus / 1e9 + activation_context) * 1.08
         return _finish(peak, host_vram_gb, gpus, "(P_train*16 + P_frozen*2)/N + activations/context",
             {"P_train":trainable, "P_frozen":frozen, "N_gpus":gpus, "micro_batch":micro_batch, "V_act_ctx":activation_context})
-    if (kind == JobKind.DATA_CONVERT and params.get("operation") in {"download_model", "validate_lerobot_v3", "acquire_libero_benchmark", "acquire_robotwin", "convert_rpo_amp_official", "audit_rpo_amp_official", "validate_rpo_amp_motion"}) or kind in {JobKind.EVAL_SIM2SIM, JobKind.DATA_SCAN, JobKind.DATA_SLICE, JobKind.REPORT_RENDER, JobKind.ASSET_VALIDATE}:
+    if (kind == JobKind.DATA_CONVERT and params.get("operation") in {"download_model", "validate_lerobot_v3", "acquire_libero_benchmark", "acquire_robotwin", "acquire_motiondecode", "derive_motiondecode_view", "preview_motiondecode_v1", "convert_rpo_amp_official", "audit_rpo_amp_official", "validate_rpo_amp_motion"}) or kind in {JobKind.EVAL_SIM2SIM, JobKind.DATA_SCAN, JobKind.DATA_SLICE, JobKind.REPORT_RENDER, JobKind.ASSET_VALIDATE}:
         return Estimate(
             verdict="fits",
             per_gpu_peak_gb=0,

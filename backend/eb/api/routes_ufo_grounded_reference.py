@@ -78,10 +78,10 @@ async def submit(
             if row is None:
                 raise HTTPException(409, "既有候选登记缺失")
             return {"id": previous.id, "status": previous.status, "dataset_id": row.id, "reused": True}
-        from eb.domain.disk import disk_preflight
+        from eb.workbench import disk_preflight
         from eb.orchestrator.service import Orchestrator
 
-        check = disk_preflight(str(get_settings().data_root), needed_bytes=512 * 1024**2)
+        check = await disk_preflight(str(get_settings().data_root), needed_bytes=512 * 1024**2)
         if not check.ok:
             raise ValueError(check.reason)
         dataset_id = new_id("ds")
@@ -146,4 +146,5 @@ async def output_file(
         raise HTTPException(404, "没有经过收集校验的候选产物")
     from eb.api.routes_ufo_native import stream_output
 
+    await session.rollback()
     return await stream_output(request, run_id, path)

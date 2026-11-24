@@ -48,7 +48,8 @@ async def test_partial_pbfm_keeps_verified_cases_with_fixed_denominator(tmp_path
         return {"files": 1, "samples": [{"sha256": hashlib.sha256(path.read_bytes()).hexdigest()}]}
 
     monkeypatch.setattr("eb.settings.get_settings", lambda: NS(data_root=tmp_path))
-    monkeypatch.setattr("eb.orchestrator.ufo_native.EbdClient", lambda: NS(scan=scan))
+    from artifact_fixtures import install_artifact_batch
+    install_artifact_batch(monkeypatch, scan)
     session = NS(scalar=AsyncMock(return_value=None), add=Mock())
     run = NS(id="run_partial", abort_reason=None, metrics_summary={})
     job = NS(

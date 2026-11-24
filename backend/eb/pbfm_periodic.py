@@ -1,3 +1,4 @@
+from eb.store.ebd import storage_inventory
 """Register complete periodic state from a stopped P-BFM Run without changing it."""
 from pathlib import Path
 
@@ -63,7 +64,7 @@ async def periodic_context(session, job_id: str, step: int):
             'training_complete': False, 'run_id': run.id, 'parent_plan_hash': plan['hash'], **entry}
             or manifest.get('plan_hash') != plan['hash']):
         raise ValueError('P-BFM periodic atomic receipt/manifest differs')
-    checkpoint = validate_pbfm_checkpoint(native, manifest, run_id=run.id, plan=plan, resume=True)
+    checkpoint = validate_pbfm_checkpoint(native, manifest, run_id=run.id, plan=plan, resume=True, inventory=await storage_inventory(native))
     if checkpoint['counts'] != counts or any(
         set(row.get('optimizer_state_steps', {})) != set(row['optimizer_names'])
         or any(values != [step] for values in row['optimizer_state_steps'].values())

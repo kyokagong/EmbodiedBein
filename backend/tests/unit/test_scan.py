@@ -31,7 +31,10 @@ def test_scan_finds_urdfs_and_gym_ids(tmp_path: Path):
     (tmp_path / "env").mkdir()
     (tmp_path / "env" / "isaaclab_demo.yaml").write_text("id: demo\n")
     (tmp_path / "register.py").write_text('gym.register(id="Isaac-Demo-v0", entry_point="x:Y")\n')
-    result = scan_embodiment(tmp_path)
+    files = [{"path": str(path.relative_to(tmp_path)), "is_dir": False, "bytes": path.stat().st_size}
+             for path in tmp_path.rglob("*") if path.is_file()]
+    texts = {item["path"]: (tmp_path / item["path"]).read_text() for item in files}
+    result = scan_embodiment(files, texts)
     assert result["status"] == "ready"
     assert any(v["path"].endswith("robot.urdf") for v in result["urdf_variants"])
     assert "Isaac-Demo-v0" in result["gym_ids"]

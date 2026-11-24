@@ -279,3 +279,21 @@ async def test_native_collection_separates_resume_replay_from_model_and_is_idemp
     rows.clear()
     await claim_outputs(session, job, run)
     assert not rows
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)
+
+
+def test_task_local_checkpoint_validation_does_not_import_control_helpers(tmp_path, monkeypatch):
+    import builtins
+    native, plan, ranks = native_checkpoint(tmp_path)
+    original = builtins.__import__
+    def guarded(name, *args, **kwargs):
+        if name == "eb.checkpoints":
+            raise AssertionError("task worker must not depend on control-side checkpoint helpers")
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    publish(native, plan, ranks)

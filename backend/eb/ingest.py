@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from eb.ids import new_id
-from eb.onnx_io import read_signature, sha256_file
+from eb.onnx_io import read_signature
+from eb.store.ebd import EbdClient, storage_inventory, storage_root
+import httpx
 from eb.store.models import Artifact, AuditLog, ModelFamily, ModelVersion
 
 CHECKPOINT_ROOTS = (
@@ -91,6 +93,7 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
         await session.flush()
 
     paths: list[Path] = []
+    facts = {}
     if root is not None:
         search = [root]
     else:
@@ -99,15 +102,20 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
         search.append(Path("/data/kk/Berkeley-Humanoid-Lite/logs/rsl_rl"))
 
     for base in search:
-        if not base.exists():
-            continue
-        for path in sorted(base.rglob("*")):
-            if not path.is_file() or path.suffix.lower() not in _POLICY_SUFFIXES:
+        try:
+            inventory = await storage_inventory(base)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
                 continue
-            # prefer named policies; skip optimizer-like blobs
-            if path.name in {"full_weights.pt"}:
+            raise
+        for item in inventory:
+            path = base / item["path"]
+            if item["is_dir"] or item["is_symlink"] or path.suffix.lower() not in _POLICY_SUFFIXES:
+                continue
+            if path.name == "full_weights.pt":
                 continue
             paths.append(path)
+            facts[path] = item
 
     # checkpoints/ first so the six ONNX policies get stable ids
     paths.sort(key=lambda p: (0 if "checkpoints" in p.parts else 1, str(p)))
@@ -119,14 +127,17 @@ async def ingest_checkpoints(session: AsyncSession, root: Path | None = None) ->
         if references(str(path), set(), deleted_sources):
             continue
         try:
-            digest = sha256_file(path)
-        except OSError:
-            continue
+            identity = await EbdClient().hash_storage_file(storage_root(path.parent), path.name)
+            digest = identity["sha256"]
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                continue
+            raise
         existing = await session.scalar(select(Artifact).where(Artifact.sha256 == digest))
         if existing:
             continue
-        size = path.stat().st_size
-        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        size = identity["bytes"]
+        mtime = datetime.fromtimestamp(facts[path]["mtime"], tz=UTC)
         cid, _hint_io = infer_contract(path)
         io: dict[str, Any] = {}
         measured = False

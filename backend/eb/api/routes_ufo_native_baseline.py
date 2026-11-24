@@ -81,11 +81,11 @@ async def submit(
             ):
                 raise HTTPException(409, "Idempotency-Key already binds a different baseline")
             return {"id": previous.id, "status": previous.status, "reused": True}
-        from eb.domain.disk import disk_preflight
+        from eb.workbench import disk_preflight
         from eb.orchestrator.service import Orchestrator
         from eb.settings import get_settings
 
-        check = disk_preflight(str(get_settings().data_root), needed_bytes=8 * 1024**3)
+        check = await disk_preflight(str(get_settings().data_root), needed_bytes=8 * 1024**3)
         if not check.ok:
             raise ValueError(check.reason)
         job = await Orchestrator().submit(session, spec, principal.id, key)
@@ -181,6 +181,7 @@ async def output_file(run_id: str, path: str, request: Request, session: Session
         raise HTTPException(404, str(exc)) from exc
     from eb.api.routes_ufo_native import stream_output
 
+    await session.rollback()
     response = await stream_output(request, run_id, path)
     response.headers["Link"] = (
         f'</api/v1/ufo-native/baselines/runs/{run_id}/verification-scope>; rel="describedby"'

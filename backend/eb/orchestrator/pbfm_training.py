@@ -1,3 +1,4 @@
+from eb.store.ebd import storage_inventory
 """P-BFM publication checks; retain the shared Job/Run collection lifecycle."""
 
 import re
@@ -106,7 +107,7 @@ async def collect_pbfm_training(
                 or periodic_binding.get("step") != periodic_checkpoint.get("step")):
             raise ValueError("P-BFM periodic publication requires a verified stopped source binding")
         producer = {**producer, "periodic_checkpoint": periodic_binding, "training_completed": False}
-    checkpoint = periodic_checkpoint if periodic else read_pbfm_checkpoint(root, spec, run.id)
+    checkpoint = periodic_checkpoint if periodic else read_pbfm_checkpoint(root, spec, run.id, inventory=await storage_inventory(root / "outputs/native"))
     if checkpoint is None:
         raise ValueError("P-BFM producer has no complete checkpoint")
     manifest, counts = checkpoint["manifest"], checkpoint["counts"]

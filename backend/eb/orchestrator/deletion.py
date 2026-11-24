@@ -125,12 +125,33 @@ def managed_model_path(path: str) -> bool:
     return False
 
 
-async def deletion_plan(session, kind: str, object_id: str) -> dict:
+async def deletion_plan(session, kind: str, object_id: str, *, objects=None) -> dict:
     records = {table.__tablename__: list((await session.scalars(select(table))).all()) for table in TABLES}
     removed: dict[str, list] = {}
     paths, preserved = [], []
     run_ids = []
-    if kind == "model":
+    suppressed_runs, model_artifact_ids = [], set()
+    if kind == "group":
+        if not objects or any(k not in {"model", "train", "eval", "job"} for k, _ in objects):
+            raise HTTPException(422, "删除组必须显式列出模型或任务")
+        plans = [await deletion_plan(session, k, oid) for k, oid in sorted(set(objects))]
+        selected = {}
+        for plan in plans:
+            for table, rows in plan["records"].items():
+                selected.setdefault(table, set()).update(row["id"] for row in rows)
+        removed = {
+            table: [row for row in records[table] if row.id in keys]
+            for table, keys in selected.items()
+        }
+        for plan in plans:
+            paths.extend(plan["paths"])
+            preserved.extend(plan["preserved_paths"])
+            run_ids.extend(plan["run_ids"])
+            suppressed_runs.extend(plan["suppressed_model_runs"])
+            if plan["kind"] == "model":
+                model_artifact_ids.update(a["id"] for a in plan["records"].get("artifacts", []))
+        run_ids, preserved = list(dict.fromkeys(run_ids)), list(dict.fromkeys(preserved))
+    elif kind == "model":
         model = next(
             (
                 r
@@ -214,7 +235,6 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
         preserved = [p for p in paths if not managed_model_path(p)]
         paths = [p for p in paths if managed_model_path(p)]
     ids = {r.id for rows in removed.values() for r in rows}
-    suppressed_runs = []
     if kind == "model":
         if isinstance(model, ModelVersion) and (model.card or {}).get("run_id"):
             suppressed_runs.append(model.card["run_id"])
@@ -236,7 +256,7 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
                 # A producer's output index is historical evidence, not a model input.
                 summary = dict(data.get("metrics_summary") or {})
                 summary.pop("checkpoint", None)
-                if summary.get("model_version_id") == object_id:
+                if summary.get("model_version_id") in ids:
                     summary.pop("model_version_id")
                     data["metrics_summary"] = summary
             if references(data, ids, paths):
@@ -248,7 +268,7 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
                     }
                 )
     for artifact in removed.get("artifacts", []):
-        if artifact.refcount or (artifact.pinned and kind != "model"):
+        if artifact.refcount or (artifact.pinned and kind != "model" and artifact.id not in model_artifact_ids):
             blockers.append({"type": "pinned_artifact", "id": artifact.id})
     live_ids = {getattr(r, "id", None) for rows in records.values() for r in rows} - ids
     edges = (await session.scalars(select(LineageEdge).where(LineageEdge.src_id.in_(ids)))).all()
@@ -268,9 +288,13 @@ async def deletion_plan(session, kind: str, object_id: str) -> dict:
     }
 
 
-async def delete_object(session, principal, kind: str, object_id: str, *, preview: bool = False) -> dict:
+async def delete_object(session, principal, kind: str, object_id: str, *, preview: bool = False, objects=None) -> dict:
     if principal.actor_type != "user":
         raise HTTPException(403, "删除仅允许用户操作，平台 Agent 不可执行")
+    if kind == "group":
+        from eb.ids import sha256_bytes
+
+        object_id = sha256_bytes(json.dumps(sorted(set(objects or []))).encode())
     subject = f"{kind}:{object_id}"
     await session.execute(text(f"SELECT pg_advisory_xact_lock({STORAGE_LOCK})"))
     receipt = await session.scalar(
@@ -283,7 +307,7 @@ async def delete_object(session, principal, kind: str, object_id: str, *, previe
             return {"ok": True, "already_deleted": True, **receipt.after}
         plan = receipt.before
     else:
-        plan = await deletion_plan(session, kind, object_id)
+        plan = await deletion_plan(session, kind, object_id, objects=objects)
     if preview:
         return {k: v for k, v in plan.items() if k != "records"}
     if plan["blockers"]:

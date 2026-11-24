@@ -27,7 +27,7 @@ def test_bhl_seed_urdf_meshes_resolve_on_disk():
     urdf = root / BHL_ASSET_INDEX[0]["path"]
     if not urdf.is_file():
         return
-    names, rel = collect_urdf_joints(root, [str(BHL_ASSET_INDEX[0]["path"])])
+    names, rel = collect_urdf_joints({str(BHL_ASSET_INDEX[0]["path"]): urdf.read_text()})
     assert names
     assert rel
     text = (root / rel).read_text(errors="replace")

@@ -169,7 +169,7 @@ async def test_file_route_streams_indexed_nested_and_native_train_outputs_withou
         write_json(root / "receipt.json", receipt)
     job = NS(kind="train.rl" if operation == "ufo_native_train" else "data.convert", spec={"params": params})
     run = NS(id="run_output", job_id="job_output", status="finished")
-    session = NS(get=AsyncMock(side_effect=[run, job]))
+    session = NS(rollback=AsyncMock(), get=AsyncMock(side_effect=[run, job]))
     stream = AsyncMock(return_value="streamed")
     monkeypatch.setattr("eb.api.routes_ufo_native.get_settings", lambda: NS(data_root=tmp_path))
     monkeypatch.setattr("eb.api.routes_ufo_native.stream_output", stream)
@@ -186,7 +186,7 @@ async def test_running_native_train_cannot_stream_partial_analysis(tmp_path, mon
 
     training_output(tmp_path)
     job = NS(kind="train.rl", spec={"params": {"template_id": "rpo_ufo_fb_native"}})
-    session = NS(get=AsyncMock(side_effect=[NS(job_id="job_output", status="running"), job]))
+    session = NS(rollback=AsyncMock(), get=AsyncMock(side_effect=[NS(job_id="job_output", status="running"), job]))
     stream = AsyncMock()
     monkeypatch.setattr("eb.api.routes_ufo_native.get_settings", lambda: NS(data_root=tmp_path))
     monkeypatch.setattr("eb.api.routes_ufo_native.stream_output", stream)

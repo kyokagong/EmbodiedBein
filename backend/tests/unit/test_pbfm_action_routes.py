@@ -1,4 +1,5 @@
 import json
+from unittest.mock import AsyncMock
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -153,7 +154,9 @@ async def test_export_plan_binds_published_hashes_and_preserves_model_card(tmp_p
     async def image_info(_, name):
         return {"ok": True, "digest": "sha256:" + "e" * 64}
 
+    from artifact_fixtures import install_artifact_batch
     monkeypatch.setattr(EbdClient, "scan", scan)
+    install_artifact_batch(monkeypatch, lambda path: scan(None, path))
     monkeypatch.setattr(EbdClient, "image_info", image_info)
     monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(data_root=tmp_path))
     before = deepcopy(model.card)
@@ -269,12 +272,15 @@ async def test_failed_eval_only_serves_indexed_partial_media(tmp_path, monkeypat
         return {"files": 1, "samples": [{"size": row["bytes"], "sha256": row["sha256"]}]}
 
     async def stream(request, rid, path):
+        assert session.rollback.await_count > 0
         return {"rid": rid, "path": path}
 
     monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(data_root=tmp_path))
+    from artifact_fixtures import install_artifact_batch
     monkeypatch.setattr(EbdClient, "scan", scan)
+    install_artifact_batch(monkeypatch, lambda path: scan(None, path))
     monkeypatch.setattr(routes_ufo_native, "stream_output", stream)
-    session = SimpleNamespace(get=get, scalar=scalar)
+    session = SimpleNamespace(get=get, scalar=scalar, rollback=AsyncMock())
     served = await routes.output_file(run.id, row["path"], None, session, None)
     assert served["path"] == row["path"]
     with pytest.raises(HTTPException) as error:
@@ -324,12 +330,15 @@ async def test_segment112_serves_only_verified_indexed_training_analysis(tmp_pat
         return {"files": 1, "samples": [{"size": path.stat().st_size, "sha256": sha256(path)}]}
 
     async def stream(request, rid, path):
+        assert session.rollback.await_count > 0
         return {"rid": rid, "path": path}
 
     monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(data_root=tmp_path))
+    from artifact_fixtures import install_artifact_batch
     monkeypatch.setattr(EbdClient, "scan", scan)
+    install_artifact_batch(monkeypatch, lambda path: scan(None, path))
     monkeypatch.setattr(routes_ufo_native, "stream_output", stream)
-    session = SimpleNamespace(get=get, scalar=scalar)
+    session = SimpleNamespace(get=get, scalar=scalar, rollback=AsyncMock())
     for path in (entry["path"], index_entry["path"]):
         assert await routes.output_file(run.id, path, None, session, None) == {"rid": run.id, "path": path}
     with pytest.raises(HTTPException) as error:
@@ -399,12 +408,15 @@ async def test_output_binds_collected_receipt_when_file_and_disk_receipt_change(
         return {"files": 1, "samples": [{"size": actual.stat().st_size, "sha256": sha256(actual)}]}
 
     async def stream(request, rid, path):
+        assert session.rollback.await_count > 0
         return {"rid": rid, "path": path}
 
     monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(data_root=tmp_path))
+    from artifact_fixtures import install_artifact_batch
     monkeypatch.setattr(EbdClient, "scan", scan)
+    install_artifact_batch(monkeypatch, lambda path: scan(None, path))
     monkeypatch.setattr(routes_ufo_native, "stream_output", stream)
-    session = SimpleNamespace(get=get, scalar=scalar)
+    session = SimpleNamespace(get=get, scalar=scalar, rollback=AsyncMock())
     assert await routes.output_file(run.id, relative, None, session, None) == {
         "rid": run.id, "path": relative,
     }

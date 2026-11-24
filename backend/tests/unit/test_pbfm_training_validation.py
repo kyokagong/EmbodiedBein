@@ -160,7 +160,7 @@ def source_fixture(tmp_path, monkeypatch, *, target=112):
         (EmbodimentEnvRow, source.embodiment_env_id): NS(status="active"),
     }
     session = NS(
-        get=AsyncMock(side_effect=lambda cls, key: values.get((cls, key))), scalar=AsyncMock(return_value=run)
+        rollback=AsyncMock(), get=AsyncMock(side_effect=lambda cls, key: values.get((cls, key))), scalar=AsyncMock(return_value=run)
     )
     monkeypatch.setattr(pbfm_training_checkpoint, "read_pbfm_checkpoint", Mock(return_value=checkpoint))
     monkeypatch.setattr(
@@ -425,7 +425,7 @@ def report_fixture(tmp_path, monkeypatch):
         (Run, export_run.id): export_run,
         (Job, export_run.job_id): export_job,
     }
-    session = NS(get=AsyncMock(side_effect=lambda cls, key: values.get((cls, key))))
+    session = NS(rollback=AsyncMock(), get=AsyncMock(side_effect=lambda cls, key: values.get((cls, key))))
     monkeypatch.setattr(diagnostic, "get_settings", lambda: NS(data_root=tmp_path))
     verify_media = AsyncMock()
     monkeypatch.setattr("eb.pbfm_evaluation.verify_output_index", verify_media)
@@ -580,14 +580,12 @@ async def test_training_validation_media_uses_analysis_integrity_index(tmp_path,
     })
     job = NS(status="succeeded", spec=spec.model_dump(mode="json"))
     session = NS(
-        get=AsyncMock(side_effect=lambda cls, key: run if cls is Run else job if cls is Job else None),
+        rollback=AsyncMock(), get=AsyncMock(side_effect=lambda cls, key: run if cls is Run else job if cls is Job else None),
         scalar=AsyncMock(return_value=None),
     )
     monkeypatch.setattr(routes_pbfm, "get_settings", lambda: NS(data_root=tmp_path))
-    monkeypatch.setattr(
-        "eb.store.ebd.EbdClient.scan",
-        AsyncMock(return_value={"files": 1, "samples": [{"size": row["bytes"], "sha256": row["sha256"]}]}),
-    )
+    from artifact_fixtures import install_artifact_batch
+    install_artifact_batch(monkeypatch, AsyncMock(return_value={"files": 1, "samples": [{"size": row["bytes"], "sha256": row["sha256"]}]}))
     stream = AsyncMock(return_value="indexed analysis")
     monkeypatch.setattr(routes_ufo_native, "stream_output", stream)
     assert await routes_pbfm.output_file(run.id, row["path"], None, session, None) == "indexed analysis"
@@ -724,7 +722,8 @@ async def test_queued_resume_rehashes_actual_validation_media_before_start(tmp_p
         path = Path(name)
         return {"files": 1, "samples": [{"size": path.stat().st_size, "sha256": sha256(path)}]}
 
-    monkeypatch.setattr("eb.store.ebd.EbdClient.scan", scan)
+    from artifact_fixtures import install_artifact_batch
+    install_artifact_batch(monkeypatch, lambda path: scan(None, path))
     from eb.store.models import Run
 
     source_run = await session.get(Run, "run_source")
@@ -736,3 +735,9 @@ async def test_queued_resume_rehashes_actual_validation_media_before_start(tmp_p
     assert job.status == "blocked" and job.attempts == 0
     session.add.assert_not_called()
     client.submit_run.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)

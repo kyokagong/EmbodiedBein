@@ -97,3 +97,20 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+async def test_rsl_resume_selects_by_mtime_then_step_and_delegates_copy(monkeypatch, tmp_path):
+    from eb.worktree import seed_rsl_resume
+    from unittest.mock import AsyncMock
+    facts = [
+        {"path": "exp/old/model_200.pt", "is_dir": False, "is_symlink": False, "bytes": 5, "mtime_ns": 1},
+        {"path": "exp/latest/model_10.pt", "is_dir": False, "is_symlink": False, "bytes": 4, "mtime_ns": 2},
+        {"path": "exp/latest/params/agent.yaml", "is_dir": False, "is_symlink": False, "bytes": 3, "mtime_ns": 2}]
+    monkeypatch.setattr("eb.worktree.storage_inventory", AsyncMock(return_value=facts), raising=False)
+    prepare = AsyncMock(return_value={"prepared": True})
+    monkeypatch.setattr(EbdClient, "prepare_resume_files", prepare, raising=False)
+    assert await seed_rsl_resume(tmp_path / "run_target", "run_source") == ("latest", "model_10.pt")
+    source, target, members = prepare.call_args.args
+    assert (source, target) == ("run_source", "run_target")
+    assert [item["target_path"] for item in members] == [
+        "logs/rsl_rl/exp/latest/model_10.pt", "logs/rsl_rl/exp/latest/params/agent.yaml"]

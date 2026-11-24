@@ -198,6 +198,11 @@ class Orchestrator:
             existing = await session.scalar(select(Job).where(Job.idem_key == idem_key))
             if existing:
                 return existing
+        if spec.params.get("operation") in {"derive_motiondecode_view", "preview_motiondecode_v1"}:
+            if principal.startswith("agent:"):
+                raise PermissionError("MotionDecode source curation and preview require an operator")
+            from eb.api.routes_motiondecode import validate_motiondecode_job
+            await validate_motiondecode_job(session, spec)
         await validate_flat_warm_start_submission(session, spec)
         if spec.params.get("operation") == "probe_pbfm_runtime":
             if principal.startswith('agent:'):
@@ -254,6 +259,9 @@ class Orchestrator:
         if not row:
             raise ValueError(f"unknown embodiment env {spec.embodiment_env_id}")
         env = EmbodimentEnv.model_validate(row.spec)
+        if spec.kind == JobKind.BUNDLE_BUILD:
+            from eb.bundle.jobs import freeze_bundle
+            spec = await freeze_bundle(session, spec, env)
         task = None
         if spec.task_id:
             trow = await session.get(TaskRow, spec.task_id)
@@ -376,6 +384,16 @@ class Orchestrator:
                 job.version += 1
                 await session.commit()
                 raise
+        if spec.kind == JobKind.BUNDLE_BUILD:
+            from eb.bundle.jobs import validate_bundle_plan
+            try:
+                await validate_bundle_plan(spec)
+            except (ValueError, OSError, KeyError, TypeError, httpx.HTTPError) as exc:
+                job.status = transition(JobStatus(job.status), JobStatus.BLOCKED).value
+                job.error = f"Bundle input verification failed: {exc}"
+                job.version += 1
+                await session.commit()
+                raise
         job.status = transition(JobStatus(job.status), JobStatus.ADMITTED).value
         job.status = transition(JobStatus(job.status), JobStatus.PREPARING).value
         job.attempts += 1
@@ -410,8 +428,8 @@ class Orchestrator:
         run_root = prepare_run_dirs(run.id)
         if spec.inputs.resume_from and not rlinf_resume:
             try:
-                load_run, ckpt = seed_rsl_resume(run_root, spec.inputs.resume_from)
-            except FileNotFoundError as e:
+                load_run, ckpt = await seed_rsl_resume(run_root, spec.inputs.resume_from)
+            except (OSError, ValueError, httpx.HTTPError) as e:
                 apply_ebd_result(
                     job,
                     run,
@@ -589,24 +607,35 @@ class Orchestrator:
         await session.flush()
         from eb.orchestrator.collect import claim_outputs
 
+        registration = await session.begin_nested()
         try:
             await claim_outputs(session, job, run)
-        except (ValueError, OSError, KeyError, TypeError) as exc:
-            job.status = JobStatus.FAILED.value
-            job.error = f"产物验证失败: {exc}"
+        except (httpx.HTTPError, ValueError, OSError, KeyError, TypeError) as exc:
+            await registration.rollback()
+            await session.refresh(job)
+            await session.refresh(run)
+            transport = isinstance(exc, httpx.HTTPError)
+            content_error = not transport or (isinstance(exc, httpx.HTTPStatusError)
+                                               and exc.response.status_code in {400, 403, 404, 409, 413})
+            job.status = JobStatus.FAILED.value if content_error else JobStatus.INFRA_FAILED.value
+            job.error = f"产物验证失败: {exc}" if content_error else f"产物服务不可用: {exc}"
             run.status = RunStatus.ABORTED.value
-            run.abort_reason = "invalid_output"
+            run.abort_reason = "invalid_output" if content_error else "artifact_io"
             run.finished_at = datetime.now(UTC)
-            from eb.orchestrator.collect import archive_partial_eval
-            await archive_partial_eval(session, job, run, invalid=True)
+            if not transport:
+                from eb.orchestrator.collect import archive_partial_eval
+                await archive_partial_eval(session, job, run, invalid=True)
             await session.commit()
             return
-        if job.status in {JobStatus.FAILED.value, JobStatus.INFRA_FAILED.value}:
-            await session.commit()
-            return
-        if run.status == RunStatus.ABORTED.value:
-            if job.status == JobStatus.RUNNING.value:
-                job.status = JobStatus.FAILED.value
+        if job.status in {JobStatus.FAILED.value, JobStatus.INFRA_FAILED.value} or run.status == RunStatus.ABORTED.value:
+            failure = (job.status if job.status in {JobStatus.FAILED.value, JobStatus.INFRA_FAILED.value}
+                       else JobStatus.FAILED.value, job.error, run.abort_reason, dict(run.metrics_summary or {}))
+            await registration.rollback()
+            await session.refresh(job)
+            await session.refresh(run)
+            job.status, job.error, run.abort_reason, run.metrics_summary = failure
+            run.status = RunStatus.ABORTED.value
+            run.finished_at = datetime.now(UTC)
             await session.commit()
             return
         log = get_settings().data_root / "runs" / run.id / "console.log"
@@ -615,12 +644,16 @@ class Orchestrator:
         if log.exists() and not onnx_ok and not claimed_output:
             text = log.read_text(errors="replace")
             if "Traceback (most recent call last):" in text:
+                await registration.rollback()
+                await session.refresh(job)
+                await session.refresh(run)
                 job.status = JobStatus.FAILED.value
                 job.error = "\n".join(text.strip().splitlines()[-12:])[:2000]
                 run.status = RunStatus.ABORTED.value
                 run.abort_reason = "python_exception"
                 await session.commit()
                 return
+        await registration.commit()
         run.status = RunStatus.FINISHED.value
         run.finished_at = datetime.now(UTC)
         job.status = JobStatus.SUCCEEDED.value

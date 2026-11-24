@@ -182,3 +182,9 @@ async def test_periodic_publication_keeps_cancelled_status_actual_progress_and_i
         diagnostic_spec=training, periodic_checkpoint=checkpoint, periodic_binding=binding)
     assert again == mid and len(run.metrics_summary['periodic_checkpoints']) == 1
     session.add.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)

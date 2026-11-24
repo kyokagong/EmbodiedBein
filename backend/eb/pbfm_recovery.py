@@ -1,3 +1,4 @@
+from eb.store.ebd import storage_inventory
 """Explicit recovery of the one verified19984 generation; no failed-Job promotion."""
 from copy import deepcopy
 
@@ -103,7 +104,7 @@ async def build_recovery_spec(body, session):
     if ("sha256:" + sha256(native / "checkpoint-manifest.json") != MANIFEST_HASH
             or receipt != expected_receipt or manifest["plan_hash"] != PARENT_HASH):
         raise ValueError("P-BFM recovery receipt/manifest differs")
-    checked = validate_pbfm_checkpoint(native, manifest, run_id=SOURCE_RUN, plan=parent, resume=True)
+    checked = validate_pbfm_checkpoint(native, manifest, run_id=SOURCE_RUN, plan=parent, resume=True, inventory=await storage_inventory(native))
     if checked["counts"] != SOURCE_COUNTS:
         raise ValueError("P-BFM recovery actual counters differ")
     for rank in manifest["rank_results"]:

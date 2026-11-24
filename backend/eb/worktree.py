@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from eb.settings import get_settings
+from eb.store.ebd import EbdClient, storage_inventory
 
 
 def git_is_dirty(repo: Path) -> None:
@@ -47,36 +47,33 @@ def prepare_run_dirs(run_id: str) -> Path:
     return run_root
 
 
-def seed_rsl_resume(run_root: Path, source_run_id: str) -> tuple[str, str]:
-    """Copy the newest RSL-RL checkpoint from another run into this run's logs overlay.
-
-    Returns (load_run directory name, checkpoint filename) for play.py / train.py.
-    """
+async def seed_rsl_resume(run_root: Path, source_run_id: str) -> tuple[str, str]:
+    """Choose RSL input by its existing mtime/step rule; ebd prepares the bytes."""
     src = get_settings().data_root / "runs" / source_run_id / "logs" / "rsl_rl"
-    pts = list(p for p in src.rglob("model_*.pt") if p.is_file())
-    if not pts:
+    facts = await storage_inventory(src)
+    files = [item for item in facts if not item["is_dir"] and not item["is_symlink"]]
+    points = [item for item in files if Path(item["path"]).match("model_*.pt")]
+    if not points:
         raise FileNotFoundError(f"no model_*.pt under {src}")
 
-    def _ckpt_sort(p: Path) -> tuple[float, int]:
-        n = -1
-        stem = p.stem
-        if stem.startswith("model_"):
-            try:
-                n = int(stem.split("_", 1)[1])
-            except ValueError:
-                n = -1
-        return (p.stat().st_mtime, n)
+    def checkpoint_order(item):
+        step = Path(item["path"]).stem.removeprefix("model_")
+        return (item["mtime_ns"], int(step) if step.isdigit() else -1)
 
-    latest = max(pts, key=_ckpt_sort)
+    latest = Path(max(points, key=checkpoint_order)["path"])
     load_run = latest.parent.name
-    dest = run_root / "logs" / "rsl_rl" / latest.parent.parent.name / load_run
-    dest.mkdir(parents=True, exist_ok=True)
-    for item in latest.parent.iterdir():
-        target = dest / item.name
-        if item.is_file() and item.suffix in {".pt", ".yaml", ".pkl", ".json"}:
-            shutil.copy2(item, target)
-        elif item.is_dir() and item.name == "params":
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(item, target)
+    directory = latest.parent
+    destination = Path("logs/rsl_rl") / latest.parent.parent.name / load_run
+    members = []
+    for item in files:
+        path = Path(item["path"])
+        if not path.is_relative_to(directory):
+            continue
+        relative = path.relative_to(directory)
+        if ((len(relative.parts) == 1 and path.suffix in {".pt", ".yaml", ".pkl", ".json"})
+                or len(relative.parts) > 1 and relative.parts[0] == "params"):
+            members.append({"source_path": (Path("logs/rsl_rl") / path).as_posix(),
+                            "target_path": (destination / relative).as_posix(),
+                            "expected_bytes": item["bytes"], "expected_sha256": item.get("sha256")})
+    await EbdClient().prepare_resume_files(source_run_id, run_root.name, members)
     return load_run, latest.name

@@ -196,7 +196,7 @@ async def test_raw_baseline_cannot_change_execution_boundary(monkeypatch, field,
 async def test_source_run_must_be_the_fixed_successful_run_before_image_lookup():
     from eb.ufo_native_baseline_service import build_plan
 
-    session = NS(get=AsyncMock(return_value=None))
+    session = NS(rollback=AsyncMock(), get=AsyncMock(return_value=None))
     with pytest.raises(ValueError, match="Only the frozen"):
         await build_plan(session, "run_another")
     session.get.assert_not_awaited()
@@ -444,7 +444,7 @@ async def test_scope_backfill_requires_operator_and_successful_baseline(tmp_path
     from eb.api.routes_ufo_native_baseline import publish_scope
     from eb.ufo_native_baseline_service import backfill_scoped_verification
 
-    session = NS(get=AsyncMock())
+    session = NS(rollback=AsyncMock(), get=AsyncMock())
     with pytest.raises(HTTPException) as exc:
         await publish_scope("run_baseline", session, Principal("test", "agent"))
     assert exc.value.status_code == 403
@@ -558,7 +558,7 @@ async def test_download_exposes_only_hashed_diagnostic_evidence_not_replay(
     run = NS(job_id="job_baseline")
     job = NS(status="succeeded", spec=spec_for(value).model_dump(mode="json"))
     session = NS(
-        get=AsyncMock(side_effect=lambda cls, key: run if cls is Run else job),
+        rollback=AsyncMock(), get=AsyncMock(side_effect=lambda cls, key: run if cls is Run else job),
         scalar=AsyncMock(return_value=NS(sha256=plan_hash(receipt))),
     )
     monkeypatch.setattr("eb.settings.get_settings", lambda: NS(data_root=tmp_path))
@@ -567,6 +567,7 @@ async def test_download_exposes_only_hashed_diagnostic_evidence_not_replay(
     monkeypatch.setattr("eb.api.routes_ufo_native.stream_output", stream)
     if allowed:
         assert await output_file("run_baseline", path, None, session, None) is response
+        session.rollback.assert_awaited_once()
         assert response.headers["X-EB-Live-Rank-Optimizer-Verification"] == "not_observed"
         assert "/verification-scope" in response.headers["Link"]
     else:

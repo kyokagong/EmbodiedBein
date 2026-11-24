@@ -156,3 +156,9 @@ async def test_queued_exploration_revalidates_before_start_and_blocks_changed_ev
         assert job.status == "running" and job.attempts == 1
         client.submit_run.assert_awaited_once()
     validate.assert_awaited_once()
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)

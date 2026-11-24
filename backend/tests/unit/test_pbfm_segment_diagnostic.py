@@ -187,3 +187,9 @@ async def test_segment112_publication_is_diagnostic_without_train_job(tmp_path, 
     with pytest.raises(ValueError, match="diagnostic"):
         await collector.collect_pbfm_training(session, job, run, tmp_path, diagnostic_spec=training)
     session.add.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)

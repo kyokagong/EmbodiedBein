@@ -11,27 +11,47 @@ pub struct DeleteRequest {
 }
 
 fn valid_id(value: &str, prefix: &str) -> bool {
-    value.starts_with(prefix) && value.len() > prefix.len()
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    value.starts_with(prefix)
+        && value.len() > prefix.len()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 fn checked_path(root: &Path, models: &Path, path: &Path) -> Result<(), String> {
-    if !path.is_absolute() || path.components().any(|p| matches!(p, Component::ParentDir | Component::CurDir)) {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|p| matches!(p, Component::ParentDir | Component::CurDir))
+    {
         return Err("invalid cleanup path".into());
     }
     let allowed = [root.join("runs"), root.join("tsdb"), models.join("runs")]
-        .iter().any(|base| path.strip_prefix(base).is_ok_and(|p| {
-            let parts: Vec<_> = p.components().collect();
-            parts.first().is_some_and(|part| valid_id(&part.as_os_str().to_string_lossy(), "run_"))
-                && !parts.is_empty()
-        })) || path.strip_prefix(models).is_ok_and(|p| p.components().next()
-            .is_some_and(|part| valid_id(&part.as_os_str().to_string_lossy(), "mdl_")));
-    if !allowed { return Err("cleanup path is not platform-owned Run/model storage".into()); }
+        .iter()
+        .any(|base| {
+            path.strip_prefix(base).is_ok_and(|p| {
+                let parts: Vec<_> = p.components().collect();
+                parts
+                    .first()
+                    .is_some_and(|part| valid_id(&part.as_os_str().to_string_lossy(), "run_"))
+                    && !parts.is_empty()
+            })
+        })
+        || path.strip_prefix(models).is_ok_and(|p| {
+            p.components()
+                .next()
+                .is_some_and(|part| valid_id(&part.as_os_str().to_string_lossy(), "mdl_"))
+        });
+    if !allowed {
+        return Err("cleanup path is not platform-owned Run/model storage".into());
+    }
     let mut current = PathBuf::new();
     for part in path.components() {
         current.push(part);
         match fs::symlink_metadata(&current) {
-            Ok(meta) if meta.file_type().is_symlink() => return Err("cleanup path contains a symlink".into()),
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err("cleanup path contains a symlink".into())
+            }
             Ok(_) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.to_string()),
@@ -46,7 +66,9 @@ fn bytes(path: &Path) -> Result<u64, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(e) => return Err(e.to_string()),
     };
-    if !meta.is_dir() { return Ok(meta.len()); }
+    if !meta.is_dir() {
+        return Ok(meta.len());
+    }
     let mut total = 0;
     for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
         total += bytes(&entry.map_err(|e| e.to_string())?.path())?;
@@ -63,23 +85,41 @@ fn remove(path: &Path) -> Result<(), String> {
     }
 }
 
-fn check_containers(containers: &[Value], paths: &[PathBuf], run_ids: &[String]) -> Result<Vec<String>, String> {
+pub fn check_containers(
+    containers: &[Value],
+    paths: &[PathBuf],
+    run_ids: &[String],
+) -> Result<Vec<String>, String> {
     let mut stopped = Vec::new();
     for container in containers {
-        let id = container["Id"].as_str().ok_or("invalid container inspection")?;
-        let run_id = container["Config"]["Labels"]["eb.run_id"].as_str().unwrap_or("");
-        let state = container["State"]["Status"].as_str().ok_or("missing container state")?;
+        let id = container["Id"]
+            .as_str()
+            .ok_or("invalid container inspection")?;
+        let run_id = container["Config"]["Labels"]["eb.run_id"]
+            .as_str()
+            .unwrap_or("");
+        let state = container["State"]["Status"]
+            .as_str()
+            .ok_or("missing container state")?;
         let active = !matches!(state, "exited" | "dead");
         if run_ids.iter().any(|rid| rid == run_id) {
-            if active { return Err(format!("Run container is still active: {run_id}")); }
+            if active {
+                return Err(format!("Run container is still active: {run_id}"));
+            }
             stopped.push(id.to_string());
         }
         if active {
-            let mounts = container["Mounts"].as_array().ok_or("missing container mounts")?;
+            let mounts = container["Mounts"]
+                .as_array()
+                .ok_or("missing container mounts")?;
             for mount in mounts {
-                let source = PathBuf::from(mount["Source"].as_str().ok_or("invalid container mount")?);
+                let source =
+                    PathBuf::from(mount["Source"].as_str().ok_or("invalid container mount")?);
                 let source = fs::canonicalize(&source).unwrap_or(source);
-                if paths.iter().any(|p| p.starts_with(&source) || source.starts_with(p)) {
+                if paths
+                    .iter()
+                    .any(|p| p.starts_with(&source) || source.starts_with(p))
+                {
                     return Err(format!("cleanup path is mounted by active Run: {run_id}"));
                 }
             }
@@ -89,40 +129,47 @@ fn check_containers(containers: &[Value], paths: &[PathBuf], run_ids: &[String])
 }
 
 pub fn delete_storage(root: &Path, models: &Path, req: DeleteRequest) -> Result<Value, String> {
-    if req.paths.len() > 1000 || req.run_ids.len() > 1000
-        || req.run_ids.iter().any(|id| !valid_id(id, "run_")) {
+    if req.paths.len() > 1000
+        || req.run_ids.len() > 1000
+        || req.run_ids.iter().any(|id| !valid_id(id, "run_"))
+    {
         return Err("invalid Run cleanup request".into());
     }
     let mut paths: Vec<PathBuf> = req.paths.iter().map(PathBuf::from).collect();
-    for path in &paths { checked_path(root, models, path)?; }
+    for path in &paths {
+        checked_path(root, models, path)?;
+    }
     paths.sort();
     paths.dedup();
     let all = paths.clone();
     paths.retain(|p| !all.iter().any(|other| other != p && p.starts_with(other)));
-    let list = Command::new("docker").args(["ps", "-aq", "--filter", "label=eb.run_id"])
-        .output().map_err(|e| e.to_string())?;
-    if !list.status.success() { return Err("could not inspect task containers".into()); }
-    let ids: Vec<_> = String::from_utf8_lossy(&list.stdout).split_whitespace().map(str::to_owned).collect();
-    let stopped = if ids.is_empty() { Vec::new() } else {
-        let inspect = Command::new("docker").arg("inspect").args(&ids).output().map_err(|e| e.to_string())?;
-        if !inspect.status.success() { return Err("could not confirm task container state".into()); }
-        let containers: Vec<Value> = serde_json::from_slice(&inspect.stdout).map_err(|e| e.to_string())?;
-        check_containers(&containers, &paths, &req.run_ids)?
-    };
+    let stopped = check_containers(&inspect_task_containers()?, &paths, &req.run_ids)?;
     let mut total = 0;
-    for path in &paths { total += bytes(path)?; }
+    for path in &paths {
+        total += bytes(path)?;
+    }
     // Never force-remove a container: a concurrent start must fail cleanup safely.
     if !stopped.is_empty() {
-        let removed = Command::new("docker").arg("rm").args(&stopped).output().map_err(|e| e.to_string())?;
-        if !removed.status.success() { return Err("stopped container removal failed; retry cleanup".into()); }
+        let removed = Command::new("docker")
+            .arg("rm")
+            .args(&stopped)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !removed.status.success() {
+            return Err("stopped container removal failed; retry cleanup".into());
+        }
     }
     // The collector shares this lock so it cannot recreate deleted TSDB files.
     eb_collector::with_storage_lock(|| {
-        for path in &paths {
-            checked_path(root, models, path)?;
-            remove(path)?;
-        }
-        Ok(())
+        eb_artifact::with_unpinned_paths(&paths, || {
+            for path in &paths {
+                checked_path(root, models, path)
+                    .map_err(|message| eb_artifact::ArtifactError::new("forbidden", message))?;
+                remove(path).map_err(|message| eb_artifact::ArtifactError::new("io", message))?;
+            }
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
     })?;
     Ok(json!({"paths": paths, "removed_bytes": total, "removed_containers": stopped}))
 }
@@ -153,13 +200,57 @@ mod tests {
 
     #[test]
     fn active_paused_and_shared_mounts_block_cleanup() {
-        let container = |state: &str, source: &str| json!({"Id":"abc", "State":{"Status":state},
-            "Config":{"Labels":{"eb.run_id":"run_test"}}, "Mounts":[{"Source":source}]});
+        let container = |state: &str, source: &str| {
+            json!({"Id":"abc", "State":{"Status":state},
+            "Config":{"Labels":{"eb.run_id":"run_test"}}, "Mounts":[{"Source":source}]})
+        };
         let paths = vec![PathBuf::from("/managed/runs/run_source")];
         for state in ["running", "paused", "restarting", "created"] {
-            assert!(check_containers(&[container(state, "/other")], &paths, &["run_test".into()]).is_err());
-            assert!(check_containers(&[container(state, "/managed/runs/run_source/output")], &paths, &[]).is_err());
+            assert!(
+                check_containers(&[container(state, "/other")], &paths, &["run_test".into()])
+                    .is_err()
+            );
+            assert!(check_containers(
+                &[container(state, "/managed/runs/run_source/output")],
+                &paths,
+                &[]
+            )
+            .is_err());
         }
-        assert_eq!(check_containers(&[container("exited", "/other")], &paths, &["run_test".into()]).unwrap(), vec!["abc"]);
+        assert_eq!(
+            check_containers(
+                &[container("exited", "/other")],
+                &paths,
+                &["run_test".into()]
+            )
+            .unwrap(),
+            vec!["abc"]
+        );
     }
+}
+
+pub fn inspect_task_containers() -> Result<Vec<Value>, String> {
+    let list = Command::new("docker")
+        .args(["ps", "-aq", "--filter", "label=eb.run_id"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !list.status.success() {
+        return Err("could not inspect task containers".into());
+    }
+    let ids: Vec<_> = String::from_utf8_lossy(&list.stdout)
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let inspect = Command::new("docker")
+        .arg("inspect")
+        .args(&ids)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !inspect.status.success() {
+        return Err("could not confirm task container state".into());
+    }
+    serde_json::from_slice(&inspect.stdout).map_err(|e| e.to_string())
 }

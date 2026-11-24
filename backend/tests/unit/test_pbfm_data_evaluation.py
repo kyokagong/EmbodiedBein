@@ -333,14 +333,16 @@ async def test_collector_hashes_large_outputs_through_ebd(tmp_path, monkeypatch)
     (tmp_path / "video.mp4").write_bytes(b"opaque compressed data")
     calls = []
 
-    async def scan(_, path):
-        calls.append(path)
-        return {"files": 1, "samples": [{"path": path, "size": 22, "sha256": "a" * 64}]}
+    async def verify(_, root, files, **limits):
+        calls.append(files)
+        if files[0]["sha256"] != "a" * 64:
+            raise ValueError("PBFM evidence integrity differs")
 
-    monkeypatch.setattr(EbdClient, "scan", scan)
+    monkeypatch.setattr(EbdClient, "verify_artifacts", verify)
+    monkeypatch.setattr("eb.store.ebd.artifact_root", lambda _: {"namespace": "run", "run_id": "run_test", "path": "outputs"})
     row = {"path": "video.mp4", "bytes": 22, "sha256": "a" * 64}
     assert (await verify_output_index(tmp_path, [row], {"video.mp4"}))["video.mp4"] == row
-    assert calls == [str(tmp_path / "video.mp4")]
+    assert calls == [[row]]
     with pytest.raises(ValueError, match="integrity"):
         await verify_output_index(tmp_path, [{**row, "sha256": "b" * 64}], {"video.mp4"})
 
@@ -361,18 +363,17 @@ async def test_collector_accepts_scanned_empty_package_markers(tmp_path, monkeyp
     path.write_bytes(b"")
     calls = []
 
-    async def scan(_, filename):
-        calls.append(filename)
-        content = Path(filename).read_bytes()
-        return {
-            "files": 1,
-            "samples": [{"size": len(content), "sha256": hashlib.sha256(content).hexdigest()}],
-        }
+    async def verify(_, root, files, **limits):
+        calls.append(files)
+        for entry in files:
+            content = (tmp_path / entry["path"]).read_bytes()
+            assert hashlib.sha256(content).hexdigest() == entry["sha256"]
 
-    monkeypatch.setattr(EbdClient, "scan", scan)
+    monkeypatch.setattr(EbdClient, "verify_artifacts", verify)
+    monkeypatch.setattr("eb.store.ebd.artifact_root", lambda _: {"namespace": "run", "run_id": "run_test", "path": "outputs"})
     row = {"path": name, "bytes": 0, "sha256": hashlib.sha256(b"").hexdigest()}
     assert await verify_output_index(tmp_path, [row], {name}) == {name: row}
-    assert calls == [str(path)]
+    assert calls == [[row]]
     with pytest.raises(ValueError, match="unique"):
         await verify_output_index(tmp_path, [row, row], {name})
     with pytest.raises(ValueError, match="incomplete"):
@@ -414,7 +415,7 @@ async def test_collector_rejects_other_empty_or_tampered_entries(tmp_path, monke
     async def scan(*args):
         raise AssertionError("invalid empty entries must fail before scanning")
 
-    monkeypatch.setattr(EbdClient, "scan", scan)
+    monkeypatch.setattr(EbdClient, "verify_artifacts", scan)
     row = {"path": "policy/source/pbfm/__init__.py", "bytes": 0, "sha256": hashlib.sha256(b"").hexdigest()}
     row.update(change)
     with pytest.raises(ValueError):

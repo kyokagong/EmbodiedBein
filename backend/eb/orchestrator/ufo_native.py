@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
+import httpx
 from pathlib import Path
 
 from sqlalchemy import select
 
 from eb.ids import new_id
-from eb.store.ebd import EbdClient
+from eb.store.ebd import EbdClient, artifact_root
 from eb.store.models import Artifact, Bundle, EvalReport, LineageEdge, ModelFamily, ModelVersion
 from eb.ufo_native import (
     ENV_ID,
@@ -64,7 +64,7 @@ async def verify_index(root, files, *, max_files=200, max_file_bytes=2 * 1024**3
     if not files or len(files) > max_files or len({f["path"] for f in files}) != len(files):
         raise ValueError("Native output index is incomplete or duplicate")
 
-    async def verify(item):
+    for item in files:
         path = safe_file(root, item["path"])
         if (
             type(item["bytes"]) is not int
@@ -73,17 +73,13 @@ async def verify_index(root, files, *, max_files=200, max_file_bytes=2 * 1024**3
             or not re.fullmatch("[a-f0-9]{64}", item["sha256"])
         ):
             raise ValueError("Native output file metadata differs")
-        scan = await EbdClient().scan(str(path))
-        if scan.get("files") != 1 or scan["samples"][0]["sha256"] != item["sha256"]:
-            raise ValueError(f"Native output hash differs: {item['path']}")
-
-    limiter = asyncio.Semaphore(16)
-
-    async def bounded_verify(item):
-        async with limiter:
-            await verify(item)
-
-    await asyncio.gather(*(bounded_verify(item) for item in files))
+    try:
+        await EbdClient().verify_artifacts(artifact_root(root), files, max_files=max_files,
+                                         max_file_bytes=max_file_bytes)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {400, 403, 404, 409, 413}:
+            raise ValueError("Native output integrity differs (hash differs)") from exc
+        raise
 
 
 async def collect_native(session, job, run, outputs):

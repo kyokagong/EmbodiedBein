@@ -1,6 +1,5 @@
-use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -21,6 +20,8 @@ mod storage;
 mod run_output;
 mod native_live;
 mod native_training_resources;
+mod artifacts;
+mod storage_io;
 
 #[derive(Parser)]
 #[command(name = "ebd")]
@@ -79,6 +80,8 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let control = Router::new()
+        .merge(artifacts::routes())
+        .merge(storage_io::routes())
         .route("/healthz", get(health))
         .route("/v1/doctor", get(doctor_handler))
         .route("/v1/images/inspect", get(image_handler))
@@ -99,6 +102,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let media = Router::new()
         .route("/healthz", get(health))
         .route("/media/{*path}", get(media_get))
+        .route("/v1/storage/file", get(storage_io::get_file))
         .route("/v1/runs/{id}/outputs/{*path}", get(run_output::get))
         .route("/v1/runs/{id}/live/stream", get(native_live::stream))
         .route("/v1/runs/{id}/live/{kind}", get(native_live::get))
@@ -495,65 +499,15 @@ async fn scan_handler(Json(req): Json<ScanReq>) -> Json<Value> {
 }
 
 async fn media_get(State(st): State<Arc<App>>, Path(path): Path<String>, req: Request) -> Response {
-    let full = st.data_root.join("cas").join(path.trim_start_matches('/'));
-    if !full.exists() {
-        return (StatusCode::NOT_FOUND, "not found").into_response();
+    let relative = path.clone();
+    let opened = tokio::task::spawn_blocking(move || -> Result<_, eb_artifact::ArtifactError> {
+        let file = eb_artifact::open_member(&eb_artifact::open_directory(&st.data_root.join("cas"))?, &relative)?;
+        let len = file.metadata()?.len();
+        Ok((file, len))
+    }).await;
+    match opened {
+        Ok(Ok((file, len))) => run_output::file_response(file, len, &path, req).await,
+        Ok(Err(error)) => artifacts::failure(error),
+        Err(_) => run_output::failure(StatusCode::INTERNAL_SERVER_ERROR),
     }
-    let Ok(meta) = fs::metadata(&full) else {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "stat").into_response();
-    };
-    let len = meta.len();
-    let headers = req.headers();
-    if let Some(range) = parse_range(headers, len) {
-        let Ok(buf) = fs::read(&full) else {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "read").into_response();
-        };
-        let (start, end) = range;
-        let slice = buf.get(start as usize..=end as usize).unwrap_or(&[]);
-        let mut res = Response::new(Body::from(slice.to_vec()));
-        *res.status_mut() = StatusCode::PARTIAL_CONTENT;
-        res.headers_mut().insert(
-            header::CONTENT_TYPE,
-            "application/octet-stream".parse().unwrap(),
-        );
-        res.headers_mut().insert(
-            header::CONTENT_RANGE,
-            format!("bytes {start}-{end}/{len}").parse().unwrap(),
-        );
-        res.headers_mut()
-            .insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-        return res;
-    }
-    match fs::read(&full) {
-        Ok(buf) => {
-            let mut res = Response::new(Body::from(buf));
-            res.headers_mut()
-                .insert(header::CONTENT_TYPE, "application/octet-stream".parse().unwrap());
-            res.headers_mut()
-                .insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-            res
-        }
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "read").into_response(),
-    }
-}
-
-fn parse_range(headers: &HeaderMap, len: u64) -> Option<(u64, u64)> {
-    let raw = headers.get(header::RANGE)?.to_str().ok()?;
-    let spec = raw.strip_prefix("bytes=")?;
-    let (a, b) = spec.split_once('-')?;
-    if a.is_empty() {
-        let n: u64 = b.parse().ok()?;
-        let start = len.saturating_sub(n);
-        return Some((start, len.saturating_sub(1)));
-    }
-    let start: u64 = a.parse().ok()?;
-    let end = if b.is_empty() {
-        len.saturating_sub(1)
-    } else {
-        b.parse().ok()?
-    };
-    if start >= len || end >= len || start > end {
-        return None;
-    }
-    Some((start, end))
 }

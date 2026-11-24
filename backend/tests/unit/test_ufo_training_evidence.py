@@ -31,7 +31,8 @@ def indexed_evidence(tmp_path, monkeypatch):
         from pathlib import Path
         return {"files": 1, "samples": [{"sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}]}
 
-    monkeypatch.setattr("eb.orchestrator.ufo_native.EbdClient", lambda: NS(scan=scan))
+    from artifact_fixtures import install_artifact_batch
+    install_artifact_batch(monkeypatch, scan)
     return index
 
 
@@ -120,3 +121,9 @@ async def test_historical_evidence_endpoint_reads_disk_without_database_writes(t
     with pytest.raises(HTTPException) as missing:
         await native_training_evidence("trn_native", session, NS())
     assert missing.value.status_code == 409
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)

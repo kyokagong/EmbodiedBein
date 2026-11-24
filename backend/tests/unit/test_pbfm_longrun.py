@@ -215,3 +215,9 @@ async def test_long_training_analysis_uses_collected_integrity_index(tmp_path, m
     spec = await build_spec(request(), session)
     monkeypatch.setattr(validation_tests, "validation_spec", lambda *_: spec)
     await validation_tests.test_training_validation_media_uses_analysis_integrity_index(tmp_path, monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def rust_inventory_fixture(monkeypatch):
+    from artifact_fixtures import install_storage_inventory
+    install_storage_inventory(monkeypatch)

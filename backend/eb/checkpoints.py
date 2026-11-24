@@ -281,3 +281,22 @@ def checkpoint_model(run_root: Path, run_id: str, *, verify_hashes: bool = False
     if weights not in seen or weights.stat().st_size == 0:
         raise ValueError("completed checkpoint has no weights")
     return {"path": str(model), "bytes": total, "step": receipt.get("step"), "manifest": receipt}
+
+
+def checkpoint_members(root: Path, inventory: list[dict], max_files: int, *, reject_temporary: bool = False) -> dict[str, Path]:
+    from pathlib import PurePosixPath
+    if len(inventory) > max_files * 2:
+        raise ValueError("Native checkpoint tree is unbounded")
+    files = {}
+    for item in inventory:
+        relative = item["path"]
+        pure = PurePosixPath(relative)
+        if (not relative or pure.is_absolute() or ".." in pure.parts or str(pure) != relative
+                or "\\" in relative or item["is_symlink"] or ".saving" in pure.parts
+                or reject_temporary and any(".tmp" in part for part in pure.parts)):
+            raise ValueError("Native checkpoint save is incomplete or contains a symlink")
+        if not item["is_dir"] and relative != "checkpoint-manifest.json":
+            if relative in files or len(files) >= max_files:
+                raise ValueError("Native checkpoint members are duplicate or unbounded")
+            files[relative] = root / relative
+    return files

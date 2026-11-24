@@ -148,6 +148,13 @@ async def seed_if_empty(session: AsyncSession) -> None:
                     paths={"urdf":"urdf/arx5_description_isaac.urdf"},
                     content_hash="sha256:6b87d7d55e106d8ff25917e0538eb1e177fc549280e8a742a8cec3cb9f953fc6"))
     await session.flush()
+    if not await session.get(EmbodimentRow, "emb_unitree_g1_motion_reference"):
+        session.add(EmbodimentRow(id="emb_unitree_g1_motion_reference",
+            display_name="Unitree G1（MotionDecode 原始动作参考）",
+            source={"kind": "managed_bundle", "writable": False}, status="draft", seed=True,
+            tags=["unitree-g1", "motion-reference", "non-commercial"],
+            capabilities={"train": False, "eval": False, "deploy": False}))
+        await session.flush()
     contracts_dir = settings.contracts_dir
     if not contracts_dir.exists():
         here = Path(__file__).resolve().parents[2] / "contracts"

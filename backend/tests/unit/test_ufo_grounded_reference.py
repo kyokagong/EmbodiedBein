@@ -362,7 +362,8 @@ async def test_failed_candidate_keeps_verified_media_but_publishes_no_version(tm
             ],
         }
 
-    monkeypatch.setattr("eb.orchestrator.ufo_native.EbdClient", lambda: NS(scan=scan))
+    from artifact_fixtures import install_artifact_batch
+    install_artifact_batch(monkeypatch, scan)
     _, report = await verified_report(tmp_path, plan(), "run_candidate", "ds_candidate")
     assert report["validation"]["training_ready"] is False
     assert not (tmp_path / "data/train.pkl").exists()
@@ -392,7 +393,8 @@ async def test_collector_rejects_fake_ready_missing_split_or_changed_media(tmp_p
     async def scan(path):
         return {"files": 1, "samples": [{"sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}]}
 
-    monkeypatch.setattr("eb.orchestrator.ufo_native.EbdClient", lambda: NS(scan=scan))
+    from artifact_fixtures import install_artifact_batch
+    install_artifact_batch(monkeypatch, scan)
     diagnostic_fixture(tmp_path, failed=False)
     with pytest.raises(ValueError, match="separately frozen splits"):
         await verified_report(tmp_path, plan(), "run_candidate", "ds_candidate")
@@ -559,7 +561,7 @@ async def test_candidate_submission_creates_separate_dataset_and_single_transact
     frozen = {**plan(), "parent_version_id": "dsv_parent"}
     monkeypatch.setattr(routes, "build_plan", AsyncMock(return_value=frozen))
     monkeypatch.setattr(routes, "get_settings", lambda: NS(data_root=tmp_path))
-    monkeypatch.setattr("eb.domain.disk.disk_preflight", lambda *a, **kw: NS(ok=True))
+    monkeypatch.setattr("eb.workbench.disk_preflight", AsyncMock(return_value=NS(ok=True)))
     submit_job = AsyncMock(return_value=NS(id="job_new", status="queued"))
     monkeypatch.setattr(Orchestrator, "submit", submit_job)
     rows = []

@@ -64,12 +64,15 @@ def emitted_fixture(tmp_path, monkeypatch, *, world=4, legacy=False):
                                      "sha256": hashlib.sha256(payload).hexdigest()})
     assert len(receipt["files"]) == 58 * world
 
-    async def scan(path):
-        payload = Path(path).read_bytes()
-        return {"files": 1, "samples": [{"sha256": hashlib.sha256(payload).hexdigest()}]}
+    async def verify(root, files, **limits):
+        for item in files:
+            payload = (tmp_path / item["path"]).read_bytes()
+            if len(payload) != item["bytes"] or hashlib.sha256(payload).hexdigest() != item["sha256"]:
+                raise ValueError("Native output hash differs")
 
-    scanner = AsyncMock(side_effect=scan)
-    monkeypatch.setattr("eb.orchestrator.ufo_native.EbdClient.scan", scanner)
+    scanner = AsyncMock(side_effect=verify)
+    monkeypatch.setattr("eb.orchestrator.ufo_native.artifact_root", lambda _: {"namespace": "run", "run_id": "run_probe", "path": "outputs"})
+    monkeypatch.setattr("eb.orchestrator.ufo_native.EbdClient.verify_artifacts", scanner)
 
     def save_receipt():
         (tmp_path / "probe-receipt.json").write_text(json.dumps(receipt))
@@ -84,7 +87,8 @@ async def test_v2_collects_actual_four_rank_232_file_footprint_with_real_verifie
     run = NS(id="run_probe", metrics_summary={})
     await probe.collect(NS(), NS(spec=spec.model_dump(mode="json")), run, tmp_path)
     assert len(run.metrics_summary["runtime_probe"]["files"]) == 232
-    assert scanner.await_count == 232
+    assert scanner.await_count == 1
+    assert len(scanner.await_args.args[1]) == 232
 
 
 @pytest.mark.asyncio
@@ -132,4 +136,5 @@ async def test_legacy_keeps_its_existing_larger_per_file_limit(tmp_path, monkeyp
     save()
     run = NS(id="run_probe", metrics_summary={})
     await probe.collect(NS(), NS(spec=spec.model_dump(mode="json")), run, tmp_path)
-    assert scanner.await_count == 58
+    assert scanner.await_count == 1
+    assert len(scanner.await_args.args[1]) == 58

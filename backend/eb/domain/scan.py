@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import PurePosixPath
 
 from eb.domain.urdf import parse_urdf_joint_tree
 
@@ -9,23 +9,21 @@ _GYM_ID = re.compile(r"""register\(\s*id\s*=\s*['"]([^'"]+)['"]""")
 _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "logs"}
 
 
-def scan_embodiment(root: Path) -> dict:
-    root = Path(root)
-    if not root.is_dir():
-        return {"status": "error", "error_message": f"目录不存在: {root}", "urdf_variants": [], "gym_ids": [], "rlinf_envs": []}
+def scan_embodiment(files: list[dict], texts: dict[str, str]) -> dict:
     variants: list[dict] = []
     meshes: list[str] = []
     gym_ids: list[str] = []
     rlinf_envs: list[str] = []
-    for path in root.rglob("*"):
+    for item in files:
+        path = PurePosixPath(item["path"])
         if any(part in _SKIP_DIRS for part in path.parts):
             continue
-        if not path.is_file():
+        if item.get("is_dir") or item.get("is_symlink"):
             continue
-        rel = str(path.relative_to(root)).replace("\\", "/")
+        rel = path.as_posix()
         suffix = path.suffix.lower()
         if suffix == ".urdf":
-            text = path.read_text(errors="replace")
+            text = texts[rel]
             joints = parse_urdf_joint_tree(text)
             movable = [j for j in joints if j.get("type") not in ("fixed", "")]
             stem = path.stem
@@ -41,8 +39,8 @@ def scan_embodiment(root: Path) -> dict:
             meshes.append(rel)
         elif suffix in {".py", ".pyc"} and suffix == ".py":
             try:
-                gym_ids.extend(_GYM_ID.findall(path.read_text(errors="replace")))
-            except OSError:
+                gym_ids.extend(_GYM_ID.findall(texts[rel]))
+            except KeyError:
                 pass
         elif suffix in {".yaml", ".yml"} and ("/env/" in f"/{rel}" or rel.startswith("env/")):
             rlinf_envs.append(rel)

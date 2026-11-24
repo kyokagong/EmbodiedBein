@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import httpx
+
 from eb.pbfm_io import fingerprint, finite, hash_value, relative
 
 EVAL_OPERATION = "evaluate_pbfm_terrain"
@@ -519,7 +521,7 @@ async def validate_submission(session, spec) -> None:
 
 async def verify_output_index(root, files: list[dict], required: set[str]) -> dict:
     from eb.pbfm_io import safe_file
-    from eb.store.ebd import EbdClient
+    from eb.store.ebd import EbdClient, artifact_root
 
     if not files or len(files) > 10000:
         raise ValueError("invalid bounded PBFM evidence file index")
@@ -540,18 +542,18 @@ async def verify_output_index(root, files: list[dict], required: set[str]) -> di
         ):
             raise ValueError("PBFM evidence requires unique complete files")
         path = safe_file(root, name)
-        info = await EbdClient().scan(str(path))
-        samples = info.get("samples") or []
-        if (
-            info.get("files") != 1
-            or len(samples) != 1
-            or samples[0].get("size") != row["bytes"]
-            or samples[0].get("sha256") != row["sha256"]
-        ):
+        if path.stat().st_size != row["bytes"]:
             raise ValueError(f"PBFM evidence integrity differs: {name}")
         indexed[name] = row
     if not required <= indexed.keys():
         raise ValueError("PBFM evidence is incomplete")
+    try:
+        await EbdClient().verify_artifacts(artifact_root(root), files, max_files=10000,
+                                         max_file_bytes=1024**4)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {400, 403, 404, 409, 413}:
+            raise ValueError("PBFM evidence integrity differs") from exc
+        raise
     return indexed
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from eb.store.ebd import storage_inventory
+
 import json
 import math
 from pathlib import Path
@@ -20,6 +22,7 @@ from eb.ids import new_id
 from eb.onnx_io import read_signature, sha256_file
 from eb.orchestrator.pbfm_training import collect_pbfm_training, read_pbfm_training_evidence
 from eb.settings import get_settings
+from eb.store.ebd import EbdClient, artifact_root
 from eb.store.models import (
     Artifact,
     EmbodimentEnvRow,
@@ -208,7 +211,7 @@ async def collect_ufo_native_training(session: AsyncSession, job: Job, run: Run,
 
     params = job.spec.get("params") or {}
     plan = params.get("native_train_plan") or {}
-    checkpoint = read_native_checkpoint(root, run.id, plan=plan)
+    checkpoint = read_native_checkpoint(root, run.id, plan=plan, inventory=await storage_inventory(root / "outputs/native"))
     manifest = checkpoint["manifest"]
     counts = checkpoint["counts"]
     if (manifest["plan_hash"] != canonical_hash({**plan, "run_id": run.id})
@@ -375,9 +378,11 @@ def validate_rpo_amp_motion_probe_receipt(path: Path, manifest_sha256: str) -> d
 async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
     root = get_settings().data_root / "runs" / run.id
     outputs = root / "outputs"
-    cas_root = get_settings().data_root / "cas"
-    cas_root.mkdir(parents=True, exist_ok=True)
 
+    if job.kind == "bundle.build":
+        from eb.bundle.jobs import collect_bundle
+        await collect_bundle(session, job, run)
+        return
     if (job.kind == "train.rl"
             and (job.spec.get("params") or {}).get("template_id") == "rpo_ufo_fb_native"):
         await collect_ufo_native_training(session, job, run, root)
@@ -660,9 +665,12 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
     ctr = EmbodimentEnv.model_validate(ctr_row.spec) if ctr_row else None
 
     for path in uniq:
+        publication = await EbdClient().publish_file(artifact_root(path.parent), path.name,
+                                                   expected_bytes=path.stat().st_size)
+        digest = publication["sha256"]
+        dest = Path(publication["storage"])
         try:
-            digest = sha256_file(path)
-            sig = read_signature(path)
+            sig = read_signature(dest)
         except Exception:
             job.status = JobStatus.FAILED.value
             job.error = f"onnx unreadable: {path.name}"
@@ -678,11 +686,6 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
                 run.abort_reason = "g3_failed"
                 run.metrics_summary = {"g3": gate.model_dump()}
                 return
-        dest_dir = cas_root / digest[:2]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / digest
-        if not dest.exists():
-            dest.write_bytes(path.read_bytes())
         existing = await session.scalar(select(Artifact).where(Artifact.sha256 == digest))
         if existing:
             art = existing
@@ -691,7 +694,7 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
                 id=new_id("art"),
                 sha256=digest,
                 kind="onnx",
-                size_bytes=path.stat().st_size,
+                size_bytes=publication["size_bytes"],
                 storage=str(dest),
                 run_id=run.id,
                 meta={"name": path.name, **sig},
@@ -723,20 +726,18 @@ async def claim_outputs(session: AsyncSession, job: Job, run: Run) -> None:
         )
     for path in ckpt_files:
         try:
-            digest = sha256_file(path)
+            publication = await EbdClient().publish_file(artifact_root(path.parent), path.name,
+                                                       expected_bytes=path.stat().st_size)
+            digest = publication["sha256"]
+            dest = Path(publication["storage"])
         except OSError:
             continue
-        dest_dir = cas_root / digest[:2]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / digest
-        if not dest.exists():
-            dest.write_bytes(path.read_bytes())
         session.add(
             Artifact(
                 id=new_id("art"),
                 sha256=digest,
                 kind="checkpoint",
-                size_bytes=path.stat().st_size,
+                size_bytes=publication["size_bytes"],
                 storage=str(dest),
                 run_id=run.id,
                 meta={"name": path.name, "folded": True},

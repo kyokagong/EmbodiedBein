@@ -1,3 +1,4 @@
+from eb.store.ebd import storage_inventory
 """Bounded operator segments reuse native state without inventing a TrainJob."""
 
 from pathlib import Path
@@ -117,7 +118,8 @@ async def _source(session, job_id, target):
         raise ValueError("P-BFM diagnostic source Run is still active")
     if image.get("ok") is not True or image.get("digest") != training.image:
         raise ValueError("P-BFM diagnostic producer image is unavailable or changed")
-    checkpoint = read_pbfm_checkpoint(get_settings().data_root / "runs" / run.id, training, run.id)
+    checkpoint = read_pbfm_checkpoint(get_settings().data_root / "runs" / run.id, training, run.id,
+        inventory=await storage_inventory(get_settings().data_root / "runs" / run.id / "outputs/native"))
     if (
         not checkpoint
         or checkpoint.get("mode") != "pbfm_native_state"

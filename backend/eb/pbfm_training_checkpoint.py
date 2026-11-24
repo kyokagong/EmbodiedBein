@@ -232,6 +232,7 @@ def validate_pbfm_checkpoint(
     plan: dict | None = None,
     verify_hashes: bool = False,
     resume: bool = False,
+    inventory: list[dict] | None = None,
 ) -> dict:
     root = _root(native_root)
     if (
@@ -251,7 +252,11 @@ def validate_pbfm_checkpoint(
     refs = manifest.get("source_refs")
     if not isinstance(refs, dict) or set(refs) != {"pbfm", "rlinf", "asset"}:
         raise ValueError("P-BFM checkpoint source references are missing")
-    actual = _tree(root)
+    if inventory is None:
+        actual = _tree(root)
+    else:
+        from eb.checkpoints import checkpoint_members
+        actual = checkpoint_members(root, inventory, MAX_FILES, reject_temporary=True)
     records = manifest.get("files")
     if not isinstance(records, list) or not 0 < len(records) <= MAX_FILES:
         raise ValueError("P-BFM checkpoint file index is unbounded or empty")
@@ -420,7 +425,7 @@ def publish_pbfm_checkpoint(
     )
 
 
-def read_pbfm_checkpoint(run_root: Path, spec, run_id: str, verify_hashes: bool = False) -> dict | None:
+def read_pbfm_checkpoint(run_root: Path, spec, run_id: str, verify_hashes: bool = False, *, inventory: list[dict] | None = None) -> dict | None:
     root = _root(run_root)
     native = root / "outputs/native"
     if not native.exists():
@@ -433,7 +438,7 @@ def read_pbfm_checkpoint(run_root: Path, spec, run_id: str, verify_hashes: bool 
     plan["hash"] = canonical_hash(plan)
     manifest = _json(manifest_path)
     checkpoint = validate_pbfm_checkpoint(
-        native, manifest, run_id=run_id, plan=plan, verify_hashes=verify_hashes
+        native, manifest, run_id=run_id, plan=plan, verify_hashes=verify_hashes, inventory=inventory
     )
     receipt = _json(root / "outputs/receipt.json")
     if (

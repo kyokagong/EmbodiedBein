@@ -252,7 +252,7 @@ def _ranks(results, metadata, source_refs):
 
 
 def validate_native_checkpoint(native_root: Path, manifest: dict, *, run_id: str,
-                               plan: dict | None = None, verify_hashes: bool = False) -> dict:
+                               plan: dict | None = None, verify_hashes: bool = False, inventory: list[dict] | None = None) -> dict:
     root = _root(native_root)
     if (not isinstance(manifest, dict) or manifest.get("schema_version") != CHECKPOINT_SCHEMA
             or manifest.get("status") != "complete" or manifest.get("run_id") != run_id
@@ -264,7 +264,11 @@ def validate_native_checkpoint(native_root: Path, manifest: dict, *, run_id: str
     _digest(manifest.get("plan_hash"), "plan hash")
     _digest(manifest.get("image_digest"), "image digest")
     refs = _source_refs(manifest.get("source_refs"))
-    actual = _tree(root)
+    if inventory is None:
+        actual = _tree(root)
+    else:
+        from eb.checkpoints import checkpoint_members
+        actual = checkpoint_members(root, inventory, MAX_FILES)
     records = manifest.get("files")
     if not isinstance(records, list) or not 0 < len(records) <= MAX_FILES:
         raise ValueError("Native checkpoint manifest file index is invalid")
@@ -367,13 +371,13 @@ def write_native_checkpoint_receipt(native_root: Path, plan: dict, run_id: str, 
 
 
 def read_native_checkpoint(run_root: Path, run_id: str, *, plan: dict | None = None,
-                           verify_hashes: bool = False, require_receipt: bool = True) -> dict:
+                           verify_hashes: bool = False, require_receipt: bool = True, inventory: list[dict] | None = None) -> dict:
     root = _root(run_root)
     native = _root(_member(root, "outputs/native"))
     manifest_path = _member(native, "checkpoint-manifest.json")
     manifest = _json(manifest_path)
     checkpoint = validate_native_checkpoint(native, manifest, run_id=run_id, plan=plan,
-                                            verify_hashes=verify_hashes)
+                                            verify_hashes=verify_hashes, inventory=inventory)
     if require_receipt:
         receipt = _json(_member(root, "outputs/receipt.json"))
         for key in ("full_state_finite_verified", "full_state_finite_required"):

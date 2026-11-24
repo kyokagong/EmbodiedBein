@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
+import MotionDecodeBrowser from "../components/MotionDecodeBrowser.vue";
 
 const route = useRoute();
 const data = ref<any>(null);
@@ -46,10 +47,13 @@ function constrain(event: Event) {
 onMounted(async () => {
   await load();
   refreshTimer = setInterval(async () => {
-    if (["libero_benchmark", "robotwin"].includes(data.value?.source_kind) && ["queued", "admitted", "running"].includes(data.value.status)) {
+    if ((["libero_benchmark", "robotwin"].includes(data.value?.source_kind) || data.value?.source_uri === "CMRobot/MotionDecode") && ["queued", "admitted", "preparing", "running"].includes(data.value.status)) {
       try {
         data.value = await api(`/datasets/${route.params.id}`);
-        if (data.value.status === "validated") await loadTree("");
+        if (data.value.status === "validated") {
+          await loadTree("");
+          if (data.value.source_uri !== "CMRobot/MotionDecode") await loadEpisodes();
+        }
       } catch (e: any) { err.value = e.message; }
     }
   }, 5000);
@@ -61,8 +65,8 @@ async function load() {
     err.value = "";
     data.value = await api(`/datasets/${route.params.id}`);
     media.value = "";
-    if (data.value.status === "validated") await loadTree("");
-    if (data.value.source_kind !== "libero_benchmark") await loadEpisodes();
+    if (data.value.status === "validated" || data.value.source_uri === "CMRobot/MotionDecode") await loadTree("");
+    if (data.value.source_kind !== "libero_benchmark" && data.value.source_uri !== "CMRobot/MotionDecode") await loadEpisodes();
   } catch (e: any) { err.value = e.message; }
 }
 watch(() => route.params.id, load);
@@ -126,22 +130,29 @@ function gb(n: number | null) {
     </dl>
     <p v-if="data.source_kind === 'libero_benchmark'">基准校验：{{ data.validation?.status || "not_validated" }} · {{ data.summary_stats?.benchmark?.suites ? '4 个套件，每套件 10 个任务' : '等待任务与初始状态校验' }}</p>
     <p v-else>结构校验：{{ data.validation?.status || "not_validated" }} · training_ready={{ !!data.validation?.training_ready }}</p>
+    <template v-if="data.source_uri === 'CMRobot/MotionDecode'">
+      <p>G1 原始动作参考：根位置 m · 四元数 wxyz · 29 关节 rad；未验证训练兼容性。ChingMu 署名，限非商业用途。</p>
+      <p v-if="data.download_progress?.files_total">下载 / 校验：{{ data.download_progress.files_completed }} / {{ data.download_progress.files_total }} 文件 · {{ gb(data.download_progress.bytes_completed) }} / {{ gb(data.download_progress.bytes_total) }} · 异常 {{ data.download_progress.invalid_files }}</p>
+      <p v-for="warning in data.validation?.warnings || []" :key="warning" class="muted xs">{{ warning }}</p>
+    </template>
     <p v-if="data.source_kind === 'libero_benchmark'" class="mono xs">{{ data.summary_stats?.benchmark?.sha256 || '' }}</p>
-    <button @click="validate(data.source_kind === 'libero_benchmark' && data.status !== 'registered')" :disabled="!['registered', 'failed', 'invalid'].includes(data.status)">{{ data.source_kind === 'libero_benchmark' ? '下载 / 重试校验' : '提交下载 / 结构校验' }}</button>
-    <button v-if="!['libero_benchmark', 'robotwin'].includes(data.source_kind)" @click="validate(true)" :disabled="!['validated', 'invalid', 'failed'].includes(data.status)">本地重新索引</button>
+    <button v-if="data.source_kind !== 'motiondecode_view'" @click="validate(data.source_kind === 'libero_benchmark' && data.status !== 'registered')" :disabled="!['registered', 'failed', 'invalid'].includes(data.status)">{{ data.source_kind === 'libero_benchmark' ? '下载 / 重试校验' : '提交下载 / 结构校验' }}</button>
+    <button v-if="!['libero_benchmark', 'robotwin', 'motiondecode_view'].includes(data.source_kind)" @click="validate(true)" :disabled="!['validated', 'invalid', 'failed'].includes(data.status)">本地重新索引</button>
     <button @click="load">刷新状态</button>
     <p v-if="data.source_kind !== 'libero_benchmark'">{{ data.overview?.episodes }} episodes · {{ data.overview?.frames }} 帧 · {{ data.overview?.fps }} Hz · action {{ data.overview?.action_dim }} / state {{ data.overview?.state_dim }}</p>
     <p v-if="data.source_kind !== 'libero_benchmark'">G2：{{ data.overview?.g2 }} · {{ data.overview?.g2_foot }}</p>
     <p class="error xs">{{ data.error_message || err }}</p>
-    <p v-if="data.source_kind !== 'libero_benchmark'">{{ episodes.total }} episodes
+    <MotionDecodeBrowser v-if="data.source_uri === 'CMRobot/MotionDecode'" :key="data.id" :dataset="data" @refresh="load" />
+    <p v-if="data.source_kind !== 'libero_benchmark' && data.source_uri !== 'CMRobot/MotionDecode'">{{ episodes.total }} episodes
       <button :disabled="cursor === 0" @click="loadEpisodes(Math.max(0, cursor - 50))">上一页</button>
       <button :disabled="episodes.next_cursor === null" @click="loadEpisodes(episodes.next_cursor)">下一页</button>
     </p>
-    <div v-for="ep in data.source_kind === 'libero_benchmark' ? [] : episodes.items" :key="ep.episode_id">
+    <div v-for="ep in data.source_kind === 'libero_benchmark' || data.source_uri === 'CMRobot/MotionDecode' ? [] : episodes.items" :key="ep.episode_id">
       Episode {{ ep.episode_id }} · {{ ep.length }} 帧 · {{ ep.tasks?.join('; ') || '任务未索引' }}
+      <a v-if="ep.path" :href="`/api/v1/datasets/${route.params.id}/media?path=${encodeURIComponent(ep.path)}`" target="_blank" rel="noopener">原始 CSV</a>
       <button v-for="stream in ep.streams" :key="stream.key" @click="playEpisode(stream)">{{ stream.key }} · {{ stream.from_timestamp }}–{{ stream.to_timestamp }}s</button>
     </div>
-    <div v-if="data.status === 'validated'" class="grid2">
+    <div v-if="data.status === 'validated' || data.source_uri === 'CMRobot/MotionDecode'" class="grid2">
       <div v-if="data.source_kind !== 'libero_benchmark'" class="panel">
         <h3>惰性文件树</h3>
         <div class="row" style="margin-bottom:.4rem">
@@ -152,6 +163,7 @@ function gb(n: number | null) {
           <div class="tree-row" v-for="it in tree.items" :key="it.path" @click="open(it)">
             <span>{{ it.is_dir ? "📁" : "📄" }}</span>
             <span>{{ it.name }}</span>
+            <a v-if="!it.is_dir && it.name.toLowerCase().endsWith('.csv')" :href="`/api/v1/datasets/${route.params.id}/media?path=${encodeURIComponent(it.path)}`" target="_blank" rel="noopener" @click.stop>CSV</a>
             <span class="muted xs" v-if="it.bytes">{{ it.bytes }} B</span>
           </div>
           <p class="muted xs" v-if="!tree.items?.length">空目录</p>

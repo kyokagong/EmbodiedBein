@@ -5,18 +5,19 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, model_validator
 from sqlalchemy import select
 
 from eb.api.deps import PrincipalDep, SessionDep
-from eb.domain.disk import disk_preflight
+from eb.workbench import disk_preflight
 from eb.domain.data_view import compact_dataset_stats, dataset_episode_page
 from eb.ids import new_id
 from eb.paths import PathNotAllowed, is_under, validate_allowed_path
 from eb.settings import get_settings
 from eb.store.models import Dataset
+from eb.motiondecode import REPO as MOTIONDECODE_REPO, REVISION as MOTIONDECODE_REVISION, ENV_ID as MOTIONDECODE_ENV
 
 router = APIRouter()
 LIBERO_REPO = "RLinf/LIBERO-assets"
@@ -181,7 +182,7 @@ async def create_official_rpo_amp_dataset(body: OfficialRpoAmpIn, session: Sessi
     did = new_id("ds")
     destination = get_settings().datasets_root / did / "content"
     destination.parent.mkdir(parents=True, exist_ok=False)
-    check = disk_preflight(str(destination.parent), needed_bytes=0, archive=True)
+    check = await disk_preflight(str(destination.parent), needed_bytes=0, archive=True)
     if not check.ok:
         raise HTTPException(400, check.reason)
     spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id="ee_rpo_v2_amp_locomotion_23dof_v1",
@@ -235,7 +236,7 @@ async def create_robotwin_dataset(body: RoboTwinDatasetIn, session: SessionDep,
     did = new_id("ds")
     destination = get_settings().datasets_root / did / "content"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    check = disk_preflight(str(destination), needed_bytes=0, archive=True)
+    check = await disk_preflight(str(destination), needed_bytes=0, archive=True)
     if not check.ok:
         raise HTTPException(400, check.reason)
     row = Dataset(id=did, name=body.name or profile.label, format=profile.format, license="mit",
@@ -282,6 +283,10 @@ async def create_dataset(body: DatasetIn, session: SessionDep, principal: Princi
             return _ds_out(existing)
     if kind == "huggingface" and not re.fullmatch(r"[0-9a-f]{40}", body.revision or ""):
         raise HTTPException(400, "HF requires a pinned 40-character commit SHA")
+    motiondecode = kind == "huggingface" and body.source_uri == MOTIONDECODE_REPO
+    if motiondecode and (body.revision != MOTIONDECODE_REVISION
+            or body.embodiment_env_id not in {None, MOTIONDECODE_ENV} or body.purpose):
+        raise HTTPException(400, "MotionDecode requires its pinned revision and raw reference interface")
     dest = body.dest_path
     if kind == "libero_benchmark":
         dest = str(get_settings().datasets_root / did / "bundle")
@@ -309,20 +314,20 @@ async def create_dataset(body: DatasetIn, session: SessionDep, principal: Princi
         if dest_p.exists() and (not dest_p.is_dir() or any(dest_p.iterdir())):
             raise HTTPException(400, "download destination must be a new or empty directory")
         dest = str(dest_p)
-    check = disk_preflight(dest, needed_bytes=0, archive=kind == "http")
+    check = await disk_preflight(dest, needed_bytes=0, archive=kind == "http")
     if not check.ok:
         raise HTTPException(400, check.reason)
     row = Dataset(
         id=did,
         name=body.name or ("LIBERO benchmark (4 suites)" if kind == "libero_benchmark" else Path(dest).name),
         format="libero_benchmark" if kind == "libero_benchmark" else "unknown",
-        license=None,
+        license="chingmu-terms (non-commercial)" if motiondecode else None,
         source_kind=kind,
         source_uri=body.source_uri,
         dest_path=dest,
         status="registered",
         total_bytes=0,
-        embodiment_env_id=body.embodiment_env_id,
+        embodiment_env_id=MOTIONDECODE_ENV if motiondecode else body.embodiment_env_id,
         meta={"source_revision": body.revision, "usage": body.usage, "purpose": body.purpose},
         summary_stats={"validation": {"status": "not_validated", "training_ready": False}},
     )
@@ -352,6 +357,11 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
     row = await session.get(Dataset, did)
     if not row:
         raise HTTPException(404)
+    if row.source_kind == "motiondecode_view":
+        if reindex:
+            raise HTTPException(409, "有效数据版本不可原地改写；请从原始数据派生新的校验版本")
+        await reconcile_dataset(row, session)
+        return _ds_out(row)
     from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
     if (row.meta or {}).get("operation") == GROUNDED_OPERATION:
         if reindex:
@@ -367,7 +377,8 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
             if row.source_kind == "ufo_native_motion" and reindex:
                 raise HTTPException(400, "冻结的 UFO 数据不可原地重索引；请登记新数据版本")
             return _ds_out(row)
-        retry = row.source_kind in {"robotwin", "ufo_native_motion"} and row.status in {"invalid", "failed"}
+        retry = (row.source_kind in {"robotwin", "ufo_native_motion"}
+                 or row.source_uri == MOTIONDECODE_REPO) and row.status in {"invalid", "failed"}
         if not retry and (not reindex or row.status not in {"validated", "invalid", "failed"}):
             return _ds_out(row)
     if row.source_kind == "ufo_native_motion":
@@ -393,6 +404,11 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
         Path(row.dest_path).parent.mkdir(parents=True, exist_ok=True)
         params = {"operation": "acquire_libero_benchmark", "dataset_id": row.id,
                   "dest": row.dest_path, "repo_id": LIBERO_REPO, "revision": LIBERO_REVISION}
+    elif row.source_kind == "huggingface" and row.source_uri == MOTIONDECODE_REPO:
+        if ((row.meta or {}).get("source_revision") != MOTIONDECODE_REVISION
+                or row.embodiment_env_id != MOTIONDECODE_ENV):
+            raise HTTPException(400, "MotionDecode source revision or reference interface does not match")
+        params = {"operation": "acquire_motiondecode", "src": row.dest_path, "dataset_id": row.id}
     elif (row.meta or {}).get("purpose") == "motion_prior":
         if (row.embodiment_env_id != "ee_rpo_v2_amp_locomotion_23dof_v1"
                 or row.source_kind not in {"path", "rpo_amp_official"}):
@@ -406,7 +422,15 @@ async def validate_dataset(did: str, session: SessionDep, principal: PrincipalDe
     if row.source_kind != "ufo_native_motion":
         spec = JobSpec(kind=JobKind.DATA_CONVERT, embodiment_env_id=row.embodiment_env_id,
                        params=params,
-                       runtime={"network":"none"} if params["operation"] == "validate_rpo_amp_motion" else {})
+                       runtime={"network":"none"} if params["operation"] == "validate_rpo_amp_motion"
+                               or (params["operation"] == "acquire_motiondecode" and reindex) else {})
+        if params["operation"] == "acquire_motiondecode":
+            from eb.store.ebd import EbdClient
+            image = await EbdClient().image_info("eb/tools:latest")
+            if image.get("ok") is not True or not re.fullmatch(r"sha256:[a-f0-9]{64}", image.get("digest", "")):
+                raise HTTPException(400, "MotionDecode tools image is unavailable")
+            spec.image = image["digest"]
+            spec.policy.timeout_h = 72
     try:
         attempt = f":{new_id('attempt')}" if reindex or retry else ""
         job = await Orchestrator().submit(session, spec, principal.id, f"dataset-validation:{did}{attempt}")
@@ -430,13 +454,29 @@ async def reconcile_dataset(row: Dataset, session) -> None:
         return
     job = await session.get(Job, jid)
     run = await session.scalar(select(Run).where(Run.job_id == jid).order_by(Run.attempt.desc()))
-    if not job or not run:
+    if not job:
         return
+    if (row.source_kind == "motiondecode_view"
+            and job.status in {"failed", "infra_failed", "cancelled", "timeout", "blocked"}
+            and (run is None or job.status in {"timeout", "blocked"})):
+        row.status, row.error_message = "failed", job.error or job.status
+        await session.commit()
+        return
+    if not run:
+        return
+    if row.source_uri == MOTIONDECODE_REPO:
+        progress_path = get_settings().data_root / "runs" / run.id / "outputs" / "download-progress.json"
+        if progress_path.is_file() and progress_path.stat().st_size < 64 * 1024:
+            row.download_progress = json.loads(progress_path.read_text())
     if ((row.meta or {}).get("validation_run_id") == run.id and row.status in {"validated", "invalid"}
             and (row.source_kind != "robotwin" or (row.summary_stats or {}).get("fps"))):
         if row.source_kind == "ufo_native_motion":
             from eb.ufo_training_dataset import publish_native_dataset_version
             if await publish_native_dataset_version(session, row, job, run):
+                await session.commit()
+        if row.source_kind == "motiondecode_view":
+            from eb.api.routes_motiondecode import publish_view_version
+            if await publish_view_version(session, row, job, run):
                 await session.commit()
         return
     report_path = get_settings().data_root / "runs" / run.id / "outputs" / "dataset-index.json"
@@ -492,16 +532,26 @@ async def reconcile_dataset(row: Dataset, session) -> None:
     if row.source_kind == "ufo_native_motion":
         from eb.ufo_training_dataset import publish_native_dataset_version
         await publish_native_dataset_version(session, row, job, run)
+    if row.source_kind == "motiondecode_view":
+        from eb.api.routes_motiondecode import publish_view_version
+        await publish_view_version(session, row, job, run)
     await session.commit()
 
 
 @router.get("/datasets/{did}/episodes")
 async def dataset_episodes(did: str, session: SessionDep, principal: PrincipalDep,
-                           cursor: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)) -> dict:
+                           cursor: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+                           q: str = Query("", max_length=200)) -> dict:
     row = await session.get(Dataset, did)
     if not row:
         raise HTTPException(404)
-    return dataset_episode_page(row.summary_stats, cursor, limit)
+    stats = row.summary_stats
+    if q and row.source_uri == MOTIONDECODE_REPO:
+        needle = q.casefold()
+        stats = {"episodes": [e for e in (stats or {}).get("episodes", [])
+                              if needle in " ".join([e.get("episode_id", ""), e.get("path", ""),
+                                                      *e.get("tasks", [])]).casefold()]}
+    return dataset_episode_page(stats, cursor, limit)
 
 
 @router.get("/datasets/{did}/tree")
@@ -517,43 +567,46 @@ async def dataset_tree(
     if not row:
         raise HTTPException(404)
     root = Path(row.dest_path or ((row.meta or {}).get("root") if row.meta else "") or "")
-    if not root.exists():
-        raise HTTPException(404, "dest_path 不存在")
+    from eb.store.ebd import EbdClient, storage_root
+    import httpx
+
     rel = path.strip("/")
-    cur = (root / rel).resolve() if rel else root.resolve()
-    if not is_under(root, cur) and cur != root.resolve():
+    if page < 1 or not 1 <= page_size <= 1000:
+        raise HTTPException(400, "invalid page")
+    if ".." in Path(rel).parts or "\\" in rel:
         raise HTTPException(403, "path 越权")
-    if not cur.is_dir():
-        raise HTTPException(400, "不是目录")
-    kids = sorted(cur.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-    start = max(page - 1, 0) * page_size
-    chunk = kids[start : start + page_size]
-    items = []
-    for p in chunk:
-        items.append(
-            {
-                "name": p.name,
-                "path": str(p.relative_to(root)).replace("\\", "/"),
-                "is_dir": p.is_dir(),
-                "bytes": p.stat().st_size if p.is_file() else None,
-                "mtime": int(p.stat().st_mtime),
-            }
-        )
-    return {"path": rel, "page": page, "page_size": page_size, "total": len(kids), "items": items}
+    try:
+        result = await EbdClient().inspect_storage(storage_root(root), rel, mode="inventory",
+                                                  cursor=str((page - 1) * page_size), limit=page_size)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        raise HTTPException(400 if status == 400 else status, "目录查询失败") from exc
+    items = [{"name": Path(item["path"]).name, "path": "/".join(filter(None, (rel, item["path"]))),
+              "is_dir": item["is_dir"], "bytes": None if item["is_dir"] else item["bytes"],
+              "mtime": item["mtime"]} for item in result["items"]]
+    return {"path": rel, "page": page, "page_size": page_size, "total": result["total"], "items": items}
 
 
 @router.get("/datasets/{did}/media")
-async def dataset_media(did: str, session: SessionDep, principal: PrincipalDep, path: str = Query(...)):
+@router.head("/datasets/{did}/media", include_in_schema=False)
+async def dataset_media(did: str, request: Request, session: SessionDep, principal: PrincipalDep, path: str = Query(...)):
     row = await session.get(Dataset, did)
     if not row:
         raise HTTPException(404)
     root = Path(row.dest_path or ((row.meta or {}).get("root") if row.meta else "") or "")
-    dest = (root / path).resolve()
-    if not is_under(root, dest) or not dest.is_file():
+    from eb.api.file_stream import stream_storage_file
+    from eb.store.ebd import storage_root
+    if not path or Path(path).is_absolute() or ".." in Path(path).parts or "\\" in path:
         raise HTTPException(404)
-    return FileResponse(dest)
+    reference = storage_root(root)
+    await session.rollback()
+    return await stream_storage_file(request, reference, path)
 
 
 from eb.api.routes_ufo_grounded_reference import router as grounded_reference_router
 
 router.include_router(grounded_reference_router)
+
+from eb.api.routes_motiondecode import router as motiondecode_router
+
+router.include_router(motiondecode_router)

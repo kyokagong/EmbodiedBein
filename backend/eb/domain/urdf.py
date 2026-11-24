@@ -133,28 +133,19 @@ def resolve_mesh_rel(urdf_rel: str, filename: str) -> str:
     return posix_norm(str(Path(urdf_rel).parent / raw))
 
 
-def collect_urdf_joints(root: Path, rel_paths: list[str] | None = None) -> tuple[list[str], str | None]:
-    """Return unique joint names and the first readable URDF relative path."""
-    names: list[str] = []
-    seen: set[str] = set()
-    used: str | None = None
-    candidates = list(rel_paths or [])
-    if root.is_dir() and not candidates:
-        candidates = [str(p.relative_to(root)) for p in root.rglob("*.urdf") if p.is_file()]
-    for rel in candidates:
-        dest = root / rel
-        if not dest.is_file():
-            continue
-        text = dest.read_text(errors="replace")
+def collect_urdf_joints(texts: dict[str, str]) -> tuple[list[str], str | None]:
+    """Return unique joint names and the first readable URDF from bounded text."""
+    names, seen, used = [], set(), None
+    for rel, text in texts.items():
         parsed = parse_urdf_joints(text)
         if not parsed:
             continue
         if used is None:
             used = rel
-        for j in parsed:
-            if j["name"] not in seen:
-                seen.add(j["name"])
-                names.append(j["name"])
+        for joint in parsed:
+            if joint["name"] not in seen:
+                seen.add(joint["name"])
+                names.append(joint["name"])
     return names, used
 
 

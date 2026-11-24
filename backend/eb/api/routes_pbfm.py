@@ -727,6 +727,7 @@ async def output_file(rid: str, path: str, request: Request, session: SessionDep
                 raise ValueError("partial media requires an incomplete failed/cancelled PBFM report")
             selected = [row for row in gates.get("partial_files", []) if row.get("path") == path]
             await verify_output_index(root, selected, {path})
+            await session.rollback()
             return await stream_output(request, rid, path)
 
         params = job.spec.get("params") or {}
@@ -752,6 +753,7 @@ async def output_file(rid: str, path: str, request: Request, session: SessionDep
                     raise ValueError("probe evidence differs from collected receipt")
                 selected = [row for row in receipt["files"] if row.get("path") == path]
                 await verify_output_index(root, selected, {path})
+                await session.rollback()
                 return await stream_output(request, rid, path)
             receipt_name = {
                 EXPORT_OPERATION: "export-receipt.json",
@@ -781,6 +783,7 @@ async def output_file(rid: str, path: str, request: Request, session: SessionDep
         await verify_output_index(root, selected, {path})
     except (ValueError, OSError, KeyError) as exc:
         raise HTTPException(404, "file lacks complete indexed integrity evidence") from exc
+    await session.rollback()
     return await stream_output(request, rid, path)
 
 
