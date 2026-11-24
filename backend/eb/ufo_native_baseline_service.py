@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from eb.store.ebd import storage_inventory
+
 import copy
 import json
 import re
@@ -87,7 +89,7 @@ async def build_plan(session, source_run_id=SOURCE_RUN):
     ):
         raise ValueError("Frozen baseline source parameters differ")
     root = get_settings().data_root / "runs" / SOURCE_RUN
-    checkpoint = read_native_checkpoint(root, SOURCE_RUN, plan=training)
+    checkpoint = read_native_checkpoint(root, SOURCE_RUN, plan=training, inventory=await storage_inventory(root / "outputs/native"))
     if checkpoint["counts"] != RULES["counts"] or not checkpoint["full_state_finite_verified"]:
         raise ValueError("Reference 112-update checkpoint is incomplete or unverified")
     files = {}

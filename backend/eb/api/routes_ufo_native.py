@@ -535,42 +535,13 @@ async def model_status(mid: str, session: SessionDep, principal: PrincipalDep):
 async def stream_output(request, run_id, path, *, live_kind=None):
     if live_kind is not None and live_kind not in ("state", "scene"):
         raise HTTPException(400, "Unsupported live snapshot")
-    settings = get_settings()
-    # The private UDS uses plain HTTP; avoid rebuilding an unused TLS context at 10Hz.
-    client = httpx.AsyncClient(
-        transport=httpx.AsyncHTTPTransport(uds=settings.ebd_media_uds, verify=False), timeout=60.0
-    )
-    forwarded = {key: request.headers[key] for key in ("range",) if key in request.headers}
-    try:
-        response = await client.send(
-            client.build_request(
-                request.method,
-                (f"http://ebd/v1/runs/{run_id}/live/{live_kind}" if live_kind is not None
-                 else f"http://ebd/v1/runs/{run_id}/outputs/{quote(path, safe='/')}"),
-                headers=forwarded,
-            ),
-            stream=True,
-        )
-    except httpx.HTTPError as exc:
-        await client.aclose()
-        raise HTTPException(502, "ebd 文件通道不可用") from exc
-
-    async def chunks():
-        try:
-            async for chunk in response.aiter_raw():
-                yield chunk
-        finally:
-            await response.aclose()
-            await client.aclose()
-
-    headers = {
-        key: value
-        for key, value in response.headers.items()
-        if key in ("content-type", "content-length", "content-range", "accept-ranges", "cache-control")
-    }
+    from eb.api.file_stream import stream_file
+    response = await stream_file(request,
+        f"http://ebd/v1/runs/{run_id}/live/{live_kind}" if live_kind is not None
+        else f"http://ebd/v1/runs/{run_id}/outputs/{quote(path, safe='/')}")
     if path.endswith(".ebp"):
-        headers["Content-Disposition"] = 'attachment; filename="rpo-ufo-native.ebp"'
-    return StreamingResponse(chunks(), status_code=response.status_code, headers=headers)
+        response.headers["Content-Disposition"] = 'attachment; filename="rpo-ufo-native.ebp"'
+    return response
 
 
 @router.api_route("/runs/{rid}/files/{path:path}", methods=["GET", "HEAD"])
@@ -604,6 +575,7 @@ async def output_file(rid: str, path: str, request: Request, session: SessionDep
             indexed_output_file(root, path, (report.gate_results if report else {}).get("partial_files", []))
     except (ValueError, OSError, KeyError, TypeError) as exc:
         raise HTTPException(404, "没有已登记的原生证据文件") from exc
+    await session.rollback()
     return await stream_output(request, rid, path)
 
 
@@ -612,4 +584,6 @@ async def bundle_download(bid: str, request: Request, session: SessionDep, princ
     bundle = await session.get(Bundle, bid)
     if not bundle or bundle.manifest.get("schema_version") != "eb/rpo-ufo-native-bundle/v1":
         raise HTTPException(404)
-    return await stream_output(request, bundle.manifest["run_id"], "policy.ebp")
+    run_id = bundle.manifest["run_id"]
+    await session.rollback()
+    return await stream_output(request, run_id, "policy.ebp")

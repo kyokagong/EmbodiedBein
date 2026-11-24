@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { api } from "../api/client";
 import ListControls from "../components/ListControls.vue";
 import DeleteButton from "../components/DeleteButton.vue";
@@ -26,13 +26,34 @@ const filters = [
 ];
 const list = useListView(items, sortOptions, (j) => [j.name, j.model_name, j.id, j.status, j.template_id, j.embodiment_id, ...(j.gpus_allocated || []), j.ray_port].join(" "), filters, "created", "desc");
 
-onMounted(async () => {
+let timer: number | undefined;
+let controller: AbortController | undefined;
+let disposed = false;
+let generation = 0;
+onUnmounted(() => { disposed = true; generation++; clearTimeout(timer); controller?.abort(); });
+async function load() {
+  clearTimeout(timer);
+  controller?.abort();
+  controller = new AbortController();
+  const signal = controller.signal, current = ++generation;
   try {
-    items.value = (await api("/train")).items || [];
+    const rows = (await api("/train", { signal })).items || [];
+    const results = await Promise.allSettled(rows.filter((row: any) => row.kind === "native_rl" &&
+      row.run_id && ["running", "preparing"].includes(row.status)).map(async (row: any) => {
+      const data = await api(`/runs/${row.run_id}/metrics?tag=distributed%2Foptimizer_steps`, { signal });
+      const points = data.points || data.series?.["distributed/optimizer_steps"] || [];
+      if (points.length) row.live_updates = points[points.length - 1].value;
+    }));
+    if (disposed || current !== generation) return;
+    items.value = rows;
+    err.value = results.some(result => result.status === "rejected") ? "部分实时指标暂不可用，稍后重试。" : "";
   } catch (e: any) {
-    err.value = e.message;
+    if (!disposed && current === generation && e.name !== "AbortError") err.value = e.message;
+  } finally {
+    if (!disposed && current === generation) timer = window.setTimeout(load, 8000);
   }
-});
+}
+onMounted(load);
 
 function st(s: string) {
   if (s === "running" || s === "preparing") return "st-badge st-run";
@@ -56,7 +77,7 @@ function st(s: string) {
     <table v-if="list.total.value">
       <thead>
         <tr>
-          <th>名称</th><th>产出模型</th><th>状态</th><th>模板</th><th>本体</th><th>GPU</th><th>Ray</th><th>创建</th><th>操作</th>
+          <th>名称</th><th>产出模型</th><th>状态 / 实际更新</th><th>模板</th><th>本体</th><th>GPU</th><th>Ray</th><th>创建</th><th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -65,21 +86,21 @@ function st(s: string) {
             <router-link :to="`/train/${j.id}`">{{ j.name }}</router-link>
             <br><span class="muted xs mono">{{ j.id }}</span>
           </td>
-          <td>{{ j.model_name || '—' }}</td>
-          <td><span :class="st(j.status)">{{ j.status }}</span></td>
+          <td><router-link v-if="j.metrics_summary?.model_version_id" :to="`/models/${j.metrics_summary.model_version_id}`">{{ j.model_name || j.metrics_summary.model_version_id }}</router-link><span v-else>{{ j.model_name || '—' }}</span></td>
+          <td><span :class="st(j.status)">{{ j.status }}</span><p v-if="j.kind === 'native_rl'" class="xs">{{ j.metrics_summary?.optimizer_steps ?? j.live_updates ?? '等待实测' }} / {{ j.params?.native_train_plan?.target_updates }} 更新</p></td>
           <td class="mono xs">{{ j.template_id }}</td>
           <td class="mono xs">{{ j.embodiment_id }}</td>
           <td class="xs">{{ (j.gpus_allocated || []).join(", ") || "—" }}</td>
           <td class="mono xs">{{ j.ray_port || "—" }}</td>
           <td class="xs muted">{{ (j.created_at || "").replace("T", " ").slice(0, 16) }}</td>
-          <td><DeleteButton :path="`/train/${j.id}`" :name="j.name" :disabled="!['succeeded','failed','timeout','cancelled','infra_failed'].includes(j.status)" @deleted="items = items.filter(item => item.id !== j.id)" /></td>
+          <td><span v-if="j.record_kind === 'pbfm_validation'" class="muted xs">{{ j.training_mode === 'training_long_recovery' ? '100000故障恢复' : j.training_mode === 'training_long_exploration' ? '单次100000探索' : j.training_mode === 'training_exploration' ? '单次10000探索' : '四卡分段验证' }}</span><DeleteButton v-else :path="`/train/${j.id}`" :name="j.name" :disabled="!['succeeded','failed','timeout','cancelled','infra_failed'].includes(j.status)" @deleted="items = items.filter(item => item.id !== j.id)" /></td>
         </tr>
       </tbody>
     </table>
     <div v-else-if="items.length" class="empty-box">没有符合过滤条件的训练任务。</div>
     <div v-else class="empty-box">
       <b>还没有训练任务</b>
-      本版只提交 RLinf 三模板：WBC PPO / Reach SFT / Collect。
+      从“新建 RLinf 训练”选择兼容模板、训练环境与数据。
     </div>
   </div>
 </template>

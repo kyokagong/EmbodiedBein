@@ -15,6 +15,7 @@ from eb.store.models import (
     LineageEdge,
     ModelVersion,
     Run,
+    Share,
     TrainJob,
     WeightModel,
 )
@@ -195,6 +196,42 @@ async def test_model_output_summary_does_not_form_a_deletion_cycle_with_its_prod
 
 
 @pytest.mark.asyncio
+async def test_group_deletion_handles_model_eval_cycles_and_keeps_external_consumers():
+    records = train_records()
+    artifact = Artifact(id="art_output", run_id=records[2].id,
+                        storage="/data/kk/models/runs/run_first", refcount=0, pinned=True)
+    model = ModelVersion(id="mv_output", artifact_id=artifact.id, card={"run_id": records[2].id})
+    projection = WeightModel(id="mdl_output", kind="trained", train_job_id=records[1].id,
+                             path=artifact.storage, metrics_at_checkpoint={})
+    records[2].metrics_summary = {"model_version_id": model.id, "checkpoint": {"path": artifact.storage}}
+    evaluation = Job(id="job_eval", kind="eval.sim", status="succeeded",
+                     spec={"inputs": {"model": model.id}})
+    eval_run = Run(id="run_eval", job_id=evaluation.id, status="finished")
+    report = EvalReport(id="ev_output", run_id=eval_run.id, model_version_id=model.id)
+    model.card["closed_loop_evidence"] = {"report_id": report.id, "run_id": eval_run.id}
+    rows = (*records, artifact, model, projection, evaluation, eval_run, report,
+            Share(token="share_unrelated", title="unrelated", snapshot={}))
+    objects = [("model", model.id), ("model", projection.id), ("eval", evaluation.id)]
+    plan = await deletion_plan(session_with(*rows), "group", "test", objects=objects)
+    assert set(plan["ids"]) == {model.id, artifact.id, projection.id, evaluation.id, eval_run.id, report.id}
+    assert records[0].id not in plan["ids"]
+    assert artifact.storage in plan["paths"] and not plan["blockers"]
+    assert model.card["closed_loop_evidence"]["report_id"] == report.id
+    consumer = Job(id="job_consumer", kind="eval.sim", status="succeeded",
+                   spec={"inputs": {"model": projection.id}})
+    plan = await deletion_plan(session_with(*rows, consumer), "group", "test", objects=objects)
+    assert {b["id"] for b in plan["blockers"]} == {consumer.id}
+    artifact.refcount = 1
+    plan = await deletion_plan(session_with(*rows), "group", "test", objects=objects)
+    assert {b["type"] for b in plan["blockers"]} == {"pinned_artifact"}
+    artifact.refcount = 0
+    objects.remove(("model", projection.id))
+    plan = await deletion_plan(session_with(*rows), "group", "test", objects=objects)
+    assert projection.id not in plan["ids"]
+    assert {b["id"] for b in plan["blockers"]} == {projection.id}
+
+
+@pytest.mark.asyncio
 async def test_external_source_is_never_deleted():
     source = WeightModel(id="mdl_external", path="/data/kk/RLinf/weights", metrics_at_checkpoint={})
     plan = await deletion_plan(session_with(source), "model", source.id)
@@ -212,8 +249,10 @@ async def test_legacy_ingest_does_not_restore_deleted_external_model(tmp_path, m
     session = session_with(receipt)
     session.get = AsyncMock(return_value=SimpleNamespace(id="mf_legacy"))
     monkeypatch.setattr(
-        "eb.ingest.sha256_file", lambda *_: pytest.fail("deleted external weight was re-ingested")
+        "eb.ingest.EbdClient.hash_storage_file", AsyncMock(side_effect=AssertionError("deleted external weight was re-ingested"))
     )
+    monkeypatch.setattr("eb.ingest.storage_inventory", AsyncMock(return_value=[{
+        "path": path.name, "is_dir": False, "is_symlink": False, "bytes": 4, "mtime": 0}]))
     assert await ingest_checkpoints(session, root=tmp_path) == 0
 
 

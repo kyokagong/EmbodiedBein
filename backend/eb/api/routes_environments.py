@@ -144,8 +144,9 @@ async def publish_environment(env_id: str, session: SessionDep, principal: Princ
         if row.usage == "train":
             tpl = get_template(row.template_id or "")
             valid = (
-                tpl.kind in {"sft", "ppo"}
+                tpl.kind in {"sft", "ppo", "native_rl"}
                 and tpl.ready
+                and tpl.dependency_ready
                 and tpl.embodiment_env_id == row.embodiment_env_id
                 and tpl.task_id == row.task_id
             )

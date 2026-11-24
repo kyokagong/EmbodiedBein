@@ -23,6 +23,7 @@ from eb.api.routes_delete import router as delete_router
 from eb.api.routes_ufo_native import router as ufo_native_router
 from eb.api.routes_ufo_live import router as ufo_live_router
 from eb.api.routes_ufo_native_baseline import router as ufo_baseline_router
+from eb.api.routes_pbfm import router as pbfm_router
 from eb.ufo_failure_probe import api_router as failure_probe_router
 from eb.bootstrap import seed_if_empty
 from eb.scheduler.loop import Scheduler
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(ufo_native_router, prefix='/api/v1')
     app.include_router(ufo_live_router, prefix='/api/v1')
     app.include_router(ufo_baseline_router, prefix='/api/v1')
+    app.include_router(pbfm_router, prefix='/api/v1')
     app.include_router(failure_probe_router(), prefix='/api/v1')
     app.include_router(delete_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")

@@ -149,3 +149,9 @@ def test_libero_ppo_expert_budget_supports_two_gpu_but_scales_batch():
     assert estimate_job(spec).verdict != 'no_fit'
     spec.overrides = ['actor.micro_batch_size=128']
     assert estimate_job(spec).verdict == 'no_fit'
+
+
+def test_bundle_worker_cpu_inference_does_not_reserve_training_vram():
+    spec = JobSpec(kind=JobKind.BUNDLE_BUILD, embodiment_env_id="env", resources={"gpus":0})
+    estimate = estimate_job(spec)
+    assert estimate.verdict == "fits" and estimate.per_gpu_peak_gb == 0

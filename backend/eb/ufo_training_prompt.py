@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from eb.store.ebd import storage_inventory
+
 import asyncio
 import json
 import re
@@ -39,7 +41,8 @@ async def trained_source(session, model_id):
         raise ValueError("Managed native model training lineage or Replay artifact is missing")
     root = get_settings().data_root / "runs" / run.id
     checkpoint = read_native_checkpoint(root, run.id,
-        plan=(job.spec.get("params") or {}).get("native_train_plan"))
+        plan=(job.spec.get("params") or {}).get("native_train_plan"),
+        inventory=await storage_inventory(root / "outputs/native"))
     if (resume.storage != checkpoint["native_path"] or canonical_hash(checkpoint["manifest"]) != resume.sha256
             or artifact.storage != str(Path(checkpoint["path"]) / "model")
             or canonical_hash(artifact.meta.get("manifest") or {}) != artifact.sha256

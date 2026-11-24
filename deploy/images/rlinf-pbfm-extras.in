@@ -1,0 +1,2 @@
+# P-BFM Workspace's CSVLogger imports pandas, omitted by upstream pyproject.
+pandas==2.2.3

@@ -514,6 +514,7 @@ async def snapshot(
     rid: str, kind: Literal["state", "scene"], request: Request, session: SessionDep, principal: PrincipalDep
 ):
     await owned_run(session, principal, rid)
+    await session.rollback()
     return await stream_output(request, rid, "", live_kind=kind)
 
 
@@ -537,4 +538,5 @@ async def asset(mid: str, path: str, request: Request, session: SessionDep, prin
             raise ValueError("模型产物路径不属于受管 Run")
     except (ValueError, OSError, KeyError, TypeError) as exc:
         raise HTTPException(404, "冻结模型网格不可用") from exc
+    await session.rollback()
     return await stream_output(request, run_id, "payload/" + path)

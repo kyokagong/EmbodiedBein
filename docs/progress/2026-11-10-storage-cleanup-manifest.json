@@ -1,0 +1,1207 @@
+{
+  "scope": "用户截图中的六类候选；保留发布版本、网页可选检查点、恢复节点和现用缓存",
+  "delete": [
+    {
+      "path": "/data/kk/EmbodiedBein/.superpowers/sdd/2026-10-28-python-rust-data-plane-migration/target",
+      "category": "build"
+    },
+    {
+      "path": "/data/kk/EmbodiedBein/rust/target",
+      "category": "build"
+    },
+    {
+      "path": "/data/kk/data/supermimic_bumi/seed_dances/work_before_initial_contact_fix",
+      "category": "backup"
+    },
+    {
+      "path": "/data/kk/data/supermimic_bumi/seed_dances/work_before_review",
+      "category": "backup"
+    },
+    {
+      "path": "/data/kk/supermimic_vibed/.cache",
+      "category": "cache"
+    },
+    {
+      "path": "/data/kk/data/blinkmimic_q1/20261107/cache",
+      "category": "cache"
+    },
+    {
+      "path": "/data/kk/data/blinkmimic_q1/20261109_prone_v2/cache",
+      "category": "cache"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/coverage5_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/coverage1_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/coverage4_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/coverage2_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/coverage3_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/calibrated1_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/calibrated2_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/UFO/runs/rpo_experiment_20261016/final_model/checkpoint/buffers",
+      "category": "replay"
+    },
+    {
+      "path": "/data/kk/models/Wan-AI/Wan2.2-TI2V-5B/.cache/huggingface/download/5n3ByLHcDVGl-4O5UeVdJRvodxk=.720b06c4ade5e87c1246bba8ac95b664c638749cd9b102cf84d823bb44c026a1.incomplete",
+      "category": "incomplete"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_2900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_4900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_5900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_10800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_10900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_23900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_24900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_25000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_25100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_25200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_26900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_27900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_28900.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29000.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29100.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29200.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29300.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29400.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29500.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29600.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29700.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29800.pt",
+      "category": "checkpoint"
+    },
+    {
+      "path": "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29900.pt",
+      "category": "checkpoint"
+    }
+  ],
+  "retain_checkpoints": [
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_0.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10600.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12500.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14800.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16000.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16600.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17800.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19000.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19600.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20000.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21800.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_25300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29999.pt"
+  ],
+  "protected_files": [
+    "/data/kk/data/blinkmimic_q1/20261109_prone_v2/runs/q1_before_prone_finetune/ckpt_047000.pt",
+    "/data/kk/data/supermimic_bumi/seed_dances/release/model.pt",
+    "/data/kk/data/supermimic_bumi/seed_dances/release/resume.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/deployments/final_correction_20261107_iteration29999/checkpoint.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/deployments/final_correction_20261107_iteration29999/policy.jit",
+    "/data/kk/data/supermimic_q1/unified_20261106/deployments/final_correction_20261107_iteration29999/snapshot.json",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_0.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10600.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11900.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12500.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14800.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16000.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16600.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17200.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17800.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19000.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19600.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20000.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20700.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21800.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22100.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_25300.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25400.pt",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29999.pt"
+  ]
+}

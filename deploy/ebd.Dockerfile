@@ -8,7 +8,10 @@ RUN --mount=type=cache,id=eb-cargo-registry,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim
 # Host NVIDIA driver is bind-mounted / injected by nvidia-container-runtime.
 # Do not install a driver inside this image; nvidia-smi must see the host GPUs.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::https::Timeout=15 -o Acquire::Retries=1 update \
+    && apt-get -o Acquire::https::Timeout=15 -o Acquire::Retries=1 install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build /src/target/release/ebd /usr/local/bin/ebd

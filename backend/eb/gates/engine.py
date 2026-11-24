@@ -29,7 +29,11 @@ def g1_submit(spec: JobSpec, env: EmbodimentEnv, ctx: GateContext) -> CheckResul
     amp_probe = (spec.kind == JobKind.ASSET_VALIDATE
                  and spec.params.get("operation") == "probe_rpo_amp_env"
                  and env.id == "ee_rpo_v2_amp_locomotion_23dof_v1")
-    if env.status != "active" and spec.kind != JobKind.DATA_CONVERT and not amp_probe:
+    pbfm_probe = (spec.kind == JobKind.ASSET_VALIDATE
+                  and spec.params.get("operation") == "probe_pbfm_runtime"
+                  and spec.embodiment_env_id == env.id == "ee_rpo_v2_pbfm_depth_23dof_v1"
+                  and env.status == "draft")
+    if env.status != "active" and spec.kind != JobKind.DATA_CONVERT and not (amp_probe or pbfm_probe):
         v.append(
             Violation(
                 path="embodiment_env.status",

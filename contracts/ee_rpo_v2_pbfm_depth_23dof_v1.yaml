@@ -1,0 +1,66 @@
+id: ee_rpo_v2_pbfm_depth_23dof_v1
+embodiment_id: emb_roboparty_rpo
+robot_family: roboparty_rpo_v2
+morphology: humanoid
+interface_version: 1
+status: draft
+dof: 23
+joint_order:
+  - left_thigh_yaw_joint
+  - left_thigh_roll_joint
+  - left_thigh_pitch_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_thigh_yaw_joint
+  - right_thigh_roll_joint
+  - right_thigh_pitch_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - torso_joint
+  - left_arm_pitch_joint
+  - left_arm_roll_joint
+  - left_arm_yaw_joint
+  - left_elbow_pitch_joint
+  - left_elbow_yaw_joint
+  - right_arm_pitch_joint
+  - right_arm_roll_joint
+  - right_arm_yaw_joint
+  - right_elbow_pitch_joint
+  - right_elbow_yaw_joint
+observation:
+  dim: 380
+  history_length: 4
+  history_preflattened: true
+  concat: false
+  layout:
+    - {term: state, dim: 52, source: encoder_imu}
+    - {term: last_action, dim: 23, source: normalized_clipped_command_before_delay}
+    - {term: history_actor, dim: 300, source: term_major_previous_four_newest_first}
+    - {term: heading, dim: 2, source: zero_centered_command_error}
+    - {term: velocity_command, dim: 3, source: yaw_vx_vy_valid}
+  modalities:
+    - {name: depth_image, shape: [8, 18, 32], dtype: uint8}
+action: {dim: 23, type: joint_position, scale: 1.0, offset: default_plus_delayed_normalized_command_times_effort_kp_gain}
+control: {policy_hz: 50, control_hz: 400, sim_dt: 0.0025, decimation: 8}
+gains:
+  codec_schema: eb/pbfm-rpo-depth-codec/v1
+  history_order: [actions, base_ang_vel, dof_pos, dof_vel, projected_gravity]
+  history_oldest_first: false
+  history_includes_current: false
+  base_ang_vel_scale: 0.25
+  last_action_stage: normalized_clipped_before_motor_delay
+  prompt_dim: 256
+  velocity_estimator_input_dim: 631
+  input_quaternion: xyzw
+  heading: valid_times_one_minus_cos_and_sin_error
+  velocity_command: yaw_vx_vy_valid
+  action_mapping: q_default_plus_offset_plus_delayed_clip_action_times5_times_0.6_times_effort_over_kp
+  depth_profile: optical_z_maxcrop18_reset_v2
+  depth_sampled_ages: [35, 30, 25, 20, 15, 10, 5, 0]
+  depth_onnx_dtype: float32
+  depth_onnx_range: [0.0, 1.0]
+  depth_invalid_m: 2.5
+limits: {scope: simulation_only, hardware_verified: false, acceptance_verified: false}
+sim_bindings: {mjcf: assets/rpo.xml}

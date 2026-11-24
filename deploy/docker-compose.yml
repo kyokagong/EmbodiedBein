@@ -14,6 +14,8 @@ x-bridge-env: &bridge-env
   EB_MODELS_ROOT: ${EB_HOST_MODELS_DIR:-/data/kk/models}
   EB_DATASETS_ROOT: ${EB_HOST_DATA_DIR:-/data/kk/data}
   EB_ASSETS_ROOT: ${EB_HOST_ASSETS_DIR:-/data/kk/assets}
+  EB_ALLOWED_PATH_PREFIXES: ${EB_ALLOWED_PATH_PREFIXES:-/data/kk/embodiedbein,/data/kk/models,/data/kk/data,/data/kk/assets,/data/kk/Berkeley-Humanoid-Lite,/data/kk/RLinf,/data/kk/UFO,/data/kk/P-BFM,/data/kk/berkeley_ego_data,/data/kk/roboparty/roboparty_train/robolab/data/motions/rpo_lab}
+  EB_PBFM_ROOT: ${EB_PBFM_ROOT:-/data/kk/P-BFM}
   EB_EBD_UDS: /run/eb/ebd.sock
   EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
   EB_SECRET_KEY: ${EB_SECRET_KEY}
@@ -84,8 +86,12 @@ services:
       EB_REDIS_URL: redis://127.0.0.1:${EB_PORT_REDIS:-6380}/0
       EB_DATA_ROOT: ${EB_HOST_STATE_DIR:-/data/kk/embodiedbein}
       EB_MODELS_ROOT: ${EB_HOST_MODELS_DIR:-/data/kk/models}
+      EB_DATASETS_ROOT: ${EB_HOST_DATA_DIR:-/data/kk/data}
+      EB_ASSETS_ROOT: ${EB_HOST_ASSETS_DIR:-/data/kk/assets}
+      EB_ALLOWED_PATH_PREFIXES: ${EB_ALLOWED_PATH_PREFIXES:-/data/kk/embodiedbein,/data/kk/models,/data/kk/data,/data/kk/assets,/data/kk/Berkeley-Humanoid-Lite,/data/kk/RLinf,/data/kk/UFO,/data/kk/P-BFM,/data/kk/berkeley_ego_data,/data/kk/roboparty/roboparty_train/robolab/data/motions/rpo_lab}
       EB_EBD_UDS: /run/eb/ebd.sock
       EB_EBD_MEDIA_UDS: /run/eb/ebd-http.sock
+      EB_PBFM_ROOT: ${EB_PBFM_ROOT:-/data/kk/P-BFM}
       TZ: Asia/Shanghai
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics

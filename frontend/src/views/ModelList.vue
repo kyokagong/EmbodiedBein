@@ -41,7 +41,8 @@ async function load() {
   const versions = new Map<string, any>((models.versions || []).map((v: any) => [v.id, v]));
   items.value = [
     ...(models.versions || []).map((v: any) => {
-      const native = ["eb/rpo-ufo-native-trained-model/v1", "eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(v.card?.schema_version);
+      const pbfm = ["eb/rpo-pbfm-trained-model/v1", "eb/rpo-pbfm-policy/v1"].includes(v.card?.schema_version);
+      const native = pbfm || ["eb/rpo-ufo-native-trained-model/v1", "eb/rpo-ufo-native-model/v1", "eb/rpo-ufo-native-export/v1"].includes(v.card?.schema_version);
       let training = v;
       const seen = new Set([v.id]);
       while (native && !training.train_page_id && !training.card?.train_job_id && training.card?.source_model_id
@@ -50,7 +51,8 @@ async function load() {
         if (!source) break;
         seen.add(source.id); training = source;
       }
-      const nativeKind = v.card?.schema_version === "eb/rpo-ufo-native-trained-model/v1" ? "UFO/RPO · FB-CPR-Aux 训练（需任务 prompt）"
+      const nativeKind = pbfm ? (v.card?.schema_version === "eb/rpo-pbfm-policy/v1" ? "P-BFM/RPO · 深度推理包" : "P-BFM/RPO · 深度地形训练")
+        : v.card?.schema_version === "eb/rpo-ufo-native-trained-model/v1" ? "UFO/RPO · FB-CPR-Aux 训练（需任务 prompt）"
         : v.card?.schema_version === "eb/rpo-ufo-native-export/v1" ? "UFO/RPO · 原生推理导出"
         : v.card?.training_provenance === "platform" ? "UFO/RPO · 原生任务模型" : "UFO/RPO · 原生模型";
       return {...v, native, kind: native ? nativeKind : v.tags?.includes("rpo-v2") ? "RPO WBC · RL" : "训练模型",

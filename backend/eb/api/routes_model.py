@@ -235,7 +235,7 @@ async def register_base(body: BaseModelIn, session: SessionDep, principal: Princ
         kind="base",
         path=str(path),
         framework=body.framework,
-        size_bytes=dir_size(path),
+        size_bytes=await dir_size(path),
         embodiment_id=body.embodiment_id,
     )
     session.add(row)

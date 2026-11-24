@@ -65,7 +65,7 @@ async def test_invalid_output_receipt_terminates_job(monkeypatch):
     from unittest.mock import AsyncMock
     from eb.orchestrator.service import Orchestrator
     monkeypatch.setattr('eb.orchestrator.collect.claim_outputs', AsyncMock(side_effect=ValueError('missing receipt')))
-    session = SimpleNamespace(flush=AsyncMock(),commit=AsyncMock())
+    session = SimpleNamespace(flush=AsyncMock(),commit=AsyncMock(),refresh=AsyncMock(),begin_nested=AsyncMock(return_value=SimpleNamespace(commit=AsyncMock(),rollback=AsyncMock())))
     job = SimpleNamespace(status='running')
     run = SimpleNamespace(status='running')
     await Orchestrator().collect_and_finish(session, job, run)
@@ -88,7 +88,7 @@ async def test_validated_eval_receipt_wins_over_optional_dependency_traceback(tm
     log = tmp_path / 'runs/run_ok/console.log'
     log.parent.mkdir(parents=True)
     log.write_text('optional backend\nTraceback (most recent call last):\nModuleNotFoundError: curobo\n')
-    session = SimpleNamespace(flush=AsyncMock(), commit=AsyncMock())
+    session = SimpleNamespace(flush=AsyncMock(),commit=AsyncMock(),refresh=AsyncMock(),begin_nested=AsyncMock(return_value=SimpleNamespace(commit=AsyncMock(),rollback=AsyncMock())))
     job = SimpleNamespace(status='running')
     run = SimpleNamespace(id='run_ok', status='running', metrics_summary={})
 
@@ -150,3 +150,20 @@ async def test_rlinf_resume_skips_rsl_copy_and_records_run_lineage(tmp_path, mon
     assert len(edges) == 1
     assert edges[0].src_id == "run_source" and edges[0].dst_id == run.id
     assert edges[0].relation == "resumed_from"
+
+
+@pytest.mark.asyncio
+async def test_rsl_resume_transport_failure_ends_preparation(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock, Mock
+    import httpx
+    from eb.domain.job import JobSpec
+    from eb.orchestrator.service import Orchestrator
+    spec = JobSpec(kind="train.rl", embodiment_env_id="env", task_id="tsk_test", inputs={"resume_from":"run_source"})
+    job = SimpleNamespace(id="job_test", spec=spec.model_dump(mode="json"), kind="train.rl", embodiment_env_id="env",
+                          status="queued", attempts=0, version=0)
+    session = SimpleNamespace(add=Mock(), commit=AsyncMock(), refresh=AsyncMock())
+    monkeypatch.setattr("eb.orchestrator.service.prepare_run_dirs", lambda _: tmp_path)
+    monkeypatch.setattr("eb.orchestrator.service.seed_rsl_resume", AsyncMock(side_effect=httpx.ConnectError("ebd unavailable")))
+    run = await Orchestrator().admit_and_start(session, job, [])
+    assert job.status == "infra_failed" and run.status == "aborted"
+    assert "ebd unavailable" in job.error

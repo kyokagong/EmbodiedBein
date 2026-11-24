@@ -118,6 +118,7 @@ async function executePromote() {
             <td>
               <div v-if="isNative(b)"><a v-if="b.download_url || b.manifest?.download_url" :href="b.download_url || b.manifest.download_url" download>下载仿真包 .ebp</a><span v-else class="muted xs">下载入口未提供</span></div>
               <div v-else class="row" style="gap:6px">
+                <a v-if="b.manifest?.download_url" :href="b.manifest.download_url" download="policy.ebp">下载策略包 .ebp</a>
                 <button type="button" class="btn-sm" v-if="!b.signed" @click="sign(b.id)">✍️ 签名确认</button>
                 <button type="button" class="btn-sm b-cyan-btn" @click="openPromote(b)">🚀 阶段放行</button>
               </div>

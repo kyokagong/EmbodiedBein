@@ -38,6 +38,10 @@ pub async fn get(
             Ok(Err(status)) => return failure(status),
             Err(_) => return failure(StatusCode::INTERNAL_SERVER_ERROR),
         };
+    file_response(file, len, &path, request).await
+}
+
+pub async fn file_response(file: File, len: u64, path: &str, request: Request) -> Response {
     let mut response = Response::new(Body::empty());
     let headers = response.headers_mut();
     headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
@@ -65,8 +69,24 @@ pub async fn get(
         None => (0, len),
     };
     headers.insert(header::CONTENT_LENGTH, count.to_string().parse().unwrap());
-    let mime = match FsPath::new(&path).extension().and_then(|s| s.to_str()) {
+    let extension = FsPath::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(str::to_ascii_lowercase);
+    let mime = match extension.as_deref() {
+        Some("urdf" | "xml") => "application/xml",
+        Some("stl") => "model/stl",
+        Some("obj") => "model/obj",
+        Some("dae") => "model/vnd.collada+xml",
+        Some("usda") => "text/plain",
+        Some("jpg" | "jpeg") => "image/jpeg",
         Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mkv") => "video/x-matroska",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("txt" | "log") => "text/plain",
+        Some("csv") => "text/csv",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
         Some("json") => "application/json",
@@ -105,7 +125,7 @@ pub async fn get(
     response
 }
 
-fn failure(status: StatusCode) -> Response {
+pub(crate) fn failure(status: StatusCode) -> Response {
     (
         status,
         [(header::CACHE_CONTROL, "private, no-store")],
@@ -533,5 +553,61 @@ mod tests {
         }
         assert!(chunks > 1);
         assert_eq!(received, bytes);
+    }
+}
+
+#[cfg(test)]
+mod storage_stream_tests {
+    use super::*;
+    use axum::body::to_bytes;
+    #[tokio::test]
+    async fn managed_asset_stream_keeps_range_head_empty_and_mime() {
+        let path = std::env::temp_dir().join(format!("eb-asset-{}.urdf", std::process::id()));
+        fs::write(&path, b"<robot/>").unwrap();
+        let request = Request::builder()
+            .header("range", "bytes=1-3")
+            .body(Body::empty())
+            .unwrap();
+        let response = file_response(File::open(&path).unwrap(), 8, "robot.urdf", request).await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/xml");
+        assert_eq!(
+            to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+            b"rob"
+        );
+        let request = Request::builder()
+            .method("HEAD")
+            .body(Body::empty())
+            .unwrap();
+        let response = file_response(File::open(&path).unwrap(), 8, "robot.urdf", request).await;
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "8");
+        assert!(to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap()
+            .is_empty());
+        for (name, mime) in [
+            ("VIDEO.MP4", "video/mp4"),
+            ("clip.webm", "video/webm"),
+            ("clip.mkv", "video/x-matroska"),
+        ] {
+            let response = file_response(
+                File::open(&path).unwrap(),
+                8,
+                name,
+                Request::new(Body::empty()),
+            )
+            .await;
+            assert_eq!(response.headers()[header::CONTENT_TYPE], mime);
+        }
+        fs::write(&path, b"").unwrap();
+        let response = file_response(
+            File::open(&path).unwrap(),
+            0,
+            "robot.urdf",
+            Request::new(Body::empty()),
+        )
+        .await;
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "0");
+        fs::remove_file(path).unwrap();
     }
 }

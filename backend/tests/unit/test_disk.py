@@ -10,8 +10,7 @@ def test_preflight_blocks_when_free_below_need_plus_headroom(monkeypatch):
 
         return S()
 
-    monkeypatch.setattr("os.statvfs", fake_statvfs)
-    result = disk_preflight("/var/lib/eb/datasets", needed_bytes=50_000_000, archive=False)
+    result = disk_preflight({"free_bytes": 100_000_000, "total_bytes": 1_000_000_000}, needed_bytes=50_000_000, archive=False)
     assert result.ok is False
     assert "不足" in result.reason
 
@@ -25,7 +24,6 @@ def test_preflight_ok_when_plenty(monkeypatch):
 
         return S()
 
-    monkeypatch.setattr("os.statvfs", fake_statvfs)
-    result = disk_preflight("/var/lib/eb/datasets", needed_bytes=1_000_000_000, archive=False)
+    result = disk_preflight({"free_bytes": 80_000_000_000, "total_bytes": 100_000_000_000}, needed_bytes=1_000_000_000, archive=False)
     assert result.ok is True
     assert result.free_bytes > 0

@@ -38,6 +38,7 @@ class RlinfTemplate:
     model_id: str | None = None
     model_framework: str | None = None
     ready: bool = True
+    dependency_ready: bool = True
     blocked_reason: str | None = None
     native_embodiments: tuple[str, ...] = ()
 
@@ -47,6 +48,15 @@ def template_entrypoint(template: RlinfTemplate) -> str:
 
 
 TEMPLATES: tuple[RlinfTemplate, ...] = (
+    RlinfTemplate(
+        id="rpo_pbfm_fb_depth_native", config_path="pbfm/configs/robots", config_name="rpo_23dof",
+        script="eb.runners.rlinf_pbfm_entry", kind="native_rl",
+        embodiment_env_id="ee_rpo_v2_pbfm_depth_23dof_v1", task_id="tsk_rpo_pbfm_terrain_locomotion_v1",
+        label="RPO · P-BFM 深度地形 FB-CPR-Aux", embodiment_id="emb_roboparty_rpo",
+        requires_dataset=True, model_framework="pbfm_native_fb_depth",
+        ready=False, dependency_ready=False,
+        blocked_reason="P-BFM/RPO 组合镜像、数据 loader 与本体/相机闭环证据尚未完成；可预览诊断，禁止启动训练。",
+    ),
     RlinfTemplate(
         id="rpo_ufo_fb_native", config_path="configs/robots", config_name="rpo_23dof",
         script="eb.runners.rlinf_ufo_entry", kind="native_rl",
@@ -330,11 +340,13 @@ def get_template(template_id: str) -> RlinfTemplate:
 
 
 def require_template_ready(template: RlinfTemplate) -> None:
-    if not template.ready:
+    if not template.ready or not template.dependency_ready:
         raise ValueError(f"RLInf 模板尚未就绪：{template.blocked_reason or template.id}")
 
 
 def template_image(template: RlinfTemplate) -> str:
+    if template.id == "rpo_pbfm_fb_depth_native":
+        return "eb/rlinf-pbfm:rpo-depth-v1"
     if template.id == "rpo_ufo_fb_native":
         from eb.ufo_training import IMAGE
         return IMAGE
@@ -399,9 +411,9 @@ def validate_hydra_overrides(lines: list[str]) -> list[str]:
 
 
 def build_overrides(template_id: str, gpus: int, job_name: str, extra: list[str]) -> list[str]:
-    if template_id == "rpo_ufo_fb_native":
+    if get_template(template_id).kind == "native_rl":
         if extra:
-            raise ValueError("UFO 原生训练使用冻结 native_training，不接受 Hydra overrides")
+            raise ValueError("原生训练使用 recipe 专属冻结参数，不接受 Hydra overrides")
         return []
     errors = validate_hydra_overrides(extra)
     if errors:

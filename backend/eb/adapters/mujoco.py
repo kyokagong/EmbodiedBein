@@ -99,10 +99,22 @@ class ToolsAdapter(Adapter):
     name = "tools"
 
     def render(self, spec: JobSpec, run_id: str) -> RenderedJob:
+        from eb.settings import get_settings
+        if spec.kind == JobKind.BUNDLE_BUILD:
+            import json
+            plan = spec.params.get("bundle_plan")
+            if not isinstance(plan, dict):
+                raise ValueError("bundle.build requires a frozen bundle plan from a registered ModelVersion")
+            output = get_settings().data_root / "runs" / run_id / "outputs"
+            return RenderedJob(image=_image(spec, "eb/tools:latest"),
+                command=["python", "-m", "eb.bundle.worker", "--plan", json.dumps(plan, sort_keys=True),
+                         "--policy", "/inputs/policy.onnx", "--outputs", "/outputs"],
+                env={"PYTHONUNBUFFERED":"1"}, writable_paths=[],
+                mounts=[(plan["onnx_path"], "/inputs/policy.onnx", "ro"), (str(output), "/outputs", "rw")],
+                gpus=0, metrics_glob="")
         if spec.params.get("operation") in {"probe_rpo_amp_env", "probe_rpo_amp_motion"}:
             import json
             import re
-            from eb.settings import get_settings
 
             if (spec.kind != JobKind.ASSET_VALIDATE
                     or spec.embodiment_env_id != "ee_rpo_v2_amp_locomotion_23dof_v1"

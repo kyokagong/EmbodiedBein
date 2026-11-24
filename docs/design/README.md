@@ -23,6 +23,11 @@
 | [23 · 原生 UFO/RPO 部署](23-ufo-native-rpo-deployment.md) | 原生模型导入、推理契约、部署前双后端仿真与交付设计 |
 | [24 · 实时仿真验证](24-ufo-live-simulation-validation.md) | 冻结模型/环境的部署会话、连续切换任务 z、真实姿态展示与诊断证据 |
 | [26 · P-BFM / RPO / RLinf](26-pbfm-rpo-rlinf-integration.md) | RLinf 承载 P-BFM 原生训练、RPO 深度/地形契约、数据与恢复、仿真评估及多轮复核 |
+| [26补充 · P-BFM四卡每卡2048环境](26-pbfm-rpo-4x2048-profile.md) | W4/E2048的512更新档、冻结Replay/batch/LR、分段恢复、逐卡容量及独立快评出口 |
+| [26补充 · P-BFM单次512→10000探索](26-pbfm-rpo-direct-10000.md) | 用户明确选择的单Job有界恢复，沿用4×2048与原镜像，结束后独立评估；不泛化替代默认周期决策 |
+| [26 · P-BFM 10000→100000扩展](26-pbfm-rpo-100000.md) | 已确认单Job直训、30小时上限、结束评估；严格镜像兼容、真实更新、周期保存与平台证据出口 |
+| [26补充 · P-BFM故障恢复](26-pbfm-rpo-recovery.md) | 从完整19984周期状态恢复，保留原生终止、定位数值异常、冻结历史来源并继续100000目标 |
+| [26补充 · P-BFM周期checkpoint评估](26-pbfm-rpo-periodic-evaluation.md) | 用户要求6万附近保存后暂停；已停止Run的完整周期状态登记、原镜像导出与32例/64视频评估 |
 
 RoboTwin 所需的 RLinf 逐文件补丁设计单独维护在 [`../rlinf/`](../rlinf/README.md)。该目录展开组件实现边界，不改变本目录定义的平台不变量。
 

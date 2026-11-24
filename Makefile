@@ -8,6 +8,20 @@ RLINF_CONTENT_HASH = $(shell python3 deploy/images/code_snapshot_hash.py /data/k
 RLINF_PATCH_SHA256 = sha256:$(shell sha256sum deploy/patches/rlinf/robotwin-single-policy-eval.patch | cut -d' ' -f1)
 
 .DEFAULT_GOAL := env
+.PHONY: images-rlinf-pbfm
+.PHONY: images-rlinf-pbfm-longrun
+.PHONY: images-rlinf-pbfm-recovery
+images-rlinf-pbfm-recovery:
+	test "$$(docker image inspect eb/rlinf-pbfm:rpo-depth-long-v1 --format '{{.Id}}')" = sha256:920414f6f14ce06fda68e6f8a59b939782e8ff2559fe98295083128e0959ac0d
+	docker build --pull=false -t eb/rlinf-pbfm:rpo-depth-recovery-v3 -f deploy/images/rlinf-pbfm-recovery.Dockerfile .
+
+images-rlinf-pbfm-longrun:
+	test "$$(docker image inspect eb/rlinf-pbfm:rpo-depth-v1 --format '{{.Id}}')" = sha256:8a1fea0322cee1af4ba8e98d76c1af20c88ff885057a49ab63ceaf2d6ec2c7de
+	docker build --pull=false -t eb/rlinf-pbfm:rpo-depth-long-v1 -f deploy/images/rlinf-pbfm-longrun.Dockerfile .
+
+images-rlinf-pbfm:
+	docker build --pull=false --build-context pbfm="$${EB_PBFM_ROOT:-/data/kk/P-BFM}" --build-context rlinf="$${EB_RLINF_REPO:-/data/kk/RLinf}" -t eb/rlinf-pbfm:rpo-depth-v1 -f deploy/images/rlinf-pbfm.Dockerfile .
+
 .PHONY: images-ufo-native-deploy
 images-ufo-native-deploy:
 	test "$(docker image inspect ufo-rpo:rpo-23dof-20261016 --format '{{.Id}}')" = "sha256:8733fd6e6ed852b4687d43e5499a5bd4f6dec58b12e5ff23a3bc92ff233f46fd"

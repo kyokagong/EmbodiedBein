@@ -1,3 +1,6 @@
+mod storage;
+pub use storage::{hash_at, inspect_at, read_text_at};
+
 use eb_core::sha256_hex;
 use serde_json::{json, Value};
 use sha2::Digest;

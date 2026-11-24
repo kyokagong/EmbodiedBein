@@ -27,7 +27,7 @@ from eb.domain.data_view import (
     slice_preview,
 )
 from eb.domain.fsm import JOB_TERMINAL, JobStatus
-from eb.domain.job import JobSpec
+from eb.domain.job import JobKind, JobSpec
 from eb.gates.engine import evaluate_gate_dsl, g3_model
 from eb.harness.toolbus import ToolBus
 from eb.ids import new_id
@@ -188,6 +188,7 @@ async def get_dataset(did: str, session: SessionDep, principal: PrincipalDep) ->
         "source_uri": getattr(ds, "source_uri", None) or "",
         "dest_path": dest,
         "status": getattr(ds, "status", None) or "ready",
+        "download_progress": ds.download_progress or {},
         "error_message": getattr(ds, "error_message", None),
         "total_bytes": getattr(ds, "total_bytes", None) or 0,
     }
@@ -247,11 +248,14 @@ async def list_models(session: SessionDep, principal: PrincipalDep) -> dict:
     from eb.store.models import WeightModel
 
     weights = (await session.scalars(select(WeightModel))).all()
+    from eb.pbfm_workbench import model_links
+    diagnostic_links = await model_links(session)
     return {
         "families": [_row(f, ["id", "name", "family"]) for f in fams],
         "versions": [{**_row(v, ["id", "family_id", "name", "embodiment_env_id", "provenance", "tags", "io_signature", "card", "created_at"]),
                       "train_job_name": job_train_names.get((v.card or {}).get("train_job_id")),
-                      "train_page_id": job_train_ids.get((v.card or {}).get("train_job_id"))} for v in vers],
+                      "train_page_id": job_train_ids.get((v.card or {}).get("train_job_id")),
+                      **diagnostic_links.get(v.id, {})} for v in vers],
         "items": [
             {
                 "id": w.id,
@@ -278,6 +282,9 @@ async def get_model(mid: str, session: SessionDep, principal: PrincipalDep) -> d
         if producer:
             out["train_job_name"] = producer.name
             out["train_page_id"] = producer.id
+        elif (v.card or {}).get("schema_version") == "eb/rpo-pbfm-trained-model/v1":
+            from eb.pbfm_workbench import model_links
+            out.update((await model_links(session)).get(v.id, {}))
         if v.artifact_id:
             artifact = await session.get(Artifact, v.artifact_id)
             if artifact:
@@ -418,6 +425,12 @@ async def preview_job_command(body: dict, session: SessionDep, principal: Princi
         spec_dict["task_id"] = "tsk_bhl_velocity_biped"
     try:
         spec = JobSpec.model_validate(spec_dict)
+        if spec.kind == JobKind.BUNDLE_BUILD:
+            from eb.bundle.jobs import freeze_bundle
+            row = await session.get(EmbodimentEnvRow, spec.embodiment_env_id)
+            if not row:
+                raise ValueError("unknown embodiment env")
+            spec = await freeze_bundle(session, spec, EmbodimentEnv.model_validate(row.spec))
         cmd = equivalent_command(spec, "run_preview")
         return {"command": cmd, "ok": True}
     except Exception as e:
@@ -616,7 +629,8 @@ async def get_report_episodes(eid: str, session: SessionDep, principal: Principa
 
 
 @api_v1.get("/evals/reports/{eid}/media/{seed}/{index}")
-async def get_eval_video(eid: str, seed: int, index: int, session: SessionDep,
+@api_v1.head("/evals/reports/{eid}/media/{seed}/{index}", include_in_schema=False)
+async def get_eval_video(eid: str, seed: int, index: int, request: Request, session: SessionDep,
                          principal: PrincipalDep):
     import re
     if seed < 0 or index < 0 or seed > 1_000_000 or index > 10_000:
@@ -633,8 +647,10 @@ async def get_eval_video(eid: str, seed: int, index: int, session: SessionDep,
                                            output / "video", output / "video/eval", directory, path))
             or not path.is_file() or not path.resolve().is_relative_to(output.resolve())):
         raise HTTPException(404)
-    # FileResponse serves bounded chunks/Range without parsing video in the API.
-    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})
+    from eb.api.file_stream import stream_storage_file
+    reference = {"namespace": "run", "run_id": row.run_id, "path": "output/video/eval"}
+    await session.rollback()
+    return await stream_storage_file(request, reference, f"seed_{seed}/{index}.mp4")
 
 
 @api_v1.get("/evals/reports/{eid}/cross-domain-drift")
@@ -1176,17 +1192,9 @@ async def ws_run(ws: WebSocket, rid: str) -> None:
 
 @media_router.api_route("/media/{path:path}", methods=["GET", "HEAD"])
 async def media_proxy(path: str, request: Request):
-    settings = get_settings()
-    url = f"http://ebd/media/{path}"
-    headers = {}
-    if rng := request.headers.get("range"):
-        headers["range"] = rng
-    try:
-        client = httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=settings.ebd_media_uds), timeout=60.0)
-        r = await client.send(client.build_request("GET", url, headers=headers), stream=True)
-        return StreamingResponse(r.aiter_bytes(), status_code=r.status_code, headers=dict(r.headers))
-    except Exception as e:
-        raise HTTPException(502, f"ebd media: {e}") from e
+    from urllib.parse import quote
+    from eb.api.file_stream import stream_file
+    return await stream_file(request, f"http://ebd/media/{quote(path, safe='/')}")
 
 
 @spa_router.get("/showcase/{token}")

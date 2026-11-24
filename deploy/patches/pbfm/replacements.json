@@ -1,0 +1,57 @@
+[
+  {
+    "path": "pbfm/robots/training_spec.py",
+    "before": "    if name != \"g1_29dof\":\n        raise ValueError(f\"Only G1 (g1_29dof) is supported for training and inference; got {name!r}\")\n    if control_joint_names is not None:\n        curated = OmegaConf.load(CONFIG_ROOT / \"robots/g1_29dof.yaml\")\n        expected = list(curated.training.init_state.default_joint_angles)\n        if list(control_joint_names) != expected:\n            raise ValueError(\"G1 control joint order must match configs/robots/g1_29dof.yaml\")\n",
+    "after": "    configs = {\"g1_29dof\": \"robots/g1_29dof.yaml\", \"rpo_23dof\": \"robots/rpo_23dof.yaml\"}\n    if name not in configs:\n        raise ValueError(f\"Only G1 (g1_29dof) and RPO (rpo_23dof) are supported; got {name!r}\")\n    if control_joint_names is not None:\n        curated = OmegaConf.load(CONFIG_ROOT / configs[name])\n        expected = list(curated.training.init_state.default_joint_angles)\n        if list(control_joint_names) != expected:\n            if name == \"g1_29dof\":\n                raise ValueError(\"G1 control joint order must match configs/robots/g1_29dof.yaml\")\n            raise ValueError(\"RPO control joint order must match configs/robots/rpo_23dof.yaml\")"
+  },
+  {
+    "path": "pbfm/robots/training_spec.py",
+    "before": "\"action_scale\": self.action_scale,",
+    "after": "\"action_scale\": self.action_scale,\n            \"action_rescale\": bool(OmegaConf.load(self.config_path).training.control.get(\"action_rescale\", True)),\n            \"motion_extensions\": (list(OmegaConf.to_container(OmegaConf.load(self.config_path).training.motion_extensions)) if \"motion_extensions\" in OmegaConf.load(self.config_path).training else None),"
+  },
+  {
+    "path": "pbfm/envs/mjlab/task_config.py",
+    "before": "    config.robot.control.action_scale = float(robot_training[\"action_scale\"])",
+    "after": "    config.robot.control.action_scale = float(robot_training[\"action_scale\"])\n    config.robot.control.action_rescale = bool(robot_training.get(\"action_rescale\", True))"
+  },
+  {
+    "path": "pbfm/envs/mjlab/task_config.py",
+    "before": "    extend_config = []\n    for item in _to_list(config.robot.motion.get(\"extend_config\", [])):",
+    "after": "    extend_config = []\n    for item in (robot_training[\"motion_extensions\"] if robot_training.get(\"motion_extensions\") is not None else _to_list(config.robot.motion.get(\"extend_config\", []))):"
+  },
+  {
+    "path": "pbfm/robots/training_spec.py",
+    "before": "            \"contact_bodies\": list(self.contact_bodies),",
+    "after": "            \"foot_geometry\": (rpo_foot_geometry(self.robot.xml_path, list(self.robot.feet)) if self.robot.name == \"rpo_23dof\" else None),\n            \"contact_bodies\": list(self.contact_bodies),"
+  },
+  {
+    "path": "pbfm/envs/mjlab/config.py",
+    "before": "        if bool(config.rewards.get(\"terrain_aware_auxiliary\", False)) and not evaluation_fast_path:",
+    "after": "        foot_geometry = (robot_training or {}).get(\"foot_geometry\") or {}\n        if bool(config.rewards.get(\"terrain_aware_auxiliary\", False)) and not evaluation_fast_path:"
+  },
+  {
+    "path": "pbfm/envs/mjlab/config.py",
+    "before": "                            pattern=\"(left|right)_foot.*_collision\",",
+    "after": "                            pattern=foot_geometry.get(\"collision_geom_names\", \"(left|right)_foot.*_collision\"),"
+  },
+  {
+    "path": "pbfm/envs/mjlab/config.py",
+    "before": "                        pattern=GridPatternCfg(size=(0.23, 0.04), resolution=0.01),",
+    "after": "                        pattern=GridPatternCfg(size=tuple(foot_geometry.get(\"sole_grid_size\", (0.23, 0.04))), resolution=0.01),"
+  },
+  {
+    "path": "pbfm/envs/mjlab/config.py",
+    "before": "                        local_center=(0.025, 0.0, -0.045),",
+    "after": "                        local_center=tuple(foot_geometry.get(\"sole_center\", (0.025, 0.0, -0.045))),"
+  },
+  {
+    "path": "pbfm/envs/mjlab/core.py",
+    "before": "            self._edge_foot_points = foot_volume_points(self.device)",
+    "after": "            foot_geometry = (self._creation_config.robot_training or {}).get(\"foot_geometry\")\n            self._edge_foot_points = (torch.tensor(foot_geometry[\"edge_points\"], device=self.device, dtype=torch.float32) if foot_geometry else foot_volume_points(self.device))"
+  },
+  {
+    "path": "pbfm/robots/training_spec.py",
+    "before": "from pbfm.robots.robot_spec import RobotSpec",
+    "after": "from pbfm.robots.robot_spec import RobotSpec\nfrom pbfm.robots.rpo_geometry import rpo_foot_geometry"
+  }
+]

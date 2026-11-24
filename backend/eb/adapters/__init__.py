@@ -39,6 +39,16 @@ KIND_ADAPTER: dict[JobKind, Adapter] = {
 
 
 def get_adapter(spec: JobSpec) -> Adapter:
+    if spec.params.get("operation") == "probe_pbfm_runtime":
+        from eb.pbfm_runtime_probe import render
+        class PbfmProbeAdapter(Adapter):
+            name = "pbfm_runtime_probe"
+
+            def render(self, spec, run_id):
+                return render(spec, run_id)
+        return PbfmProbeAdapter()
+    if spec.params.get("operation") in {"prepare_pbfm_rpo_motion", "export_pbfm_policy", "evaluate_pbfm_terrain"}:
+        return _CONVERT
     from eb.ufo_failure_probe import OPERATION as FAILURE_PROBE_OPERATION
     if spec.params.get("operation") == FAILURE_PROBE_OPERATION:
         from eb.ufo_failure_probe import render
@@ -54,8 +64,9 @@ def get_adapter(spec: JobSpec) -> Adapter:
     from eb.ufo_grounded_reference import OPERATION as GROUNDED_OPERATION
     if spec.params.get("operation") == GROUNDED_OPERATION:
         return _CONVERT
-    from eb.ufo_training import TEMPLATE, DATA_OPERATION
-    if spec.params.get("template_id") == TEMPLATE:
+    from eb.native_training import is_native_template
+    from eb.ufo_training import DATA_OPERATION
+    if is_native_template(spec.params.get("template_id")):
         return _RLINF
     if spec.params.get("operation") == DATA_OPERATION:
         return _CONVERT

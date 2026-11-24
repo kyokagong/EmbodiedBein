@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 import yaml
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import Request, APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -60,11 +60,24 @@ def _asset_rel_paths(assets: list[RobotAssetRow]) -> list[str]:
     return rels
 
 
-def _env_asset_joints(emb: EmbodimentRow, assets: list[RobotAssetRow]) -> tuple[list[str], str | None]:
+async def _env_asset_joints(emb: EmbodimentRow, assets: list[RobotAssetRow]) -> tuple[list[str], str | None]:
+    import httpx
+    from eb.store.ebd import EbdClient, storage_root
+
     root = Path((emb.source or {}).get("path") or "")
-    if not root.exists():
+    if not root.is_absolute():
         return [], None
-    return collect_urdf_joints(root, _asset_rel_paths(assets))
+    texts = {}
+    for rel in _asset_rel_paths(assets):
+        if Path(rel).suffix.lower() != ".urdf":
+            continue
+        try:
+            texts[rel] = await EbdClient().read_storage_text(storage_root(root), rel, max_bytes=16 * 1024**2)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                continue
+            raise
+    return collect_urdf_joints(texts)
 
 _KIND = {"git_external", "git_snapshot", "managed_bundle", "in_image", "plugin"}
 
@@ -192,7 +205,7 @@ async def create_embodiment(body: EmbodimentIn, session: SessionDep, principal: 
             capabilities=caps,
             root_path=str(root),
         )
-        apply_scan(row, root)
+        await apply_scan(row, root)
         session.add(row)
         await session.commit()
         await session.refresh(row)
@@ -217,7 +230,7 @@ async def create_embodiment(body: EmbodimentIn, session: SessionDep, principal: 
         root_path=src.path,
     )
     if src.path and Path(src.path).is_dir():
-        apply_scan(row, Path(src.path))
+        await apply_scan(row, Path(src.path))
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -305,7 +318,7 @@ async def scan_embodiment(eid: str, session: SessionDep, principal: PrincipalDep
     git_present = False
     result: dict[str, Any] = {}
     if root.exists():
-        result = apply_scan(row, root)
+        result = await apply_scan(row, root)
         found = [v.get("path", "") for v in (result.get("urdf_variants") or [])]
         found.extend(result.get("meshes") or [])
         git = root / ".git"
@@ -340,46 +353,27 @@ async def list_assets(eid: str, session: SessionDep, principal: PrincipalDep) ->
     return {"items": [{"id": a.id, "version_label": a.version_label, "paths": a.paths} for a in assets]}
 
 
-def _send_asset(row: EmbodimentRow, path: str) -> FileResponse:
-    from eb.paths import is_under
-    from eb.workbench import embodiment_root
-
-    root = embodiment_root(row)
-    if not root.exists():
-        raise HTTPException(404, "asset root missing")
-    if not path or Path(path).is_absolute() or path.startswith("/") or path.startswith("~"):
-        raise HTTPException(403, "path must stay inside asset root")
-    dest = (root / path).resolve()
-    if not is_under(root, dest):
-        raise HTTPException(403, "path must stay inside asset root")
-    if not dest.is_file():
-        raise HTTPException(404)
-    media = {
-        ".urdf": "application/xml",
-        ".xml": "application/xml",
-        ".stl": "model/stl",
-        ".obj": "model/obj",
-        ".dae": "model/vnd.collada+xml",
-        ".usd": "application/octet-stream",
-        ".usda": "text/plain",
-    }.get(dest.suffix.lower())
-    return FileResponse(dest, media_type=media)
-
-
 @router.get("/embodiments/{eid}/assets/file")
-async def asset_file(eid: str, session: SessionDep, principal: PrincipalDep, path: str = Query(...)):
+@router.head("/embodiments/{eid}/assets/file", include_in_schema=False)
+async def asset_file(eid: str, request: Request, session: SessionDep, principal: PrincipalDep, path: str = Query(...)):
     row = await session.get(EmbodimentRow, eid)
     if not row:
         raise HTTPException(404)
-    return _send_asset(row, path)
+    from eb.workbench import embodiment_root
+    root = embodiment_root(row)
+    await session.rollback()
+    # Copy the root before rollback expires ORM state.
+    from eb.api.file_stream import stream_storage_file
+    from eb.store.ebd import storage_root
+    if not path or Path(path).is_absolute() or path.startswith("~") or ".." in Path(path).parts or "\\" in path:
+        raise HTTPException(403, "path must stay inside asset root")
+    return await stream_storage_file(request, storage_root(root), path)
 
 
 @router.get("/embodiments/{eid}/assets/{asset_path:path}")
-async def asset_by_path(eid: str, asset_path: str, session: SessionDep, principal: PrincipalDep):
-    row = await session.get(EmbodimentRow, eid)
-    if not row:
-        raise HTTPException(404)
-    return _send_asset(row, asset_path)
+@router.head("/embodiments/{eid}/assets/{asset_path:path}", include_in_schema=False)
+async def asset_by_path(eid: str, asset_path: str, request: Request, session: SessionDep, principal: PrincipalDep):
+    return await asset_file(eid, request, session, principal, asset_path)
 
 
 @router.get("/embodiments/{eid}/preview")
@@ -397,7 +391,7 @@ async def embodiment_preview(
         raise HTTPException(404)
     root = embodiment_root(row)
     assets = (await session.scalars(select(RobotAssetRow).where(RobotAssetRow.embodiment_id == eid))).all()
-    names, urdf_rel = _env_asset_joints(row, list(assets))
+    names, urdf_rel = await _env_asset_joints(row, list(assets))
     if urdf:
         urdf_rel = urdf
     elif row.default_urdf and not urdf_rel:
@@ -406,41 +400,44 @@ async def embodiment_preview(
     meshes: list[dict[str, Any]] = []
     missing_meshes: list[str] = []
     usd: list[dict[str, Any]] = []
-    if urdf_rel and root.exists():
-        dest = root / urdf_rel
-        if dest.is_file():
-            text = dest.read_text(errors="replace")
+    if urdf_rel:
+        import httpx
+        from eb.store.ebd import EbdClient, storage_inventory, storage_root
+        try:
+            text = await EbdClient().read_storage_text(storage_root(root), urdf_rel, max_bytes=16 * 1024**2)
             joints = parse_urdf_joint_tree(text)
-            seen: set[str] = set()
-            for filename in iter_mesh_filenames(text):
+            filenames = iter_mesh_filenames(text)
+            usd_dir = Path(urdf_rel).parent.parent / "usd"
+            directories = {Path(resolve_mesh_rel(urdf_rel, name)).parent for name in filenames} | {usd_dir}
+            facts = {}
+            for directory in sorted(directories):
+                try:
+                    entries = await storage_inventory(root / directory, recursive=False)
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 404:
+                        continue
+                    raise
+                facts.update({(directory / item["path"]).as_posix(): item for item in entries
+                              if not item["is_dir"] and not item["is_symlink"]})
+            seen = set()
+            for filename in filenames:
                 rel = resolve_mesh_rel(urdf_rel, filename)
                 if rel in seen:
                     continue
                 seen.add(rel)
-                mesh_path = root / rel
-                item = {
-                    "filename": filename,
-                    "path": rel,
+                fact = facts.get(rel)
+                meshes.append({"filename": filename, "path": rel,
                     "url": f"/api/v1/embodiments/{eid}/assets/file?path={rel}",
-                    "exists": mesh_path.is_file(),
-                    "bytes": mesh_path.stat().st_size if mesh_path.is_file() else 0,
-                }
-                meshes.append(item)
-                if not item["exists"]:
+                    "exists": fact is not None, "bytes": fact["bytes"] if fact else 0})
+                if fact is None:
                     missing_meshes.append(rel)
-            usd_dir = dest.parent.parent / "usd"
-            if usd_dir.is_dir():
-                for p in sorted(usd_dir.glob("*.usd"))[:8]:
-                    rel = str(p.relative_to(root))
-                    raw = p.read_bytes()
-                    usd.append(
-                        {
-                            "path": rel,
-                            "bytes": len(raw),
-                            "sha256": sha256_bytes(raw),
-                            "url": f"/api/v1/embodiments/{eid}/assets/file?path={rel}",
-                        }
-                    )
+            for rel in sorted(path for path in facts if Path(path).parent == usd_dir and Path(path).suffix == ".usd")[:8]:
+                identity = await EbdClient().hash_storage_file(storage_root(root), rel)
+                usd.append({"path": rel, "bytes": identity["bytes"], "sha256": identity["sha256"],
+                            "url": f"/api/v1/embodiments/{eid}/assets/file?path={rel}"})
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
     if not joints and names:
         joints = [{"name": n, "type": "", "parent": "", "child": ""} for n in names]
     urdf_url = None
@@ -531,7 +528,7 @@ async def publish_env(eeid: str, session: SessionDep, principal: PrincipalDep) -
     assets = (
         await session.scalars(select(RobotAssetRow).where(RobotAssetRow.embodiment_id == row.embodiment_id))
     ).all()
-    asset_joints, _urdf = _env_asset_joints(emb, list(assets)) if emb else ([], None)
+    asset_joints, _urdf = await _env_asset_joints(emb, list(assets)) if emb else ([], None)
     missing = missing_joints(env.joint_order, asset_joints)
     if missing:
         raise HTTPException(
@@ -650,7 +647,7 @@ async def validate_env(eeid: str, session: SessionDep, principal: PrincipalDep) 
     assets = (
         await session.scalars(select(RobotAssetRow).where(RobotAssetRow.embodiment_id == row.embodiment_id))
     ).all()
-    asset_joints, urdf_rel = _env_asset_joints(emb, list(assets)) if emb else ([], None)
+    asset_joints, urdf_rel = await _env_asset_joints(emb, list(assets)) if emb else ([], None)
     missing = missing_joints(env.joint_order, asset_joints)
     return {
         **self_check,

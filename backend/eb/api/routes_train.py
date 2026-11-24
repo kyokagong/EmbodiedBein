@@ -14,6 +14,7 @@ from eb.domain.environment_profile import compatible_profile, profile_snapshot
 from eb.domain.rlinf_form import (TEMPLATES, build_overrides, get_template, ray_port_for,
                                   require_template_ready, template_entrypoint, template_image)
 from eb.ids import new_id
+from eb.native_training import is_native_template, service_for
 from eb.orchestrator.service import Orchestrator
 from eb.settings import get_settings
 from eb.store.models import (Artifact, ModelVersion, EmbodimentRow, EnvironmentProfile, Job, LineageEdge, TrainJob, WeightModel,
@@ -41,6 +42,15 @@ class NativeTrainingIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_updates: int = Field(default=112, ge=112, le=1000000, strict=True)
     buffer_size: int = Field(default=262144, ge=32768, le=1048576, strict=True)
+    seed: int = Field(default=42, ge=0, le=1000000, strict=True)
+    timeout_seconds: int = Field(default=21600, ge=60, le=21600, strict=True)
+
+
+class PbfmTrainingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_updates: int = Field(default=112, ge=112, le=10000, strict=True)
+    num_envs_per_rank: Literal[1024, 2048] = 1024
+    buffer_size: int = Field(default=262144, ge=32768, le=5120000, strict=True)
     seed: int = Field(default=42, ge=0, le=1000000, strict=True)
     timeout_seconds: int = Field(default=21600, ge=60, le=21600, strict=True)
 
@@ -74,6 +84,7 @@ class TrainIn(BaseModel):
     checkpoint_run_id: str | None = None
     checkpoint_step: int | None = Field(default=None, ge=0)
     native_training: NativeTrainingIn | None = None
+    pbfm_training: PbfmTrainingIn | None = None
     preview_hash: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
 
 
@@ -140,7 +151,9 @@ def build_resume_spec(source: JobSpec, source_train_job_id: str, checkpoint: dic
         raise ValueError("checkpoint 与源训练配置指纹不一致")
     template = get_template(str(source.params.get("template_id")))
     image = checkpoint.get("image_digest") or source.image
-    if template.kind == "native_rl":
+    if template.id == "rpo_pbfm_fb_depth_native":
+        return service_for(template.id).build_resume_spec(source, source_train_job_id, checkpoint, body)
+    if template.id == "rpo_ufo_fb_native":
         from copy import deepcopy
         from eb.ufo_training import native_arguments, training_fingerprint
         if body.target_updates is None or body.max_epochs is not None or body.max_steps is not None:
@@ -285,6 +298,7 @@ def _job_out(row: TrainJob) -> dict[str, Any]:
 
 @router.get("/train/templates")
 async def train_templates(principal: PrincipalDep) -> dict:
+    from eb.pbfm_workbench import CONTROLLED_TRAINING
     return {
         "items": [
             {
@@ -304,8 +318,11 @@ async def train_templates(principal: PrincipalDep) -> dict:
                 "model_id": t.model_id,
                 "model_framework": t.model_framework,
                 "ready": t.ready,
+                "dependency_ready": t.dependency_ready,
                 "blocked_reason": t.blocked_reason,
                 "native_embodiments": t.native_embodiments,
+                **({"controlled_training": CONTROLLED_TRAINING}
+                   if t.id == "rpo_pbfm_fb_depth_native" and getattr(principal, "actor_type", None) == "user" else {}),
             }
             for t in TEMPLATES if t.kind in {"sft", "ppo", "native_rl"}
         ]
@@ -329,6 +346,9 @@ async def list_train(session: SessionDep, principal: PrincipalDep, status: str |
                 continue
         await _sync_run(session, row)
         items.append(_job_out(row))
+    from eb.pbfm_workbench import list_records
+    items.extend(await list_records(session))
+    items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
     if status:
         items = [i for i in items if i["status"] == status]
     return {"items": items}
@@ -342,10 +362,13 @@ async def _build_spec(body: TrainIn, session) -> JobSpec:
         tpl = get_template(body.template_id)
     except KeyError as e:
         raise ValueError(f"未知模板 {body.template_id}") from e
-    require_template_ready(tpl)
     if tpl.kind == "native_rl":
-        from eb.ufo_training_service import build_spec
-        return await build_spec(body, session)
+        if body.pbfm_training is not None and tpl.id != "rpo_pbfm_fb_depth_native":
+            raise ValueError("pbfm_training 只支持 P-BFM 原生模板")
+        return await service_for(tpl.id).build_spec(body, session)
+    require_template_ready(tpl)
+    if body.pbfm_training is not None:
+        raise ValueError("pbfm_training 只支持 P-BFM 原生模板")
     if body.native_training is not None:
         raise ValueError("native_training 只支持 UFO 原生模板")
     if tpl.kind in {"sft", "ppo"} and not (body.model_name or "").strip():
@@ -540,8 +563,8 @@ async def submit_train(body: TrainIn, session: SessionDep, principal: PrincipalD
         if get_template(body.template_id).kind not in {"sft", "ppo", "native_rl"}:
             raise ValueError("请在评估或数据菜单创建此类任务")
         spec = await _build_spec(body, session)
-        if body.template_id == "rpo_ufo_fb_native" and body.preview_hash != "sha256:" + spec.canonical_hash():
-            raise ValueError("UFO 训练预览已过期，请重新预览冻结输入")
+        if is_native_template(body.template_id) and body.preview_hash != "sha256:" + spec.canonical_hash():
+            raise ValueError("原生训练预览已过期，请重新预览冻结输入")
         from eb.adapters import get_adapter
         rendered = get_adapter(spec).render(spec, "run_preview")
     except (ValueError, KeyError) as e:
@@ -555,8 +578,9 @@ async def submit_train(body: TrainIn, session: SessionDep, principal: PrincipalD
     idem = None
     if tpl.kind == "native_rl":
         if not isinstance(idempotency_key, str) or not idempotency_key:
-            raise HTTPException(400, "UFO 训练需要 Idempotency-Key")
-        idem = f"ufo-train:{principal.id}:{idempotency_key}"
+            raise HTTPException(400, "原生训练需要 Idempotency-Key")
+        prefix = "ufo-train" if tpl.id == "rpo_ufo_fb_native" else f"native-train:{tpl.id}"
+        idem = f"{prefix}:{principal.id}:{idempotency_key}"
         await _lock_native_train_submission(session, idem)
         existing = await session.scalar(select(Job).where(Job.idem_key == idem))
         if existing:
@@ -639,10 +663,15 @@ async def _sync_run(session, row):
 async def get_train(tid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     row = await session.get(TrainJob, tid)
     if not row:
+        from eb.pbfm_workbench import get_record, list_records
+        record = await get_record(session, tid)
+        if record:
+            record["continuations"] = [item for item in await list_records(session) if item["resumed_from"] == tid]
+            return record
         raise HTTPException(404)
     await _sync_run(session, row)
     result = _job_out(row)
-    if row.template_id == "rpo_ufo_fb_native":
+    if is_native_template(row.template_id):
         children = (await session.scalars(select(TrainJob).where(
             TrainJob.params["source_train_job_id"].astext == tid,
             TrainJob.template_id == row.template_id,
@@ -671,12 +700,13 @@ async def _resume_context(tid: str, session, *, checkpoint_step: int | None = No
                                     "embodiment_env_id": job.embodiment_env_id,
                                     "api_version": "eb/v1"})
     template = get_template(str(source.params.get("template_id")))
-    if template.id != "rpo_ufo_fb_native" and (not template.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")) or template.kind not in {"sft", "ppo"}):
+    if not is_native_template(template.id) and (not template.id.startswith(("libero_", "rpo_v2_wbc_", "rpo_v2_amp_", "rpo_v2_flat_")) or template.kind not in {"sft", "ppo"}):
         raise ValueError("该训练模板尚未验证 checkpoint 恢复")
     runs = (await session.scalars(select(Run).where(Run.job_id == job.id))).all()
     settings = get_settings()
     checkpoint = latest_resume_checkpoint(
-        ((run.id, settings.data_root / "runs" / run.id) for run in runs), step=checkpoint_step
+        ((run.id, settings.data_root / "runs" / run.id) for run in runs), step=checkpoint_step,
+        **({"spec": source} if template.id == "rpo_pbfm_fb_depth_native" else {}),
     )
     require_flat_rank_rng(source, checkpoint)
     source_run = next(run for run in runs if run.id == checkpoint["run_id"])
@@ -691,9 +721,8 @@ async def _resume_context(tid: str, session, *, checkpoint_step: int | None = No
     checkpoint["image_digest"] = image_digest
     if checkpoint["compatibility_fingerprint"] != resume_fingerprint(source):
         raise ValueError("checkpoint 与源训练冻结配置不一致")
-    if template.id == "rpo_ufo_fb_native":
-        from eb.ufo_training_service import build_resume_source_binding
-        checkpoint["native_resume_source"] = await build_resume_source_binding(session, source_run, checkpoint)
+    if is_native_template(template.id):
+        checkpoint["native_resume_source"] = await service_for(template.id).build_resume_source_binding(session, source_run, checkpoint)
     return row, job, source, checkpoint
 
 
@@ -705,6 +734,12 @@ def _source_limit(source: JobSpec, key: str) -> int:
 
 @router.get("/train/{tid}/resume-candidate")
 async def get_resume_candidate(tid: str, session: SessionDep, principal: PrincipalDep) -> dict:
+    if tid.startswith("job_"):
+        from eb.pbfm_workbench import get_record, resume_candidate
+        record = await get_record(session, tid)
+        if record is None:
+            raise HTTPException(404)
+        return await resume_candidate(session, record)
     try:
         row, _, source, checkpoint = await _resume_context(tid, session)
     except LookupError as exc:
@@ -756,7 +791,7 @@ async def preview_resume(tid: str, body: ResumeTrainIn, session: SessionDep,
             "native_resume_source": spec.params["native_resume_source"],
             "timeout_seconds": spec.params["native_train_plan"].get("segment_timeout_seconds", 21600),
             "native_training_plan": spec.params["native_train_plan"]}
-           if source.params.get("template_id") == "rpo_ufo_fb_native" else {}),
+           if is_native_template(source.params.get("template_id")) else {}),
         "argv": rendered.command, "mounts": [f"{src} → {dst} {mode}" for src, dst, mode in rendered.mounts],
         "inputs": spec.inputs.model_dump(), "image": rendered.image,
         "resources": spec.resources.model_dump(),
@@ -789,11 +824,11 @@ async def submit_resume(tid: str, body: ResumeTrainIn, session: SessionDep,
         raise HTTPException(404, str(exc)) from exc
     except (ValueError, OSError, KeyError) as exc:
         raise HTTPException(422, str(exc)) from exc
-    if (source.params.get("template_id") == "rpo_ufo_fb_native"
+    if (is_native_template(source.params.get("template_id"))
             and body.preview_hash != native_resume_preview_hash(spec)):
-        raise HTTPException(409, "UFO 恢复预览已过期，请重新预览冻结输入")
+        raise HTTPException(409, "原生恢复预览已过期，请重新预览冻结输入")
     idem = f"train-resume:{principal.id}:{idempotency_key}"
-    if source.params.get("template_id") == "rpo_ufo_fb_native":
+    if is_native_template(source.params.get("template_id")):
         await _lock_native_train_submission(session, idem)
     existing = await session.scalar(select(Job).where(Job.idem_key == idem))
     if existing:
@@ -835,17 +870,25 @@ async def submit_resume(tid: str, body: ResumeTrainIn, session: SessionDep,
 async def list_checkpoints(tid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     row = await session.get(TrainJob, tid)
     if not row:
+        from eb.pbfm_workbench import checkpoints, get_record
+        record = await get_record(session, tid)
+        if record:
+            return {"items": checkpoints(record)}
         raise HTTPException(404)
     await _sync_run(session, row)
     from eb.checkpoints import checkpoint_model, checkpoint_weights
+    producer = None
+    if getattr(row, "template_id", None) == "rpo_pbfm_fb_depth_native":
+        job = await session.get(Job, row.job_id)
+        producer = JobSpec.model_validate(job.spec) if job else None
     items = []
     runs = (await session.scalars(select(Run).where(Run.job_id == row.job_id))) if row.job_id else []
     for run in runs:
         root = get_settings().data_root / "runs" / run.id
-        if getattr(row, "template_id", None) == "rpo_ufo_fb_native":
-            from eb.ufo_training_checkpoint import read_native_checkpoint
+        if is_native_template(getattr(row, "template_id", None)):
+            from eb.checkpoints import resume_checkpoint
             try:
-                published = read_native_checkpoint(root, run.id)
+                published = resume_checkpoint(root, run.id, **({"spec": producer} if producer else {}))
                 items.append({**published, "name": f"原生 agent 更新 {published['step']}",
                               "complete": True, "weights_only": False})
             except (ValueError, OSError):
@@ -877,15 +920,21 @@ async def list_checkpoints(tid: str, session: SessionDep, principal: PrincipalDe
 async def native_training_evidence(tid: str, session: SessionDep, principal: PrincipalDep) -> dict:
     """Read existing native analysis without mutating historical Run metadata."""
     row = await session.get(TrainJob, tid)
-    if not row or row.template_id != "rpo_ufo_fb_native":
+    if not row or not is_native_template(row.template_id):
+        from eb.pbfm_workbench import get_record
+        record = await get_record(session, tid) if row is None else None
+        if record:
+            return record["metrics_summary"].get("training_evidence") or {
+                "available": False, "reason": "尚未收集完整训练证据。"}
         raise HTTPException(404, "没有原生训练分析")
     job = await session.get(Job, row.job_id) if row.job_id else None
     run = await session.scalar(select(Run).where(Run.job_id == row.job_id).order_by(Run.attempt.desc()))
     if not job or not run or job.status != "succeeded" or run.status != "finished":
         return {"available": False, "reason": "原生训练段尚未成功完成"}
-    from eb.orchestrator.collect import read_native_training_evidence
+    from eb.orchestrator.collect import read_native_training_evidence, read_pbfm_training_evidence
     try:
-        return await read_native_training_evidence(get_settings().data_root / "runs" / run.id, run.id,
+        reader = read_pbfm_training_evidence if row.template_id == "rpo_pbfm_fb_depth_native" else read_native_training_evidence
+        return await reader(get_settings().data_root / "runs" / run.id, run.id,
             target_updates=job.spec["params"]["native_train_plan"]["target_updates"])
     except (ValueError, OSError, KeyError, TypeError) as exc:
         raise HTTPException(409, f"原生训练证据不完整：{exc}") from exc
@@ -913,6 +962,8 @@ async def register_ckpt(tid: str, body: RegisterCkptIn, session: SessionDep, pri
     await _sync_run(session, row)
     if row.status != "succeeded" or not row.run_dir:
         raise HTTPException(400, "只能登记该任务成功运行的完整检查点")
+    if row.template_id == "rpo_pbfm_fb_depth_native":
+        raise HTTPException(400, "P-BFM 模型由完整训练回执自动登记；推理包请使用 P-BFM 导出入口")
     from eb.checkpoints import checkpoint_model
     try:
         checkpoint = checkpoint_model(Path(row.run_dir), row._run_id)

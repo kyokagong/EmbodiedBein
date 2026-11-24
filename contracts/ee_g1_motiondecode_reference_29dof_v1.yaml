@@ -1,0 +1,53 @@
+# Source schema only; not a robot controller contract. No simulation/real bindings.
+# 120 Hz is upstream's declared rate; CSV has no timestamps to verify it.
+id: ee_g1_motiondecode_reference_29dof_v1
+embodiment_id: emb_unitree_g1_motion_reference
+robot_family: unitree_g1
+morphology: humanoid
+status: draft
+dof: 29
+joint_order:
+  - left_hip_pitch_joint
+  - left_hip_roll_joint
+  - left_hip_yaw_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_hip_pitch_joint
+  - right_hip_roll_joint
+  - right_hip_yaw_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - waist_yaw_joint
+  - waist_roll_joint
+  - waist_pitch_joint
+  - left_shoulder_pitch_joint
+  - left_shoulder_roll_joint
+  - left_shoulder_yaw_joint
+  - left_elbow_joint
+  - left_wrist_roll_joint
+  - left_wrist_pitch_joint
+  - left_wrist_yaw_joint
+  - right_shoulder_pitch_joint
+  - right_shoulder_roll_joint
+  - right_shoulder_yaw_joint
+  - right_elbow_joint
+  - right_wrist_roll_joint
+  - right_wrist_pitch_joint
+  - right_wrist_yaw_joint
+observation:
+  dim: 36
+  layout:
+    - {term: reference_root_position_m, dim: 3, source: motiondecode_csv}
+    - {term: reference_root_quaternion_wxyz, dim: 4, source: motiondecode_csv}
+    - {term: reference_joint_position_rad, dim: 29, source: motiondecode_csv}
+action:
+  dim: 29
+  type: reference_joint_position
+  absolute: true
+control:
+  policy_hz: 120
+  control_hz: 120
+  sim_dt: 0.008333333333333333
+  decimation: 1

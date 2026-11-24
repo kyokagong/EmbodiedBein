@@ -1,0 +1,205 @@
+{
+  "scope": "四组指定测试模型及关联训练/评估；截图六类文件",
+  "table_counts": {
+    "jobs": {
+      "before": 330,
+      "after": 313
+    },
+    "runs": {
+      "before": 325,
+      "after": 308
+    },
+    "train_jobs": {
+      "before": 66,
+      "after": 62
+    },
+    "weight_models": {
+      "before": 14,
+      "after": 13
+    },
+    "model_versions": {
+      "before": 314,
+      "after": 310
+    },
+    "artifacts": {
+      "before": 393,
+      "after": 389
+    },
+    "eval_reports": {
+      "before": 110,
+      "after": 97
+    },
+    "bundles": {
+      "before": 3,
+      "after": 3
+    },
+    "datasets": {
+      "before": 12,
+      "after": 12
+    },
+    "dataset_versions": {
+      "before": 3,
+      "after": 3
+    },
+    "pipelines": {
+      "before": 4,
+      "after": 4
+    },
+    "pipeline_runs": {
+      "before": 9,
+      "after": 9
+    },
+    "shares": {
+      "before": 1,
+      "after": 1
+    }
+  },
+  "lineage_preserved": 1222,
+  "platform_run_count": 17,
+  "platform_removed_bytes": 225485664932,
+  "file_categories": [
+    {
+      "category": "build",
+      "entries": 2,
+      "exclusive_allocated_bytes": 3020001280
+    },
+    {
+      "category": "backup",
+      "entries": 2,
+      "exclusive_allocated_bytes": 4681039872
+    },
+    {
+      "category": "cache",
+      "entries": 3,
+      "exclusive_allocated_bytes": 5319585792
+    },
+    {
+      "category": "replay",
+      "entries": 8,
+      "exclusive_allocated_bytes": 61399269376
+    },
+    {
+      "category": "incomplete",
+      "entries": 1,
+      "exclusive_allocated_bytes": 2264928256
+    },
+    {
+      "category": "checkpoint",
+      "entries": 263,
+      "exclusive_allocated_bytes": 30151180288
+    }
+  ],
+  "retained_checkpoint_count": 38,
+  "protected_files_sha256": {
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_0.pt": "440008e9c1dc5697905f756d03f33446b891b568710822bb102e70ed332a19cc",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_100.pt": "ebe553f09324f8e6d27ecd68f63cb1f7fc03f915242d8bf0332c39138c0a9d98",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_200.pt": "922f51c206a0fad64e046456e86ea6b3b008f27e34cb4e8af282b89fb540c1a0",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_1200.pt": "d8161e73aff07843ef89bfaa5c8d35eee5c37203a3b9d064182088322ad75b6e",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_3900.pt": "dcc464adf0e978d5d8192ccd077813c344f6e9022e3986ed629c61e6eddd20eb",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_6400.pt": "820fcfa03c5e84eae9e8146ca6037efb63162896ff6c31fcc12f4c8fd4c25dbe",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_7200.pt": "e3fec35a672bc88a68dcd081cacffa0ce5dff1e92e00b4ad190ccfde4e640683",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8100.pt": "a0a95d7675a8f428723020916ec24efee09c36380ecab08da45abd13d5ac34be",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_8900.pt": "2caf11a558167276db28b7a70c943c9b42e784be850ba7d2ab280fe92b36006e",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9700.pt": "fa22ab9ee611ada625235f430bbc05ed50a30af92d31721a9c6e2cb8c2b3ae3e",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_9900.pt": "fe25aab79f46bf0af9c95eff14cbfba468b72b87fab7653715321c8ebb97ec78",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10600.pt": "f2f4e9752b13b7422ff6d8cebfa7079486de09103bc133d8fffe063fa019924a",
+    "/data/kk/data/supermimic_q1/unified_20261106/run2048_v2/model_10700.pt": "70f3129f0cb3c7523fea47ec015a1ab130a4b41a2b7b7292597d34a629b54795",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11300.pt": "0197dc27a791408c1b69fdb9277b1eb43ebf7a213134de61a5e6e6cfe47bbc6d",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_11900.pt": "0b45d3c0c00015c1a28229cef48d60252851f780cd056b84eaaa451f4a57e623",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12100.pt": "9164b72bd8d73bd734b7f8c8104d6864f9b10b5bb6346e7e59190edeebe11b3f",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_12500.pt": "c2204e0e78ffd39b7151bf4c73288c000eb3d7f191984f2ef0ba946189cebad3",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13100.pt": "9a8ae406b2f99daf12970e1e2f0a2bf246200201320e9ecc1766300280c4e2e0",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_13700.pt": "5ed141c6aeafce626a84a030f7c331dc0a987379a28588abd499dc1ce37b168d",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14200.pt": "14b97cce13ba12d940950b3bbaa7663e7258e7cee67819908d07156eb7642ca9",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_14800.pt": "4ca366a9901fb53ad9fe25b5e11661eba484ef7856c18c93ab4d01d1f609d10e",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_15400.pt": "13d73aa69ca7aad1a09b5d8f0e8e2001a30e87256f3b05b93d1a2744a219d210",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16000.pt": "2af6db0388476d9414dadc3772a92e292af51d2b8d00730cb25c82b84e7b12d5",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_16600.pt": "c4861fda44bf53e95dd0ba79bc1d0e7b2b7fc1ab4133e43f88be7c68514310f8",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17200.pt": "af4434c017794bab4b69e2628c0a0ee9794b9171807b497962406ac06df1f87a",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_17800.pt": "9cb150f79bd044c4e383117cf0f0e67894f55f6ef0eac7d3d53823c5dd4de6e1",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_18400.pt": "3a270a3144e436253f7aa56c0208142dcb3acaa5a0a54061cb3ff108877b2c4a",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19000.pt": "09755d7dabf1dd942f4d241e3fd2d01fcf4d677ba4586691a2537fd9fa043714",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_19600.pt": "2a9dd647f62cd31d79c8a51174574b008e63ca1d07567f6e2ba4efa95c61d675",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20000.pt": "b13b3aa860134bf59d90da046da069f92fc678a6d9bce9ed34e72b987f89e5f5",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20300.pt": "9bf9495487330221f3c25416e182e78898bb65e451d1ab723109ad5712e23683",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_20700.pt": "060c13d47d7b6219e766be9a55015b92309ba5c6267d54675a1f6ea5ac76a1e9",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21300.pt": "945f459c5bdd2006dd7e28c40e5451c817cdfff1a5f702143fc810ea13a198c1",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_21800.pt": "7461c2eee5a6cf3785ae74f10da10b3caf254810d4a56b81d12d62d188647692",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_22100.pt": "8f0667b501cf56b12218c8a44bbd84765db3b227c33ec67339882812e4534c25",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_20261107/model_25300.pt": "bfb8dea325f89c85061acf13570272f271161f263647d1bbaabd23db3c52da2e",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_25400.pt": "9a413bedd66b49515c28f1f0c94816542be9ea386019305f02c3df01fdaa124d",
+    "/data/kk/data/supermimic_q1/unified_20261106/run6144_correction_20261107/model_29999.pt": "d8836860e02643ac5b2b5444c31c769f6ed8c6edcb9b5418be640d5948f9544a",
+    "/data/kk/data/supermimic_q1/unified_20261106/deployments/final_correction_20261107_iteration29999/checkpoint.pt": "d8836860e02643ac5b2b5444c31c769f6ed8c6edcb9b5418be640d5948f9544a",
+    "/data/kk/data/supermimic_q1/unified_20261106/deployments/final_correction_20261107_iteration29999/policy.jit": "279b80cc3280d1fe670081a6eaa4bf9127da0a87a64fcc4acea29a4af7aa9c6e",
+    "/data/kk/data/supermimic_q1/unified_20261106/deployments/final_correction_20261107_iteration29999/snapshot.json": "476e2f145acfd59fbbc591228ba0a84edd03462f9d33ae6e5235b299527efe5e",
+    "/data/kk/data/blinkmimic_q1/20261109_prone_v2/runs/q1_before_prone_finetune/ckpt_047000.pt": "5baa7559046d096b26db1a5b9bcb93cad11b169e9c24aa6436e5fa9520d688cd",
+    "/data/kk/data/supermimic_bumi/seed_dances/release/model.pt": "e33784b3ae6d8cdf73a679ab54709156598f326c77fe342d34cbf2f02a99fce8",
+    "/data/kk/data/supermimic_bumi/seed_dances/release/resume.pt": "070279867f8d43e56f077557734ced7be9261766b0081999dfb93d503eb00622"
+  },
+  "all_target_paths_absent": true,
+  "unselected_database_records_unchanged": true,
+  "health": {
+    "ok": true,
+    "ebd": {
+      "ok": true,
+      "service": "ebd"
+    }
+  },
+  "free_before_bytes": 991643721728,
+  "free_after_bytes": 1323981385728,
+  "code_change": "共享删除服务增加显式对象分组，处理模型/评估循环引用；保留组外依赖、活动任务及产物引用保护。未新增HTTP接口，未重启服务。",
+  "validation": "37项删除单元测试通过；真实清理后核对数据库、文件、保留模型哈希。",
+  "risks": "已删除检查点/Replay无法恢复对应中间训练状态；缓存和构建产物可重建。未进行完整训练/评估回归。",
+  "players": {
+    "supermimic": {
+      "page_ok": true,
+      "websocket_state_ok": true,
+      "frame_available": true,
+      "error": "物理仿真终止：dance_failed。舞蹈 dance1_subject2，参考时间 74.76s；高度 实际 0.408m / 参考 0.266m，误差 0.142m / 阈值 0.139m；倾斜差 0.009 / 阈值 0.800。已暂停，实验模型未通过跟踪验收；点击重置重新开始。",
+      "state_keys": [
+        "ready",
+        "stage",
+        "dance",
+        "elapsed",
+        "duration",
+        "error",
+        "model_name",
+        "checkpoint_iteration",
+        "reference_visible",
+        "backend",
+        "model_kind",
+        "checkpoint_sha256",
+        "failure",
+        "completed",
+        "debug",
+        "playback",
+        "video",
+        "queue",
+        "running",
+        "velocity",
+        "dances",
+        "durations"
+      ]
+    },
+    "blinkmimic": {
+      "state_ok": true,
+      "checkpoint_count": 9,
+      "checkpoint_error": null,
+      "frame_id": 623320
+    }
+  },
+  "group_delete_idempotent": true,
+  "requested_models": [
+    "lingbot-vla2-platform-smoke-4",
+    "robotwin-pi05-smoke-6",
+    "dm05-platform-smoke",
+    "gr00t-n17-platform-smoke-4gpu"
+  ],
+  "existing_supermimic_failure": {
+    "time": "2026-11-07T11:39:11.531163+00:00",
+    "cause": "dance_failed",
+    "precedes_cleanup": true,
+    "state_preserved": true
+  },
+  "code_committed": false
+}

@@ -38,6 +38,7 @@ const spec = ref({
     policy_artifact: "",
     output_format: "onnx",
   },
+  inputs: { base_model: "" },
   resources: { gpus: 1, shm_gb: 2 },
   policy: { priority: 50, timeout_h: 24 },
   image: "eb/isaac-lab:2.3.2",
@@ -253,6 +254,11 @@ async function submit() {
           <template v-if="spec.kind === 'eval.sim2sim'">
             <span>评测回合数 (num_episodes)</span>
             <input type="number" v-model.number="spec.params.num_episodes" />
+          </template>
+
+          <template v-if="spec.kind === 'bundle.build'">
+            <label for="bundle-model">已登记 ONNX 模型版本</label>
+            <input id="bundle-model" v-model="spec.inputs.base_model" placeholder="mv_…" @change="updatePreview" />
           </template>
 
           <!-- Resource config -->

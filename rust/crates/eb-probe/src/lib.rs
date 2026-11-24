@@ -2,6 +2,20 @@ use eb_core::{GpuInfo, HostProfile};
 use std::path::Path as FsPath;
 use sysinfo::System;
 
+pub fn disk_space(path: &std::path::Path) -> std::io::Result<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let stats = unsafe { stats.assume_init() };
+    Ok((
+        stats.f_bavail as u64 * stats.f_frsize as u64,
+        stats.f_blocks as u64 * stats.f_frsize as u64,
+    ))
+}
+
 pub fn doctor() -> HostProfile {
     let mut sys = System::new();
     sys.refresh_memory();

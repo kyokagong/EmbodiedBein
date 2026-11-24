@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from pathlib import Path
 
 HEADROOM_BYTES = 10 * 1024 * 1024 * 1024
 LOW_RATIO = 0.10
@@ -19,14 +17,9 @@ class DiskCheck:
     warn: bool = False
 
 
-def disk_preflight(target_dir: str, needed_bytes: int = 0, archive: bool = False) -> DiskCheck:
-    dest = Path(target_dir)
-    probe = dest if dest.exists() else dest.parent
-    if not probe.exists():
-        probe = Path("/")
-    st = os.statvfs(str(probe))
-    free = int(st.f_bavail * st.f_frsize)
-    total = int(st.f_blocks * st.f_frsize)
+def disk_preflight(facts: dict, needed_bytes: int = 0, archive: bool = False) -> DiskCheck:
+    free = int(facts["free_bytes"])
+    total = int(facts["total_bytes"])
     need = int(needed_bytes * (ARCHIVE_FACTOR if archive else 1))
     if free < need + HEADROOM_BYTES:
         return DiskCheck(False, free, total, need, reason="剩余磁盘不足（需目标大小 + 10GB 余量）")

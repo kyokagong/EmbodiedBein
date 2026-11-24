@@ -148,6 +148,13 @@ async def seed_if_empty(session: AsyncSession) -> None:
                     paths={"urdf":"urdf/arx5_description_isaac.urdf"},
                     content_hash="sha256:6b87d7d55e106d8ff25917e0538eb1e177fc549280e8a742a8cec3cb9f953fc6"))
     await session.flush()
+    if not await session.get(EmbodimentRow, "emb_unitree_g1_motion_reference"):
+        session.add(EmbodimentRow(id="emb_unitree_g1_motion_reference",
+            display_name="Unitree G1（MotionDecode 原始动作参考）",
+            source={"kind": "managed_bundle", "writable": False}, status="draft", seed=True,
+            tags=["unitree-g1", "motion-reference", "non-commercial"],
+            capabilities={"train": False, "eval": False, "deploy": False}))
+        await session.flush()
     contracts_dir = settings.contracts_dir
     if not contracts_dir.exists():
         here = Path(__file__).resolve().parents[2] / "contracts"
@@ -190,7 +197,13 @@ async def seed_if_empty(session: AsyncSession) -> None:
             embodiment_id=profile.embodiment_id, spec=spec,
             spec_hash=sha256_bytes(str(sorted(spec.items())).encode()), status="draft",
             obs_dim=None, action_dim=None, policy_hz=None))
-    for tsk in BHL_SEED_TASKS:
+    pbfm_task = TaskSpec(
+        id="tsk_rpo_pbfm_terrain_locomotion_v1", status="draft",
+        compatible_env_ids=["ee_rpo_v2_pbfm_depth_23dof_v1"],
+        stack_bindings={"rlinf": {"template_id": "rpo_pbfm_fb_depth_native",
+                                  "config_name": "rpo_23dof"}},
+    )
+    for tsk in [*BHL_SEED_TASKS, pbfm_task]:
         if await session.get(TaskRow, tsk.id):
             continue
         session.add(

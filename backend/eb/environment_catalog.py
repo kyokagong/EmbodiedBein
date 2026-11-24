@@ -10,6 +10,14 @@ from eb.store.models import EmbodimentEnvRow, EnvironmentProfile, EvalSuite
 
 
 def _training_definition(tpl) -> dict:
+    if tpl.id == "rpo_pbfm_fb_depth_native":
+        return {
+            "task": "RPO 深度地形 FB-CPR-Aux 原生训练；23DOF、50Hz 策略、8×18×32 深度历史。",
+            "reward": "P-BFM 原生 FB、D、QD/QAux/QH/QV 与速度辅助监督；Actor 不读取 privileged 状态。",
+            "failure": "非有限值、OOM、任意 rank 失败、冻结输入变化或全 rank checkpoint 不完整则整段失败。",
+            "success": "完整原生状态和 Replay 回读、独立 validation、曲线与真实视频；正式 acceptance 单独冻结。",
+            "settings": {},
+        }
     if tpl.id == "rpo_ufo_fb_native":
         return {
             "task": "RPO 原生 FB-CPR-Aux 无监督预训练；任务 latent 用于站立和 0.3 m/s 前行。",
@@ -221,7 +229,7 @@ async def seed_environment_profiles(session) -> None:
             suite_id=None,
             definition=definition,
             content_hash="",
-            status="draft" if tpl.id == "rpo_v2_amp_stand_walk_ppo" else "active" if tpl.ready else "deprecated",
+            status="draft" if tpl.id in {"rpo_v2_amp_stand_walk_ppo", "rpo_pbfm_fb_depth_native"} else "active" if tpl.ready else "deprecated",
         )
         row.content_hash = profile_hash(row)
         session.add(row)
